@@ -1,0 +1,1811 @@
+#!/usr/bin/env bash
+# shared-gate.sh — 모든 auto-complete-loop 스킬용 범용 품질 게이트 + 유틸리티
+# 토큰 절약: Claude가 직접 하면 토큰 소비되는 반복 작업을 스크립트로 대체
+#
+# 서브커맨드:
+#   init [--template <type>] [project] [requirement]  - progress JSON 초기화
+#   init-ralph <promise> <progress_file> [max_iter]    - Ralph Loop 파일 생성
+#   status [--progress-file <path>]                    - 현재 상태 요약 출력
+#   update-step <step_name> <status> [--progress-file] - 단계 상태 전이
+#   quality-gate [--progress-file <path>]              - 빌드/타입/린트/테스트 일괄 실행
+#   e2e-gate [--progress-file <path>]                  - E2E 테스트 프레임워크 감지/실행
+#   secret-scan                                        - 시크릿 유출 스캔 (HARD_FAIL)
+#   artifact-check                                     - 빌드 아티팩트 존재/크기 검증
+#   smoke-check [port] [timeout]                       - 서버 기동 + 헬스체크
+#   record-error --file <f> --type <t> --msg <m> [--level L0-L4] [--action "..."] - 에러 기록 + 에스컬레이션
+#   check-tools                                         - codex/gemini CLI 존재 확인
+#   find-debug-code [dir]                              - console.log/print/debugger 탐색
+#   doc-consistency [docs_dir]                         - 문서 간 일관성 검사
+#   doc-code-check [docs_dir]                          - 문서↔코드 매칭
+#   design-polish-gate                                 - WCAG 체크 + 스크린샷 캡처 (SOFT_FAIL)
+
+set -euo pipefail
+
+VERIFICATION_FILE=".claude-verification.json"
+
+# ─── 유틸리티 ───
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || die "jq is required but not installed"
+}
+
+timestamp() { date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ"; }
+
+# 안전한 jq 인플레이스 업데이트 (temp 파일 자동 정리)
+jq_inplace() {
+  local file="$1"; shift
+  local tmp
+  tmp=$(mktemp)
+  if jq "$@" "$file" > "$tmp"; then
+    mv "$tmp" "$file"
+  else
+    rm -f "$tmp"
+    die "jq update failed for $file"
+  fi
+}
+
+# Progress 파일 자동 탐지
+detect_progress_file() {
+  for f in .claude-full-auto-progress.json .claude-progress.json \
+           .claude-plan-progress.json .claude-polish-progress.json \
+           .claude-review-loop-progress.json .claude-e2e-progress.json \
+           .claude-doc-check-progress.json; do
+    [[ -f "$f" ]] && echo "$f" && return 0
+  done
+  return 1
+}
+
+# --progress-file 인수 파싱 (글로벌)
+PROGRESS_FILE=""
+parse_progress_file_arg() {
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --progress-file)
+        PROGRESS_FILE="${2:?--progress-file requires a path}"
+        shift 2
+        ;;
+      *)
+        args+=("$1")
+        shift
+        ;;
+    esac
+  done
+  # PROGRESS_FILE이 설정되지 않았으면 자동 탐지
+  if [[ -z "$PROGRESS_FILE" ]]; then
+    PROGRESS_FILE=$(detect_progress_file) || true
+  fi
+  # 나머지 인수를 REMAINING_ARGS에 저장
+  REMAINING_ARGS=("${args[@]+"${args[@]}"}")
+}
+
+require_progress() {
+  [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]] || die "Progress file not found. Specify --progress-file or run 'init' first."
+}
+
+# ─── init: progress JSON 초기화 ───
+
+cmd_init() {
+  local template="full-auto"
+  local project="unnamed"
+  local requirement=""
+
+  # 인수 파싱
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --template)
+        template="${2:?--template requires a type}"
+        shift 2
+        ;;
+      *)
+        if [[ "$project" == "unnamed" ]]; then
+          project="$1"
+        else
+          requirement="$1"
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  require_jq
+
+  # 템플릿별 파일명 결정
+  local target_file
+  case "$template" in
+    full-auto)  target_file=".claude-full-auto-progress.json" ;;
+    plan)       target_file=".claude-plan-progress.json" ;;
+    implement)  target_file=".claude-progress.json" ;;
+    review)     target_file=".claude-review-loop-progress.json" ;;
+    polish)     target_file=".claude-polish-progress.json" ;;
+    e2e)        target_file=".claude-e2e-progress.json" ;;
+    doc-check)  target_file=".claude-doc-check-progress.json" ;;
+    *)          die "Unknown template: $template. Valid: full-auto, plan, implement, review, polish, e2e, doc-check" ;;
+  esac
+
+  if [[ -f "$target_file" ]]; then
+    echo "WARNING: $target_file already exists. Skipping init."
+    return 0
+  fi
+
+  local safe_project safe_requirement
+  safe_project=$(jq -Rn --arg v "$project" '$v')
+  safe_requirement=$(jq -Rn --arg v "$requirement" '$v')
+
+  case "$template" in
+    full-auto)
+      cat > "$target_file" <<ENDJSON
+{
+  "project": $safe_project,
+  "userRequirement": $safe_requirement,
+  "status": "in_progress",
+  "currentPhase": "phase_0",
+  "steps": [
+    {"name": "phase_0", "label": "PM Planning", "status": "in_progress"},
+    {"name": "phase_1", "label": "Planning", "status": "pending"},
+    {"name": "phase_2", "label": "Implementation", "status": "pending"},
+    {"name": "phase_3", "label": "Code Review", "status": "pending"},
+    {"name": "phase_4", "label": "Verification", "status": "pending"}
+  ],
+  "phases": {
+    "phase_0": { "outputs": { "definitionDoc": null, "readmePath": null, "techStack": null, "rounds": [] } },
+    "phase_1": { "documents": [], "currentDocument": null },
+    "phase_2": { "documents": [], "currentDocument": null, "errorHistory": {}, "completedFiles": [], "context": {}, "documentSummaries": {}, "scopeReductions": [] },
+    "phase_3": { "currentRound": 0, "roundResults": [], "findingHistory": [] },
+    "phase_4": { "verificationSteps": [], "designPolish": null }
+  },
+  "consistencyChecks": {
+    "doc_vs_doc": { "checked": false, "evidence": null },
+    "doc_vs_code": { "checked": false, "evidence": null },
+    "code_quality": { "checked": false, "evidence": null }
+  },
+  "dod": {
+    "pm_approved": { "checked": false, "evidence": null },
+    "all_docs_complete": { "checked": false, "evidence": null },
+    "all_code_implemented": { "checked": false, "evidence": null },
+    "build_pass": { "checked": false, "evidence": null },
+    "test_pass": { "checked": false, "evidence": null },
+    "code_review_pass": { "checked": false, "evidence": null },
+    "security_review": { "checked": false, "evidence": null },
+    "secret_scan": { "checked": false, "evidence": null },
+    "e2e_pass": { "checked": false, "evidence": null },
+    "design_quality": { "checked": false, "evidence": null }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "currentPhase": "phase_0",
+    "completedInThisIteration": "",
+    "nextSteps": "",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+    plan)
+      cat > "$target_file" <<ENDJSON
+{
+  "project": $safe_project,
+  "created": "$(timestamp)",
+  "status": "in_progress",
+  "definitionDoc": null,
+  "readmePath": null,
+  "documents": [],
+  "currentDocument": null,
+  "turnCount": 0,
+  "lastCompactAt": 0,
+  "dod": {
+    "user_story": { "checked": false, "evidence": null },
+    "data_model": { "checked": false, "evidence": null },
+    "api_contract": { "checked": false, "evidence": null },
+    "error_scenarios": { "checked": false, "evidence": null },
+    "no_definition_conflict": { "checked": false, "evidence": null }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+    implement)
+      cat > "$target_file" <<ENDJSON
+{
+  "project": $safe_project,
+  "created": "$(timestamp)",
+  "status": "in_progress",
+  "documents": [],
+  "dod": {
+    "build_success": { "checked": false, "evidence": null },
+    "type_check": { "checked": false, "evidence": null },
+    "lint_pass": { "checked": false, "evidence": null },
+    "test_pass": { "checked": false, "evidence": null },
+    "code_review": { "checked": false, "evidence": null },
+    "e2e_pass": { "checked": false, "evidence": null }
+  },
+  "currentDocument": null,
+  "lastCommitSha": null,
+  "errorHistory": {
+    "currentError": null,
+    "attempts": []
+  },
+  "completedFiles": [],
+  "context": {
+    "architecture": null,
+    "patterns": null
+  },
+  "documentSummaries": {},
+  "lastVerifiedAt": null,
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+    review)
+      cat > "$target_file" <<ENDJSON
+{
+  "mode": "rounds",
+  "targetRounds": 3,
+  "goal": null,
+  "goalMet": false,
+  "scope": $safe_requirement,
+  "currentRound": 0,
+  "status": "in_progress",
+  "roundResults": [],
+  "findingHistory": [],
+  "dod": {
+    "all_rounds_complete": { "checked": false, "evidence": null },
+    "build_pass": { "checked": false, "evidence": null },
+    "no_critical_high": { "checked": false, "evidence": null }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "Round 1 시작",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+    polish)
+      cat > "$target_file" <<ENDJSON
+{
+  "project": $safe_project,
+  "created": "$(timestamp)",
+  "status": "in_progress",
+  "definitionDoc": null,
+  "readmePath": null,
+  "steps": [
+    {"name": "프로젝트 분석", "status": "pending", "group": 1, "evidence": {}},
+    {"name": "기획 대비 검토", "status": "pending", "group": 1, "evidence": {}},
+    {"name": "빌드 검증", "status": "pending", "group": 2, "evidence": {}},
+    {"name": "테스트 검증", "status": "pending", "group": 2, "evidence": {}},
+    {"name": "보안 검토", "status": "pending", "group": 3, "evidence": {}},
+    {"name": "문서화 확인", "status": "pending", "group": 3, "evidence": {}},
+    {"name": "릴리즈 체크리스트", "status": "pending", "group": 4, "evidence": {}},
+    {"name": "최종 검증", "status": "pending", "group": 4, "evidence": {}}
+  ],
+  "currentStep": null,
+  "turnCount": 0,
+  "lastCompactAt": 0,
+  "dod": {
+    "build_pass": { "checked": false, "evidence": null },
+    "test_pass": { "checked": false, "evidence": null },
+    "security_review": { "checked": false, "evidence": null },
+    "docs_complete": { "checked": false, "evidence": null },
+    "final_verification": { "checked": false, "evidence": null }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+    e2e)
+      cat > "$target_file" <<ENDJSON
+{
+  "project": $safe_project,
+  "created": "$(timestamp)",
+  "status": "in_progress",
+  "mode": null,
+  "docsDir": null,
+  "projectType": null,
+  "e2eFramework": null,
+  "dataStrategy": null,
+  "mockSchemaSource": null,
+  "steps": [
+    {"name": "analyze_project", "label": "프로젝트 분석", "status": "pending"},
+    {"name": "derive_scenarios", "label": "시나리오 도출", "status": "pending"},
+    {"name": "setup_framework", "label": "E2E 프레임워크 설정", "status": "pending"},
+    {"name": "write_tests", "label": "E2E 테스트 작성", "status": "pending"},
+    {"name": "verify_tests", "label": "테스트 검증", "status": "pending"}
+  ],
+  "scenarios": [],
+  "errorHistory": {
+    "currentError": null,
+    "attempts": []
+  },
+  "dod": {
+    "framework_setup": { "checked": false, "evidence": null },
+    "scenarios_documented": { "checked": false, "evidence": null },
+    "tests_written": { "checked": false, "evidence": null },
+    "e2e_pass": { "checked": false, "evidence": null },
+    "build_pass": { "checked": false, "evidence": null }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+    doc-check)
+      cat > "$target_file" <<ENDJSON
+{
+  "project": $safe_project,
+  "created": "$(timestamp)",
+  "status": "in_progress",
+  "docsDir": "docs/",
+  "steps": [
+    {"name": "구조적 검사", "status": "pending", "evidence": {}},
+    {"name": "의미적 검증", "status": "pending", "evidence": {}},
+    {"name": "최종 확인", "status": "pending", "evidence": {}}
+  ],
+  "dod": {
+    "doc_consistency": { "checked": false, "evidence": null },
+    "doc_code_check": { "checked": false, "evidence": null },
+    "semantic_review": { "checked": false, "evidence": null }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}
+ENDJSON
+      ;;
+  esac
+
+  echo "OK: $target_file initialized (template: $template)"
+}
+
+# ─── init-ralph: Ralph Loop 파일 생성 ───
+
+cmd_init_ralph() {
+  local promise="${1:?Usage: init-ralph <promise> <progress_file> [max_iter]}"
+  local progress_file="${2:?Usage: init-ralph <promise> <progress_file> [max_iter]}"
+  local max_iter="${3:-0}"
+
+  mkdir -p .claude
+
+  local ralph_file=".claude/ralph-loop.local.md"
+
+  if [[ -f "$ralph_file" ]]; then
+    echo "WARNING: $ralph_file already exists. Skipping."
+    return 0
+  fi
+
+  local now
+  now=$(timestamp)
+
+  cat > "$ralph_file" <<ENDRALPH
+---
+active: true
+iteration: 1
+max_iterations: $max_iter
+completion_promise: "$promise"
+progress_file: "$progress_file"
+started_at: "$now"
+---
+
+이전 작업을 이어서 진행합니다.
+\`$progress_file\`을 읽고 상태를 확인하세요.
+특히 \`handoff\` 필드를 먼저 읽어 이전 iteration의 맥락을 복구하세요.
+
+1. completed 단계는 건너뛰세요
+2. in_progress 단계가 있으면 해당 단계부터 재개
+3. pending 단계가 있으면 다음 pending 단계 시작
+4. 모든 단계가 completed이고 검증을 통과하면 <promise>$promise</promise> 출력
+
+검증 규칙:
+- $progress_file의 모든 단계/문서 status가 completed여야 함
+- dod 체크리스트가 모두 checked여야 함
+- 조건 미충족 시 절대 <promise> 태그를 출력하지 마세요
+ENDRALPH
+
+  echo "OK: $ralph_file created (promise: $promise, progress: $progress_file, max_iter: $max_iter)"
+}
+
+# ─── status: 현재 상태 요약 출력 ───
+
+cmd_status() {
+  require_jq
+  require_progress
+
+  echo "=== Progress Status ($PROGRESS_FILE) ==="
+
+  # steps 배열이 있는 경우
+  local has_steps
+  has_steps=$(jq 'has("steps")' "$PROGRESS_FILE")
+  if [[ "$has_steps" == "true" ]]; then
+    # 현재 단계 (currentPhase 또는 currentStep 사용)
+    local current
+    current=$(jq -r '.currentPhase // .currentStep // "unknown"' "$PROGRESS_FILE")
+    echo "Current: $current"
+
+    # 완료된 단계
+    local completed
+    completed=$(jq -r '[.steps[] | select(.status == "completed") | (.label // .name)] | join(", ")' "$PROGRESS_FILE")
+    [[ -n "$completed" ]] && echo "Completed: $completed"
+
+    # 진행 중인 단계
+    local in_progress
+    in_progress=$(jq -r '[.steps[] | select(.status == "in_progress") | (.label // .name)] | join(", ")' "$PROGRESS_FILE")
+    [[ -n "$in_progress" ]] && echo "In Progress: $in_progress"
+
+    # 대기 중인 단계
+    local pending_count
+    pending_count=$(jq '[.steps[] | select(.status == "pending")] | length' "$PROGRESS_FILE")
+    echo "Pending: $pending_count steps"
+  fi
+
+  # documents 배열이 있는 경우
+  local has_docs
+  has_docs=$(jq 'has("documents")' "$PROGRESS_FILE")
+  if [[ "$has_docs" == "true" ]]; then
+    local total_docs done_docs cur_doc
+    total_docs=$(jq '.documents | length' "$PROGRESS_FILE")
+    done_docs=$(jq '[.documents[] | select(.status == "completed")] | length' "$PROGRESS_FILE")
+    cur_doc=$(jq -r '.currentDocument // "none"' "$PROGRESS_FILE")
+    echo "Documents: $done_docs / $total_docs completed"
+    echo "Current Document: $cur_doc"
+  fi
+
+  # DoD 상태
+  local has_dod
+  has_dod=$(jq 'has("dod")' "$PROGRESS_FILE")
+  if [[ "$has_dod" == "true" ]]; then
+    local dod_total dod_checked
+    dod_total=$(jq '.dod | to_entries | length' "$PROGRESS_FILE")
+    dod_checked=$(jq '[.dod | to_entries[].value | select(.checked == true)] | length' "$PROGRESS_FILE")
+    echo "DoD: $dod_checked / $dod_total checked"
+  fi
+
+  # 에스컬레이션 상태 (errorHistory가 있는 경우)
+  local has_error_history
+  has_error_history=$(jq 'has("errorHistory")' "$PROGRESS_FILE")
+  if [[ "$has_error_history" == "true" ]]; then
+    local esc_level esc_count esc_budget
+    esc_level=$(jq -r '.errorHistory.escalationLevel // "N/A"' "$PROGRESS_FILE")
+    esc_count=$(jq '.errorHistory.currentError.count // 0' "$PROGRESS_FILE")
+    esc_budget=$(jq '.errorHistory.escalationBudget // 0' "$PROGRESS_FILE")
+    if [[ "$esc_level" != "N/A" ]] && [[ "$esc_count" -gt 0 ]]; then
+      echo "Escalation: $esc_level ($esc_count/$esc_budget)"
+    fi
+
+    # 최근 에스컬레이션 로그 3개
+    local recent_log
+    recent_log=$(jq -r '.errorHistory.escalationLog // [] | .[-3:] | .[] | "\(.level) #\(.attempt): \(.action // "N/A") → \(.result)"' "$PROGRESS_FILE" 2>/dev/null || true)
+    if [[ -n "$recent_log" ]]; then
+      echo "Recent Escalation Log:"
+      echo "$recent_log" | while IFS= read -r line; do
+        echo "  $line"
+      done
+    fi
+  fi
+
+  # Scope Reductions (있는 경우)
+  local has_scope_reductions
+  has_scope_reductions=$(jq 'if .phases.phase_2.scopeReductions then (.phases.phase_2.scopeReductions | length > 0) else false end' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  if [[ "$has_scope_reductions" == "true" ]]; then
+    local reduction_count
+    reduction_count=$(jq '.phases.phase_2.scopeReductions | length' "$PROGRESS_FILE")
+    echo "Scope Reductions: $reduction_count"
+  fi
+
+  # Handoff 요약
+  local next_steps
+  next_steps=$(jq -r '.handoff.nextSteps // ""' "$PROGRESS_FILE")
+  [[ -n "$next_steps" ]] && echo "Next Steps: $next_steps"
+
+  echo "========================"
+}
+
+# ─── update-step: 단계 상태 전이 (동적 검증) ───
+
+cmd_update_step() {
+  local step_name="${1:?Usage: update-step <step_name> <status>}"
+  local new_status="${2:?Usage: update-step <step_name> <status>}"
+
+  require_jq
+  require_progress
+
+  # 유효한 상태 값 확인
+  local valid_statuses="pending in_progress completed"
+  echo "$valid_statuses" | grep -qw "$new_status" || die "Invalid status: $new_status. Valid: $valid_statuses"
+
+  # progress 파일에서 해당 step이 존재하는지 동적으로 확인
+  local step_exists
+  step_exists=$(jq --arg name "$step_name" '[.steps[] | select(.name == $name)] | length' "$PROGRESS_FILE")
+  [[ "$step_exists" -gt 0 ]] || die "Step not found: $step_name. Available steps: $(jq -r '[.steps[].name] | join(", ")' "$PROGRESS_FILE")"
+
+  # steps 배열에서 해당 step 상태 업데이트 + top-level 갱신
+  jq_inplace "$PROGRESS_FILE" --arg name "$step_name" --arg status "$new_status" '
+    (.steps[] | select(.name == $name)).status = $status
+    | if $status == "in_progress" then
+        (if has("currentPhase") then .currentPhase = $name else . end)
+        | (if has("currentStep") then .currentStep = $name else . end)
+      else . end
+    | if has("handoff") and (.handoff | has("currentPhase")) then
+        .handoff.currentPhase = (.currentPhase // null)
+      else . end
+    | .status = (if ([.steps[].status] | all(. == "completed")) then "completed" else "in_progress" end)
+  '
+
+  echo "OK: $step_name -> $new_status"
+}
+
+# ─── quality-gate: 빌드/타입/린트/테스트 일괄 실행 ───
+
+cmd_quality_gate() {
+  require_jq
+
+  echo "=== Quality Gate ==="
+
+  # 프로젝트 유형 자동 감지 + 명령어 결정
+  local build_cmd="" type_cmd="" lint_cmd="" test_cmd=""
+
+  if [[ -f "package.json" ]]; then
+    local pm="npm"
+    [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
+    [[ -f "yarn.lock" ]] && pm="yarn"
+    [[ -f "bun.lockb" ]] && pm="bun"
+
+    if jq -e '.scripts.build' package.json >/dev/null 2>&1; then
+      build_cmd="$pm run build"
+    fi
+    if jq -e '.scripts.typecheck' package.json >/dev/null 2>&1; then
+      type_cmd="$pm run typecheck"
+    elif jq -e '.scripts["type-check"]' package.json >/dev/null 2>&1; then
+      type_cmd="$pm run type-check"
+    elif command -v tsc >/dev/null 2>&1 && [[ -f "tsconfig.json" ]]; then
+      type_cmd="npx tsc --noEmit"
+    fi
+    if jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
+      lint_cmd="$pm run lint"
+    fi
+    if jq -e '.scripts.test' package.json >/dev/null 2>&1; then
+      test_cmd="$pm run test"
+    elif jq -e '.scripts["test:run"]' package.json >/dev/null 2>&1; then
+      test_cmd="$pm run test:run"
+    fi
+  elif [[ -f "pubspec.yaml" ]]; then
+    if command -v flutter >/dev/null 2>&1; then
+      build_cmd="flutter build apk --debug 2>&1 || flutter analyze"
+      type_cmd="dart analyze"
+      lint_cmd="dart analyze"
+      test_cmd="flutter test"
+    else
+      build_cmd="dart compile exe lib/main.dart 2>/dev/null || dart analyze"
+      type_cmd="dart analyze"
+      lint_cmd="dart analyze"
+      test_cmd="dart test"
+    fi
+  elif [[ -f "go.mod" ]]; then
+    build_cmd="go build ./..."
+    type_cmd="go vet ./..."
+    lint_cmd="golangci-lint run 2>/dev/null || go vet ./..."
+    test_cmd="go test ./..."
+  elif [[ -f "Cargo.toml" ]]; then
+    build_cmd="cargo build"
+    type_cmd="cargo check"
+    lint_cmd="cargo clippy 2>/dev/null || cargo check"
+    test_cmd="cargo test"
+  elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
+    if [[ -f "pyproject.toml" ]] && grep -q "ruff" pyproject.toml 2>/dev/null; then
+      lint_cmd="ruff check ."
+    elif command -v flake8 >/dev/null 2>&1; then
+      lint_cmd="flake8 ."
+    fi
+    if command -v mypy >/dev/null 2>&1; then
+      type_cmd="mypy ."
+    fi
+    if command -v pytest >/dev/null 2>&1; then
+      test_cmd="pytest"
+    fi
+  fi
+
+  # 환경 정보 수집
+  local env_node env_npm env_os env_cwd
+  env_node=$(node --version 2>/dev/null || echo "N/A")
+  env_npm=$(npm --version 2>/dev/null || echo "N/A")
+  env_os=$(uname -s 2>/dev/null || echo "unknown")
+  env_cwd=$(pwd)
+
+  # Flutter/Dart/Go/Rust 버전도 수집 (해당 시)
+  local env_extra=""
+  if [[ -f "pubspec.yaml" ]]; then
+    local dart_ver flutter_ver
+    dart_ver=$(dart --version 2>&1 | head -1 || echo "N/A")
+    flutter_ver=$(flutter --version 2>&1 | head -1 || echo "N/A")
+    env_extra=", \"dart\": $(jq -Rn --arg v "$dart_ver" '$v'), \"flutter\": $(jq -Rn --arg v "$flutter_ver" '$v')"
+  elif [[ -f "go.mod" ]]; then
+    local go_ver
+    go_ver=$(go version 2>/dev/null | awk '{print $3}' || echo "N/A")
+    env_extra=", \"go\": $(jq -Rn --arg v "$go_ver" '$v')"
+  elif [[ -f "Cargo.toml" ]]; then
+    local rust_ver
+    rust_ver=$(rustc --version 2>/dev/null || echo "N/A")
+    env_extra=", \"rust\": $(jq -Rn --arg v "$rust_ver" '$v')"
+  fi
+
+  # 결과 수집
+  local ts
+  ts=$(timestamp)
+  local results="{\"timestamp\": \"$ts\", \"environment\": {\"node\": $(jq -Rn --arg v "$env_node" '$v'), \"npm\": $(jq -Rn --arg v "$env_npm" '$v'), \"os\": $(jq -Rn --arg v "$env_os" '$v'), \"cwd\": $(jq -Rn --arg v "$env_cwd" '$v')${env_extra}}"
+  local all_pass=true
+  local gate_summary=""
+
+  run_gate() {
+    local name="$1" cmd="$2"
+    if [[ -z "$cmd" ]]; then
+      echo "[$name] SKIP (no command detected)"
+      results="$results, \"$name\": {\"command\": null, \"exitCode\": null, \"summary\": \"skipped\"}"
+      return
+    fi
+
+    echo "[$name] Running: $cmd"
+    local output exit_code
+    output=$(eval "$cmd" 2>&1) && exit_code=0 || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+      echo "[$name] PASS (exit 0)"
+      results="$results, \"$name\": {\"command\": $(jq -Rn --arg c "$cmd" '$c'), \"exitCode\": 0, \"summary\": \"pass\"}"
+    else
+      echo "[$name] FAIL (exit $exit_code)"
+      echo "$output" | tail -5
+      all_pass=false
+      local summary
+      summary=$(echo "$output" | tail -1 | head -c 200)
+      results="$results, \"$name\": {\"command\": $(jq -Rn --arg c "$cmd" '$c'), \"exitCode\": $exit_code, \"summary\": $(jq -Rn --arg s "$summary" '$s')}"
+      gate_summary="${gate_summary}$name FAIL; "
+    fi
+  }
+
+  run_gate "build" "$build_cmd"
+  run_gate "typeCheck" "$type_cmd"
+  run_gate "lint" "$lint_cmd"
+  run_gate "test" "$test_cmd"
+
+  results="$results}"
+
+  # verification.json 기록
+  echo "$results" | jq '.' > "$VERIFICATION_FILE"
+  echo ""
+  echo "Results saved to $VERIFICATION_FILE"
+
+  # progress 파일 DoD 업데이트 (존재하는 경우)
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    local has_dod
+    has_dod=$(jq 'has("dod")' "$PROGRESS_FILE")
+    if [[ "$has_dod" == "true" ]]; then
+      local build_exit test_exit
+      build_exit=$(echo "$results" | jq '.build.exitCode // null')
+      test_exit=$(echo "$results" | jq '.test.exitCode // null')
+
+      # build_pass / test_pass 필드가 존재하는 경우만 업데이트
+      jq_inplace "$PROGRESS_FILE" --argjson be "$build_exit" --argjson te "$test_exit" --arg ev "quality-gate at $(timestamp)" '
+        # null (skipped)은 neutral — 기존 checked 값 유지
+        (if .dod | has("build_pass") then
+          .dod.build_pass.checked = (if $be == null then .dod.build_pass.checked else ($be == 0) end)
+          | .dod.build_pass.evidence = (if $be == null then .dod.build_pass.evidence elif $be == 0 then "build pass " + $ev else "build fail " + $ev end)
+        else . end)
+        | (if .dod | has("test_pass") then
+          .dod.test_pass.checked = (if $te == null then .dod.test_pass.checked else ($te == 0) end)
+          | .dod.test_pass.evidence = (if $te == null then .dod.test_pass.evidence elif $te == 0 then "test pass " + $ev else "test fail " + $ev end)
+        else . end)
+        | (if has("consistencyChecks") then
+          .consistencyChecks.code_quality.checked = (($be == 0 or $be == null) and ($te == 0 or $te == null))
+          | .consistencyChecks.code_quality.evidence = $ev
+        else . end)
+      '
+    fi
+  fi
+
+  if [[ "$all_pass" == "true" ]]; then
+    echo "=== ALL GATES PASSED ==="
+    return 0
+  else
+    echo "=== GATE FAILED: ${gate_summary} ==="
+    return 1
+  fi
+}
+
+# ─── secret-scan: 시크릿 유출 스캔 (HARD_FAIL) ───
+
+cmd_secret_scan() {
+  echo "=== Secret Scan ==="
+  local found=0
+  local patterns=(
+    'AKIA[0-9A-Z]{16}'
+    'sk-[a-zA-Z0-9]{20,}'
+    'ghp_[a-zA-Z0-9]{36}'
+    'glpat-[a-zA-Z0-9\-]{20,}'
+    '-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+    'xox[bps]-[a-zA-Z0-9\-]+'
+    'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.'
+  )
+
+  # 스캔 대상 디렉토리 (존재하는 것만)
+  local scan_dirs=()
+  for d in src app lib server api; do
+    [[ -d "$d" ]] && scan_dirs+=("$d")
+  done
+
+  # 루트 설정 파일
+  local scan_files=()
+  for f in *.json *.yaml *.yml *.toml *.cfg *.conf *.ini; do
+    # glob이 매칭 안 되면 리터럴 문자열이므로 -f 체크
+    [[ -f "$f" ]] && scan_files+=("$f")
+  done
+
+  # 스캔 대상이 없으면 스킵
+  if [[ ${#scan_dirs[@]} -eq 0 ]] && [[ ${#scan_files[@]} -eq 0 ]]; then
+    echo "[secret-scan] SKIP (no scannable directories or files)"
+    return 0
+  fi
+
+  # 제외 패턴
+  local exclude_args=(
+    --exclude-dir=node_modules
+    --exclude-dir=dist
+    --exclude-dir=build
+    --exclude-dir=.git
+    --exclude-dir=.next
+    --exclude-dir=__pycache__
+    --exclude='*.lock'
+    --exclude='*.min.js'
+    --exclude='*.min.css'
+    --exclude='.env.example'
+    --exclude='*.map'
+  )
+
+  local details=""
+
+  for pattern in "${patterns[@]}"; do
+    local matches=""
+    # 디렉토리 스캔
+    if [[ ${#scan_dirs[@]} -gt 0 ]]; then
+      matches=$(grep -rn -E "$pattern" "${exclude_args[@]}" "${scan_dirs[@]}" 2>/dev/null || true)
+    fi
+    # 루트 설정 파일 스캔
+    if [[ ${#scan_files[@]} -gt 0 ]]; then
+      local file_matches
+      file_matches=$(grep -n -E "$pattern" "${scan_files[@]}" 2>/dev/null || true)
+      if [[ -n "$file_matches" ]]; then
+        matches="${matches:+$matches
+}$file_matches"
+      fi
+    fi
+
+    if [[ -n "$matches" ]]; then
+      local match_count
+      match_count=$(echo "$matches" | wc -l)
+      found=$((found + match_count))
+      details="${details}Pattern: $pattern
+$matches
+"
+    fi
+  done
+
+  # verification.json에 기록
+  require_jq
+  local ts
+  ts=$(timestamp)
+  local scan_result
+  if [[ "$found" -gt 0 ]]; then
+    scan_result="fail"
+  else
+    scan_result="pass"
+  fi
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --argjson count "$found" --arg result "$scan_result" \
+      '.secretScan = {"timestamp": $ts, "found": $count, "result": $result}'
+  else
+    jq -n --arg ts "$ts" --argjson count "$found" --arg result "$scan_result" \
+      '{"secretScan": {"timestamp": $ts, "found": $count, "result": $result}}' > "$VERIFICATION_FILE"
+  fi
+
+  if [[ "$found" -gt 0 ]]; then
+    echo ""
+    echo "$details"
+    echo "=== SECRET SCAN FAILED: $found potential secret(s) found ==="
+    echo "ACTION: Remove secrets and use environment variables instead."
+    exit 1
+  else
+    echo "[secret-scan] PASS (no secrets detected)"
+    echo "=== SECRET SCAN PASSED ==="
+    return 0
+  fi
+}
+
+# ─── artifact-check: 빌드 아티팩트 존재 + 크기 검증 ───
+
+cmd_artifact_check() {
+  echo "=== Artifact Check ==="
+  require_jq
+
+  local artifact_found=false
+  local artifact_path=""
+  local artifact_type=""
+
+  # 프로젝트 유형별 아티팩트 확인
+  if [[ -f "package.json" ]]; then
+    artifact_type="web"
+    for d in dist build .next out; do
+      if [[ -d "$d" ]]; then
+        # 빈 디렉토리 체크
+        local file_count
+        file_count=$(find "$d" -type f 2>/dev/null | head -5 | wc -l)
+        if [[ "$file_count" -gt 0 ]]; then
+          artifact_found=true
+          artifact_path="$d"
+          break
+        fi
+      fi
+    done
+  elif [[ -f "pubspec.yaml" ]]; then
+    artifact_type="flutter"
+    if [[ -d "build/app/outputs" ]]; then
+      local file_count
+      file_count=$(find "build/app/outputs" -type f 2>/dev/null | head -5 | wc -l)
+      if [[ "$file_count" -gt 0 ]]; then
+        artifact_found=true
+        artifact_path="build/app/outputs"
+      fi
+    fi
+  elif [[ -f "go.mod" ]]; then
+    artifact_type="go"
+    # Go 바이너리: go.mod의 module 이름으로 추정
+    local mod_name
+    mod_name=$(head -1 go.mod | awk '{print $2}' | xargs basename 2>/dev/null || echo "")
+    if [[ -n "$mod_name" ]] && [[ -f "$mod_name" ]]; then
+      artifact_found=true
+      artifact_path="$mod_name"
+    fi
+  elif [[ -f "Cargo.toml" ]]; then
+    artifact_type="rust"
+    if [[ -d "target/release" ]] || [[ -d "target/debug" ]]; then
+      artifact_found=true
+      artifact_path="target/"
+    fi
+  fi
+
+  # verification.json에 기록
+  local ts
+  ts=$(timestamp)
+  local result
+  if [[ "$artifact_found" == "true" ]]; then
+    result="pass"
+    echo "[artifact-check] PASS ($artifact_type: $artifact_path)"
+  else
+    result="soft_fail"
+    if [[ -n "$artifact_type" ]]; then
+      echo "[artifact-check] SOFT_FAIL ($artifact_type: no build artifact found)"
+    else
+      echo "[artifact-check] SKIP (unknown project type)"
+      result="skip"
+    fi
+  fi
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --arg type "$artifact_type" --arg path "$artifact_path" --arg result "$result" \
+      '.artifactCheck = {"timestamp": $ts, "projectType": $type, "artifactPath": $path, "result": $result}'
+  else
+    jq -n --arg ts "$ts" --arg type "$artifact_type" --arg path "$artifact_path" --arg result "$result" \
+      '{"artifactCheck": {"timestamp": $ts, "projectType": $type, "artifactPath": $path, "result": $result}}' > "$VERIFICATION_FILE"
+  fi
+
+  echo "=== ARTIFACT CHECK: ${result^^} ==="
+  if [[ "$result" == "soft_fail" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# ─── smoke-check: 서버 기동 + 헬스체크 ───
+
+cmd_smoke_check() {
+  local port="${1:-3000}"
+  local timeout="${2:-15}"
+  echo "=== Smoke Check (port: $port, timeout: ${timeout}s) ==="
+  require_jq
+
+  # 서버 시작 명령어 감지
+  local start_cmd=""
+  if [[ -f "package.json" ]]; then
+    local pm="npm"
+    [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
+    [[ -f "yarn.lock" ]] && pm="yarn"
+    [[ -f "bun.lockb" ]] && pm="bun"
+
+    if jq -e '.scripts.start' package.json >/dev/null 2>&1; then
+      start_cmd="$pm run start"
+    elif jq -e '.scripts.dev' package.json >/dev/null 2>&1; then
+      start_cmd="$pm run dev"
+    elif jq -e '.scripts.preview' package.json >/dev/null 2>&1; then
+      start_cmd="$pm run preview"
+    fi
+  fi
+
+  if [[ -z "$start_cmd" ]]; then
+    echo "[smoke-check] SKIP (no start/dev script detected — library or serverless project)"
+    local ts
+    ts=$(timestamp)
+    if [[ -f "$VERIFICATION_FILE" ]]; then
+      jq_inplace "$VERIFICATION_FILE" \
+        --arg ts "$ts" \
+        '.smokeCheck = {"timestamp": $ts, "result": "skip", "reason": "no start script"}'
+    else
+      jq -n --arg ts "$ts" \
+        '{"smokeCheck": {"timestamp": $ts, "result": "skip", "reason": "no start script"}}' > "$VERIFICATION_FILE"
+    fi
+    echo "=== SMOKE CHECK: SKIP ==="
+    return 0
+  fi
+
+  echo "[smoke-check] Starting server: $start_cmd"
+
+  # 백그라운드로 서버 시작
+  local server_pid
+  eval "$start_cmd" > /tmp/smoke-check-server.log 2>&1 &
+  server_pid=$!
+
+  # 서버 응답 대기
+  local elapsed=0
+  local success=false
+  while [[ $elapsed -lt $timeout ]]; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+
+    # 프로세스가 죽었는지 확인
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      echo "[smoke-check] Server process exited prematurely"
+      break
+    fi
+
+    # curl로 헬스체크
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
+    if [[ "$http_code" != "000" ]]; then
+      echo "[smoke-check] Got HTTP $http_code after ${elapsed}s"
+      if [[ "$http_code" =~ ^[23] ]]; then
+        success=true
+        break
+      fi
+    fi
+  done
+
+  # 서버 프로세스 정리
+  if kill -0 "$server_pid" 2>/dev/null; then
+    kill "$server_pid" 2>/dev/null || true
+    # 자식 프로세스도 정리
+    pkill -P "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+
+  # 결과 기록
+  local ts result
+  ts=$(timestamp)
+  if [[ "$success" == "true" ]]; then
+    result="pass"
+    echo "[smoke-check] PASS"
+  else
+    result="soft_fail"
+    echo "[smoke-check] SOFT_FAIL (server did not respond within ${timeout}s)"
+    echo "Server log (last 5 lines):"
+    tail -5 /tmp/smoke-check-server.log 2>/dev/null || true
+  fi
+
+  rm -f /tmp/smoke-check-server.log
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --arg cmd "$start_cmd" --argjson port "$port" --arg result "$result" \
+      '.smokeCheck = {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result}'
+  else
+    jq -n --arg ts "$ts" --arg cmd "$start_cmd" --argjson port "$port" --arg result "$result" \
+      '{"smokeCheck": {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result}}' > "$VERIFICATION_FILE"
+  fi
+
+  echo "=== SMOKE CHECK: ${result^^} ==="
+  if [[ "$result" == "soft_fail" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# ─── record-error: 에러 반복 판별 + errorHistory 업데이트 ───
+
+cmd_record_error() {
+  local err_file="" err_type="" err_msg="" err_level="" err_action="" err_result="" reset_count=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file)        err_file="${2:?--file requires a value}"; shift 2 ;;
+      --type)        err_type="${2:?--type requires a value}"; shift 2 ;;
+      --msg)         err_msg="${2:?--msg requires a value}"; shift 2 ;;
+      --level)       err_level="${2:?--level requires L0-L4}"; shift 2 ;;
+      --action)      err_action="${2:?--action requires a description}"; shift 2 ;;
+      --result)      err_result="${2:?--result requires pass|fail}"; shift 2 ;;
+      --reset-count) reset_count=true; shift ;;
+      *)             shift ;;
+    esac
+  done
+
+  [[ -n "$err_file" ]] || die "Usage: record-error --file <f> --type <t> --msg <m> [--level L0-L4] [--action '...'] [--result pass|fail] [--reset-count]"
+  [[ -n "$err_type" ]] || die "Usage: record-error --file <f> --type <t> --msg <m>"
+  [[ -n "$err_msg" ]]  || die "Usage: record-error --file <f> --type <t> --msg <m>"
+
+  require_jq
+  require_progress
+
+  # 에러 레벨 유효성 검사
+  if [[ -n "$err_level" ]]; then
+    echo "L0 L1 L2 L3 L4" | grep -qw "$err_level" || die "Invalid level: $err_level. Valid: L0 L1 L2 L3 L4"
+  fi
+
+  # 에스컬레이션 레벨별 예산
+  # L0=3, L1=3, L2=1, L3=3, L4=1
+  local -A level_budget=( ["L0"]=3 ["L1"]=3 ["L2"]=1 ["L3"]=3 ["L4"]=1 )
+
+  # 현재 errorHistory 읽기
+  local current_err_type current_err_file current_count
+  current_err_type=$(jq -r '.errorHistory.currentError.type // ""' "$PROGRESS_FILE")
+  current_err_file=$(jq -r '.errorHistory.currentError.file // ""' "$PROGRESS_FILE")
+  current_count=$(jq '.errorHistory.currentError.count // 0' "$PROGRESS_FILE")
+
+  # 현재 에스컬레이션 레벨/예산 읽기
+  local current_escalation current_budget
+  current_escalation=$(jq -r '.errorHistory.escalationLevel // "L0"' "$PROGRESS_FILE")
+  current_budget=$(jq '.errorHistory.escalationBudget // 3' "$PROGRESS_FILE")
+
+  # --reset-count 시 카운터 리셋 + 에스컬레이션 레벨 전환
+  if [[ "$reset_count" == "true" ]]; then
+    current_count=0
+    if [[ -n "$err_level" ]]; then
+      current_escalation="$err_level"
+      current_budget="${level_budget[$err_level]:-3}"
+    fi
+  fi
+
+  # 동일 에러 판별 (type + file 일치)
+  if [[ "$current_err_type" == "$err_type" ]] && [[ "$current_err_file" == "$err_file" ]]; then
+    current_count=$((current_count + 1))
+  else
+    current_count=1
+  fi
+
+  # 진행/회귀 판별 (에러 레벨 기반)
+  local direction="same"
+  if [[ -n "$err_level" ]]; then
+    local level_history
+    level_history=$(jq -r '.errorHistory.levelHistory // [] | .[-1] // ""' "$PROGRESS_FILE")
+    if [[ -n "$level_history" ]] && [[ "$level_history" != "$err_level" ]]; then
+      local prev_num=${level_history#L}
+      local curr_num=${err_level#L}
+      if [[ "$curr_num" -gt "$prev_num" ]]; then
+        direction="forward"
+      elif [[ "$curr_num" -lt "$prev_num" ]]; then
+        direction="backward"
+      fi
+    fi
+
+    # 회귀 연속 횟수 체크
+    if [[ "$direction" == "backward" ]]; then
+      local last_two_directions
+      last_two_directions=$(jq -r '
+        .errorHistory.levelHistory // [] |
+        if length >= 2 then
+          [.[length-2], .[length-1]] |
+          if .[0] > .[1] then "backward" else "not" end
+        else "not" end
+      ' "$PROGRESS_FILE")
+      if [[ "$last_two_directions" == "backward" ]]; then
+        echo "WARNING: 회귀 2회 연속 — 현재 접근법을 재검토하세요 (codex 호출 또는 다른 접근법)"
+      fi
+    fi
+  fi
+
+  # 에스컬레이션 로그 엔트리 생성
+  local ts
+  ts=$(timestamp)
+  local log_entry
+  log_entry=$(jq -n \
+    --arg ts "$ts" \
+    --arg level "${err_level:-$current_escalation}" \
+    --argjson attempt "$current_count" \
+    --arg error "$err_msg" \
+    --arg action "${err_action:-}" \
+    --arg result "${err_result:-fail}" \
+    '{ts: $ts, level: $level, attempt: $attempt, error: $error, action: $action, result: $result}')
+
+  # errorHistory 업데이트 (확장된 구조)
+  jq_inplace "$PROGRESS_FILE" \
+    --arg type "$err_type" \
+    --arg file "$err_file" \
+    --arg msg "$err_msg" \
+    --argjson count "$current_count" \
+    --arg escalation "$current_escalation" \
+    --argjson budget "$current_budget" \
+    --arg level "${err_level:-}" \
+    --argjson logEntry "$log_entry" '
+    .errorHistory.currentError = {
+      "type": $type,
+      "file": $file,
+      "message": $msg,
+      "count": $count,
+      "escalationLevel": $escalation
+    }
+    | .errorHistory.attempts += [$msg]
+    | .errorHistory.escalationLevel = $escalation
+    | .errorHistory.escalationBudget = $budget
+    | if $level != "" then
+        .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + [$level])
+      else . end
+    | .errorHistory.escalationLog = ((.errorHistory.escalationLog // []) + [$logEntry])
+  '
+
+  echo "Error recorded: $err_type in $err_file (count: $current_count, escalation: $current_escalation)"
+  [[ -n "$err_level" ]] && echo "DIRECTION: $direction (error level: $err_level)"
+
+  # exit code로 에스컬레이션 결과 전달
+  # exit 0: 현재 레벨 예산 내 → 계속 시도
+  # exit 1: 현재 레벨 예산 소진 → 다음 레벨로 에스컬레이트
+  # exit 2: L2 도달 → codex 분석 필요
+  # exit 3: L5 도달 → 사용자 개입 필요
+  if [[ "$current_escalation" == "L4" ]] && [[ $current_count -ge ${level_budget[L4]} ]]; then
+    echo "ACTION: L4 예산 소진 → L5 사용자 개입 필요"
+    exit 3
+  elif [[ "$current_escalation" == "L2" ]]; then
+    echo "ACTION: L2 → codex 분석 필요"
+    exit 2
+  elif [[ $current_count -ge $current_budget ]]; then
+    echo "ACTION: $current_escalation 예산 소진 ($current_count/$current_budget) → 다음 레벨로 에스컬레이트"
+    exit 1
+  else
+    echo "ACTION: 계속 시도 ($current_count/$current_budget)"
+    exit 0
+  fi
+}
+
+# ─── check-tools: codex/gemini CLI 존재 확인 ───
+
+cmd_check_tools() {
+  local has_codex=false has_gemini=false
+
+  if command -v codex >/dev/null 2>&1; then
+    has_codex=true
+    echo "[codex] Available: $(command -v codex)"
+  else
+    echo "[codex] Not found"
+  fi
+
+  if command -v gemini >/dev/null 2>&1; then
+    has_gemini=true
+    echo "[gemini] Available: $(command -v gemini)"
+  else
+    echo "[gemini] Not found"
+  fi
+
+  # JSON 출력
+  echo ""
+  echo "{\"codex\": $has_codex, \"gemini\": $has_gemini}"
+}
+
+# ─── find-debug-code: 디버그 코드 탐색 ───
+
+cmd_find_debug_code() {
+  local search_dir="${1:-.}"
+
+  echo "=== Debug Code Scan ==="
+  echo "Scanning: $search_dir"
+
+  local found=0
+
+  # 언어별 디버그 패턴
+  # JavaScript/TypeScript
+  if ls "$search_dir"/**/*.{js,ts,jsx,tsx} 2>/dev/null | head -1 >/dev/null 2>&1 || \
+     find "$search_dir" -maxdepth 5 -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" 2>/dev/null | head -1 >/dev/null 2>&1; then
+    echo ""
+    echo "[JS/TS] console.log/debug/debugger:"
+    local js_debug
+    js_debug=$(grep -rn --include="*.js" --include="*.ts" --include="*.jsx" --include="*.tsx" \
+      -e 'console\.log' -e 'console\.debug' -e 'console\.warn' -e 'debugger' \
+      "$search_dir" 2>/dev/null | grep -v node_modules | grep -v '.test.' | grep -v '.spec.' | head -20 || true)
+    if [[ -n "$js_debug" ]]; then
+      echo "$js_debug"
+      found=$((found + $(echo "$js_debug" | wc -l)))
+    else
+      echo "  None found"
+    fi
+  fi
+
+  # Python
+  if find "$search_dir" -maxdepth 5 -name "*.py" 2>/dev/null | head -1 >/dev/null 2>&1; then
+    echo ""
+    echo "[Python] print/pdb/breakpoint:"
+    local py_debug
+    py_debug=$(grep -rn --include="*.py" \
+      -e '^[[:space:]]*print(' -e 'pdb\.set_trace' -e 'breakpoint()' -e 'import pdb' \
+      "$search_dir" 2>/dev/null | grep -v __pycache__ | grep -v test_ | head -20 || true)
+    if [[ -n "$py_debug" ]]; then
+      echo "$py_debug"
+      found=$((found + $(echo "$py_debug" | wc -l)))
+    else
+      echo "  None found"
+    fi
+  fi
+
+  # Dart
+  if find "$search_dir" -maxdepth 5 -name "*.dart" 2>/dev/null | head -1 >/dev/null 2>&1; then
+    echo ""
+    echo "[Dart] print/debugPrint:"
+    local dart_debug
+    dart_debug=$(grep -rn --include="*.dart" \
+      -e '^[[:space:]]*print(' -e 'debugPrint(' \
+      "$search_dir" 2>/dev/null | grep -v _test.dart | head -20 || true)
+    if [[ -n "$dart_debug" ]]; then
+      echo "$dart_debug"
+      found=$((found + $(echo "$dart_debug" | wc -l)))
+    else
+      echo "  None found"
+    fi
+  fi
+
+  # Go
+  if find "$search_dir" -maxdepth 5 -name "*.go" 2>/dev/null | head -1 >/dev/null 2>&1; then
+    echo ""
+    echo "[Go] fmt.Print/log.Print:"
+    local go_debug
+    go_debug=$(grep -rn --include="*.go" \
+      -e 'fmt\.Print' -e 'log\.Print' \
+      "$search_dir" 2>/dev/null | grep -v _test.go | head -20 || true)
+    if [[ -n "$go_debug" ]]; then
+      echo "$go_debug"
+      found=$((found + $(echo "$go_debug" | wc -l)))
+    else
+      echo "  None found"
+    fi
+  fi
+
+  echo ""
+  echo "=== Debug code instances found: $found ==="
+  [[ "$found" -eq 0 ]] && return 0 || return 1
+}
+
+# ─── doc-consistency: 문서 간 일관성 검사 ───
+
+cmd_doc_consistency() {
+  local docs_dir="${1:-.}"
+
+  echo "=== Document Consistency Check ==="
+  echo "Scanning: $docs_dir"
+
+  local issues=0
+
+  # 1. 데이터 모델 용어 추출 및 교차 검증
+  echo ""
+  echo "[1] Data Model Terms"
+  local models
+  models=$(grep -rh -oP '(?<=###?\s)([\w]+(?:\s?(?:Model|Schema|Table|Entity|Type|Interface)))' "$docs_dir"/*.md 2>/dev/null | sort -u || true)
+  if [[ -n "$models" ]]; then
+    while IFS= read -r model; do
+      local count
+      count=$(grep -rl "$model" "$docs_dir"/*.md 2>/dev/null | wc -l)
+      if [[ "$count" -eq 1 ]]; then
+        echo "  WARNING: '$model' only referenced in 1 document"
+        ((issues++)) || true
+      fi
+    done <<< "$models"
+  else
+    echo "  No model definitions found"
+  fi
+
+  # 2. API 엔드포인트 일관성
+  echo ""
+  echo "[2] API Endpoints"
+  local endpoints
+  endpoints=$(grep -rhoP '(GET|POST|PUT|PATCH|DELETE)\s+/[\w/{}:-]+' "$docs_dir"/*.md 2>/dev/null | sort -u || true)
+  if [[ -n "$endpoints" ]]; then
+    local ep_count
+    ep_count=$(echo "$endpoints" | wc -l)
+    echo "  Found $ep_count unique endpoints"
+
+    local paths
+    paths=$(echo "$endpoints" | awk '{print $2}' | sort | uniq -d)
+    if [[ -n "$paths" ]]; then
+      echo "  Multi-method paths (verify intentional):"
+      echo "$paths" | while read -r p; do
+        echo "    $p: $(echo "$endpoints" | grep "$p" | awk '{print $1}' | tr '\n' ' ')"
+      done
+    fi
+  else
+    echo "  No API endpoints found"
+  fi
+
+  # 3. 용어 일관성 (camelCase vs snake_case 혼용)
+  echo ""
+  echo "[3] Naming Convention"
+  local camel snake
+  camel=$(grep -rhoP '\b[a-z]+[A-Z][a-zA-Z]*\b' "$docs_dir"/*.md 2>/dev/null | sort -u | head -10 || true)
+  snake=$(grep -rhoP '\b[a-z]+_[a-z_]+\b' "$docs_dir"/*.md 2>/dev/null | sort -u | head -10 || true)
+  if [[ -n "$camel" ]] && [[ -n "$snake" ]]; then
+    echo "  Mixed conventions detected (may be intentional):"
+    echo "  camelCase samples: $(echo "$camel" | head -3 | tr '\n' ', ')"
+    echo "  snake_case samples: $(echo "$snake" | head -3 | tr '\n' ', ')"
+  else
+    echo "  Consistent naming or insufficient data"
+  fi
+
+  # 4. 상호 참조 검증
+  echo ""
+  echo "[4] Cross-references"
+  local refs
+  refs=$(grep -rhoP '(?:참조|see|ref):\s*[\w-]+\.md' "$docs_dir"/*.md 2>/dev/null || true)
+  if [[ -n "$refs" ]]; then
+    while read -r ref; do
+      local target
+      target=$(echo "$ref" | grep -oP '[\w-]+\.md')
+      if [[ ! -f "$docs_dir/$target" ]]; then
+        echo "  BROKEN REF: $ref -> $docs_dir/$target not found"
+        ((issues++)) || true
+      fi
+    done <<< "$refs"
+  else
+    echo "  No explicit cross-references found"
+  fi
+
+  echo ""
+  echo "=== Issues found: $issues ==="
+  [[ "$issues" -eq 0 ]] && return 0 || return 1
+}
+
+# ─── doc-code-check: SPEC/문서 vs 실제 코드 매칭 ───
+
+cmd_doc_code_check() {
+  local docs_dir="${1:-docs}"
+
+  echo "=== Doc-Code Consistency Check ==="
+
+  local issues=0
+
+  # 1. 라우트/엔드포인트 매칭
+  echo ""
+  echo "[1] Route Matching"
+  local doc_routes
+  doc_routes=$(grep -rhoP '(GET|POST|PUT|PATCH|DELETE)\s+/[\w/{}:-]+' "$docs_dir"/*.md SPEC.md 2>/dev/null | sort -u || true)
+  if [[ -n "$doc_routes" ]]; then
+    while IFS= read -r route; do
+      local method path
+      method=$(echo "$route" | awk '{print $1}')
+      path=$(echo "$route" | awk '{print $2}' | sed 's/{[^}]*}//g' | sed 's|//|/|g' | sed 's|/$||')
+      local found
+      found=$(grep -rl "$path" src/ app/ lib/ server/ api/ routes/ 2>/dev/null | head -1 || true)
+      if [[ -z "$found" ]]; then
+        echo "  MISSING: $method $path (not found in code)"
+        ((issues++)) || true
+      else
+        echo "  OK: $method $path -> $found"
+      fi
+    done <<< "$doc_routes"
+  else
+    echo "  No routes in docs to verify"
+  fi
+
+  # 2. 모델/스키마 매칭
+  echo ""
+  echo "[2] Model Matching"
+  local doc_models
+  doc_models=$(grep -rhoP '(?:model|schema|table|interface|type)\s+(\w+)' "$docs_dir"/*.md SPEC.md 2>/dev/null | awk '{print $2}' | sort -u || true)
+  if [[ -n "$doc_models" ]]; then
+    while IFS= read -r model; do
+      local found
+      found=$(grep -rl "class $model\|interface $model\|type $model\|model $model\|table.*$model" src/ app/ lib/ server/ prisma/ 2>/dev/null | head -1 || true)
+      if [[ -z "$found" ]]; then
+        echo "  MISSING: model $model (not found in code)"
+        ((issues++)) || true
+      else
+        echo "  OK: $model -> $found"
+      fi
+    done <<< "$doc_models"
+  else
+    echo "  No models in docs to verify"
+  fi
+
+  # 3. 테스트 존재 여부
+  echo ""
+  echo "[3] Test Coverage"
+  local test_dirs
+  test_dirs=$(find . -type d \( -name "test" -o -name "tests" -o -name "__tests__" -o -name "spec" \) 2>/dev/null | head -5 || true)
+  if [[ -n "$test_dirs" ]]; then
+    local test_count
+    test_count=$(find $test_dirs -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "*_test.*" -o -name "test_*" \) 2>/dev/null | wc -l)
+    echo "  Test files found: $test_count"
+  else
+    echo "  WARNING: No test directories found"
+    ((issues++)) || true
+  fi
+
+  echo ""
+  echo "=== Issues found: $issues ==="
+  [[ "$issues" -eq 0 ]] && return 0 || return 1
+}
+
+# ─── e2e-gate: E2E 테스트 프레임워크 감지 + 실행 ───
+
+cmd_e2e_gate() {
+  require_jq
+
+  echo "=== E2E Test Gate ==="
+
+  local e2e_cmd="" e2e_framework=""
+
+  # 프로젝트 유형 + E2E 프레임워크 자동 감지
+  if [[ -f "package.json" ]]; then
+    # Web 프로젝트
+    if ls playwright.config.* 2>/dev/null | head -1 >/dev/null 2>&1; then
+      e2e_framework="playwright"
+      e2e_cmd="npx playwright test --reporter=line"
+    elif ls cypress.config.* 2>/dev/null | head -1 >/dev/null 2>&1; then
+      e2e_framework="cypress"
+      e2e_cmd="npx cypress run --reporter spec"
+    fi
+  elif [[ -f "pubspec.yaml" ]]; then
+    # Flutter 프로젝트
+    if [[ -d "integration_test" ]]; then
+      e2e_framework="flutter_integration_test"
+      e2e_cmd="flutter test integration_test/"
+    elif [[ -d ".maestro" ]]; then
+      e2e_framework="maestro"
+      e2e_cmd="maestro test .maestro/"
+    fi
+  fi
+
+  # 프레임워크 미감지 시 exit 2 (skip)
+  if [[ -z "$e2e_cmd" ]]; then
+    echo "[e2e] SKIP (no E2E framework detected)"
+
+    # verification.json에 e2e 키 병합
+    if [[ -f "$VERIFICATION_FILE" ]]; then
+      jq_inplace "$VERIFICATION_FILE" '.e2e = {"command": null, "framework": null, "exitCode": null, "summary": "no_e2e_framework"}'
+    else
+      echo '{"e2e": {"command": null, "framework": null, "exitCode": null, "summary": "no_e2e_framework"}}' | jq '.' > "$VERIFICATION_FILE"
+    fi
+
+    echo "=== E2E SKIPPED (no framework) ==="
+    return 2
+  fi
+
+  echo "[e2e] Framework: $e2e_framework"
+  echo "[e2e] Running: $e2e_cmd"
+
+  local output exit_code
+  output=$(eval "$e2e_cmd" 2>&1) && exit_code=0 || exit_code=$?
+
+  local summary
+  if [[ $exit_code -eq 0 ]]; then
+    summary="pass"
+    echo "[e2e] PASS (exit 0)"
+  else
+    summary=$(echo "$output" | tail -1 | head -c 200)
+    echo "[e2e] FAIL (exit $exit_code)"
+    echo "$output" | tail -10
+  fi
+
+  # verification.json에 e2e 키 병합 (기존 데이터 보존)
+  local e2e_result
+  e2e_result=$(jq -n \
+    --arg cmd "$e2e_cmd" \
+    --arg fw "$e2e_framework" \
+    --argjson ec "$exit_code" \
+    --arg sum "$summary" \
+    '{"command": $cmd, "framework": $fw, "exitCode": $ec, "summary": $sum}')
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --argjson e2e "$e2e_result" '.e2e = $e2e'
+  else
+    echo "{}" | jq --argjson e2e "$e2e_result" '.e2e = $e2e' > "$VERIFICATION_FILE"
+  fi
+
+  echo ""
+  echo "E2E results merged into $VERIFICATION_FILE"
+
+  # progress 파일 DoD 업데이트 (e2e_pass 필드가 존재하는 경우)
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    local has_e2e_pass
+    has_e2e_pass=$(jq '.dod | has("e2e_pass")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    if [[ "$has_e2e_pass" == "true" ]]; then
+      jq_inplace "$PROGRESS_FILE" --argjson ec "$exit_code" --arg ev "e2e-gate at $(timestamp)" '
+        .dod.e2e_pass.checked = ($ec == 0)
+        | .dod.e2e_pass.evidence = (if $ec == 0 then "e2e pass " + $ev else "e2e fail " + $ev end)
+      '
+    fi
+  fi
+
+  if [[ $exit_code -eq 0 ]]; then
+    echo "=== E2E GATE PASSED ==="
+    return 0
+  else
+    echo "=== E2E GATE FAILED ==="
+    return 1
+  fi
+}
+
+# ─── design-polish-gate: 디자인 폴리싱 WCAG 체크 + 스크린샷 캡처 ───
+
+cmd_design_polish_gate() {
+  echo "=== Design Polish Gate ==="
+  require_jq
+
+  # design-polish 플러그인 경로 감지
+  local dp_root=""
+  for dp in "$HOME/.claude/plugins/marketplaces/design-polish" \
+            "$HOME/.claude/plugins/design-polish"; do
+    if [[ -f "$dp/scripts/search.cjs" ]]; then
+      dp_root="$dp"
+      break
+    fi
+  done
+
+  if [[ -z "$dp_root" ]]; then
+    echo "[design-polish-gate] SKIP (design-polish plugin not installed)"
+    local ts
+    ts=$(timestamp)
+    if [[ -f "$VERIFICATION_FILE" ]]; then
+      jq_inplace "$VERIFICATION_FILE" --arg ts "$ts" \
+        '.designPolish = {"timestamp": $ts, "result": "skip", "reason": "plugin not installed"}'
+    else
+      jq -n --arg ts "$ts" \
+        '{"designPolish": {"timestamp": $ts, "result": "skip", "reason": "plugin not installed"}}' > "$VERIFICATION_FILE"
+    fi
+    # DoD에 SKIP 기록
+    if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+      local has_dq
+      has_dq=$(jq '.dod | has("design_quality")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+      if [[ "$has_dq" == "true" ]]; then
+        jq_inplace "$PROGRESS_FILE" --arg ev "SKIP: design-polish not installed" '
+          .dod.design_quality.checked = true
+          | .dod.design_quality.evidence = $ev
+        '
+      fi
+    fi
+    echo "=== DESIGN POLISH GATE: SKIP ==="
+    return 2
+  fi
+
+  echo "[design-polish-gate] Plugin found: $dp_root"
+
+  # puppeteer 의존성 확인
+  if ! command -v npx >/dev/null 2>&1; then
+    echo "[design-polish-gate] SKIP (npx not available — puppeteer requires Node.js)"
+    echo "=== DESIGN POLISH GATE: SKIP ==="
+    return 2
+  fi
+
+  # capture.cjs 존재 확인
+  if [[ ! -f "$dp_root/scripts/capture.cjs" ]]; then
+    echo "[design-polish-gate] SKIP (capture.cjs not found in plugin)"
+    echo "=== DESIGN POLISH GATE: SKIP ==="
+    return 2
+  fi
+
+  # 서버 시작 (smoke-check 로직 재사용)
+  local port=3000
+  local start_cmd=""
+  if [[ -f "package.json" ]]; then
+    local pm="npm"
+    [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
+    [[ -f "yarn.lock" ]] && pm="yarn"
+    [[ -f "bun.lockb" ]] && pm="bun"
+
+    if jq -e '.scripts.start' package.json >/dev/null 2>&1; then
+      start_cmd="$pm run start"
+    elif jq -e '.scripts.dev' package.json >/dev/null 2>&1; then
+      start_cmd="$pm run dev"
+    elif jq -e '.scripts.preview' package.json >/dev/null 2>&1; then
+      start_cmd="$pm run preview"
+    fi
+  fi
+
+  if [[ -z "$start_cmd" ]]; then
+    echo "[design-polish-gate] SKIP (no start/dev script — cannot capture screenshots)"
+    echo "=== DESIGN POLISH GATE: SKIP ==="
+    return 2
+  fi
+
+  echo "[design-polish-gate] Starting server: $start_cmd"
+  local server_pid
+  eval "$start_cmd" > /tmp/design-polish-server.log 2>&1 &
+  server_pid=$!
+
+  # 서버 응답 대기 (최대 15초)
+  local elapsed=0
+  local server_ready=false
+  while [[ $elapsed -lt 15 ]]; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      echo "[design-polish-gate] Server process exited prematurely"
+      break
+    fi
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
+    if [[ "$http_code" != "000" ]] && [[ "$http_code" =~ ^[23] ]]; then
+      server_ready=true
+      break
+    fi
+  done
+
+  if [[ "$server_ready" != "true" ]]; then
+    # 서버 정리
+    kill "$server_pid" 2>/dev/null || true
+    pkill -P "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+    rm -f /tmp/design-polish-server.log
+    echo "[design-polish-gate] SKIP (server failed to start)"
+    echo "=== DESIGN POLISH GATE: SKIP ==="
+    return 2
+  fi
+
+  echo "[design-polish-gate] Server ready on port $port"
+
+  # capture.cjs 실행 (WCAG + 스크린샷)
+  local capture_exit=0
+  echo "[design-polish-gate] Running capture: node $dp_root/scripts/capture.cjs --wcag /"
+  node "$dp_root/scripts/capture.cjs" --wcag / 2>&1 && capture_exit=0 || capture_exit=$?
+
+  # 서버 프로세스 정리
+  kill "$server_pid" 2>/dev/null || true
+  pkill -P "$server_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+  rm -f /tmp/design-polish-server.log
+
+  # WCAG 리포트 요약
+  local wcag_violations=0
+  local wcag_summary="no report"
+  if [[ -f ".design-polish/accessibility/wcag-report.json" ]]; then
+    wcag_violations=$(jq '[.violations // [] | .[]] | length' ".design-polish/accessibility/wcag-report.json" 2>/dev/null || echo "0")
+    wcag_summary="$wcag_violations violations found"
+    echo "[design-polish-gate] WCAG: $wcag_summary"
+  else
+    echo "[design-polish-gate] WARNING: WCAG report not generated"
+  fi
+
+  # 스크린샷 확인
+  if [[ -f ".design-polish/screenshots/current-main.png" ]]; then
+    echo "[design-polish-gate] Screenshot captured: .design-polish/screenshots/current-main.png"
+  else
+    echo "[design-polish-gate] WARNING: Screenshot not captured"
+  fi
+
+  # verification.json에 결과 기록
+  local ts result
+  ts=$(timestamp)
+  if [[ "$wcag_violations" -gt 0 ]]; then
+    result="soft_fail"
+  else
+    result="pass"
+  fi
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
+      '.designPolish = {"timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary}'
+  else
+    jq -n --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
+      '{"designPolish": {"timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary}}' > "$VERIFICATION_FILE"
+  fi
+
+  echo "=== DESIGN POLISH GATE: ${result^^} ==="
+  if [[ "$result" == "soft_fail" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# ─── 메인 디스패치 ───
+
+main() {
+  local subcmd="${1:-help}"
+  shift || true
+
+  # --progress-file를 글로벌로 파싱
+  parse_progress_file_arg "$@"
+  set -- "${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}"
+
+  case "$subcmd" in
+    init)              cmd_init "$@" ;;
+    init-ralph)        cmd_init_ralph "$@" ;;
+    status)            cmd_status "$@" ;;
+    update-step)       cmd_update_step "$@" ;;
+    # 하위 호환: update-phase도 update-step으로 처리
+    update-phase)      cmd_update_step "$@" ;;
+    quality-gate)      cmd_quality_gate "$@" ;;
+    secret-scan)       cmd_secret_scan "$@" ;;
+    artifact-check)    cmd_artifact_check "$@" ;;
+    smoke-check)       cmd_smoke_check "$@" ;;
+    record-error)      cmd_record_error "$@" ;;
+    check-tools)       cmd_check_tools "$@" ;;
+    find-debug-code)   cmd_find_debug_code "$@" ;;
+    doc-consistency)   cmd_doc_consistency "$@" ;;
+    doc-code-check)    cmd_doc_code_check "$@" ;;
+    e2e-gate)           cmd_e2e_gate "$@" ;;
+    design-polish-gate) cmd_design_polish_gate "$@" ;;
+    help|--help|-h)
+      echo "Usage: shared-gate.sh <subcommand> [--progress-file <path>] [args]"
+      echo ""
+      echo "Subcommands:"
+      echo "  init [--template <type>] [project] [req]  - Initialize progress JSON"
+      echo "    Templates: full-auto, plan, implement, review, polish, e2e, doc-check"
+      echo "  init-ralph <promise> <progress_file> [max] - Create Ralph Loop file"
+      echo "  status                                     - Show current status"
+      echo "  update-step <step> <status>                - Transition step state"
+      echo "  quality-gate                               - Run build/type/lint/test (+ env manifest)"
+      echo "  secret-scan                                - Scan for hardcoded secrets (HARD_FAIL)"
+      echo "  artifact-check                             - Check build artifact exists (SOFT_FAIL)"
+      echo "  smoke-check [port] [timeout]               - Server start + healthcheck (SOFT_FAIL)"
+      echo "  record-error --file <f> --type <t> --msg <m> [--level L0-L4] [--action '...']"
+      echo "                                             - Record error + escalation tracking"
+      echo "    --level L0-L4    Error level (L0=env, L1=build, L2=type, L3=runtime, L4=quality)"
+      echo "    --action '...'   Description of attempted fix"
+      echo "    --result pass|fail  Result of the action"
+      echo "    --reset-count    Reset attempt counter (on escalation level change)"
+      echo "    Exit codes: 0=continue, 1=escalate, 2=codex needed, 3=user intervention"
+      echo "  check-tools                                - Check codex/gemini availability"
+      echo "  find-debug-code [dir]                      - Find debug code"
+      echo "  doc-consistency [docs_dir]                 - Check doc consistency"
+      echo "  doc-code-check [docs_dir]                  - Check doc-code matching"
+      echo "  e2e-gate                                   - Run E2E tests (auto-detect framework)"
+      echo "  design-polish-gate                         - WCAG check + screenshot capture (SOFT_FAIL)"
+      echo ""
+      echo "Global options:"
+      echo "  --progress-file <path>  Specify progress file (auto-detected if omitted)"
+      ;;
+    *)
+      die "Unknown subcommand: $subcmd. Run with 'help' for usage."
+      ;;
+  esac
+}
+
+main "$@"

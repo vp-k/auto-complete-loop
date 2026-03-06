@@ -1,118 +1,122 @@
 # Auto Complete Loop
 
-AI 코딩 완주 프레임워크. Ralph Loop 내장 + DoD/SPEC/TDD/Fresh Context Verification으로 AI가 끝까지 완성하도록 강제합니다.
+[한국어](README.ko.md)
 
-## 설치
+AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification ensures AI completes tasks to the end.
 
-Claude Code 플러그인으로 설치:
+## Installation
+
+Install as a Claude Code plugin:
 ```bash
 claude plugins install /path/to/auto-complete-loop
 ```
 
-설치 후 기존 `~/.claude/commands/`의 동명 파일(implement-docs-auto.md, plan-docs-auto-gemini.md, polish-for-release-gemini.md)을 삭제하세요 (충돌 방지).
+After installation, delete any same-named files in `~/.claude/commands/` (implement-docs-auto.md, plan-docs-auto-gemini.md, polish-for-release-gemini.md) to prevent conflicts.
 
-## 명령어
+## Commands
 
 ### `/implement-docs-auto <definition> <doclist>`
-기획 문서를 실제 코드로 구현합니다. Ralph Loop이 자동 활성화되어 완료까지 반복합니다.
+Implements planning documents as actual code. Ralph Loop auto-activates and iterates until completion.
 
 ### `/plan-docs-auto <definition> <doclist>`
-기획 문서를 2자 자동 토론(codex-cli, Claude Code)으로 완성합니다.
+Completes planning documents via 2-party auto-discussion (codex-cli, Claude Code).
 
 ### `/plan-docs-auto-gemini <definition> <doclist>`
-기획 문서를 3자 자동 토론(codex-cli, Gemini, Claude Code)으로 완성합니다.
+Completes planning documents via 3-party auto-discussion (codex-cli, Gemini, Claude Code).
 
 ### `/polish-for-release [definition] [doclist]`
-프로덕션 릴리즈 전 폴리싱을 수행합니다. codex-cli와 Claude Code 2자 토론.
+Pre-production release polishing. 2-party discussion with codex-cli and Claude Code.
 
 ### `/polish-for-release-gemini [definition] [doclist]`
-프로덕션 릴리즈 전 폴리싱을 수행합니다. codex-cli, Gemini, Claude Code 3자 토론.
+Pre-production release polishing. 3-party discussion with codex-cli, Gemini, and Claude Code.
 
-### `/code-review-loop [--rounds N | --goal "조건"] <scope>`
-코드 리뷰를 자동 반복 수행합니다. codex-cli가 SEC/ERR/DATA/PERF/CODE 전 관점에서 독립 리뷰 후 Claude Code가 검증/수정.
-- 기본: 3라운드 리뷰→수정 반복
-- `--rounds N`: N라운드 반복
-- `--goal "CRITICAL/HIGH 0개"`: 목표 달성까지 반복 (최대 10라운드)
+### `/code-review-loop [--rounds N | --goal "condition"] <scope>`
+Automated iterative code review. codex-cli independently reviews from SEC/ERR/DATA/PERF/CODE perspectives, then Claude Code verifies/fixes.
+- Default: 3 rounds of review → fix iteration
+- `--rounds N`: N rounds of iteration
+- `--goal "0 CRITICAL/HIGH"`: Iterate until goal met (max 10 rounds)
 
-### `/code-review-loop-gemini [--rounds N | --goal "조건"] <scope>`
-코드 리뷰를 자동 반복 수행합니다. codex-cli(SEC/ERR/DATA) + gemini-cli(PERF/CODE) 3자 독립 리뷰 후 Claude Code가 검증/수정.
-- 기본: 3라운드 리뷰→수정 반복
-- `--rounds N`: N라운드 반복
-- `--goal "CRITICAL/HIGH 0개"`: 목표 달성까지 반복 (최대 10라운드)
+### `/code-review-loop-gemini [--rounds N | --goal "condition"] <scope>`
+Automated iterative code review. codex-cli (SEC/ERR/DATA) + gemini-cli (PERF/CODE) 3-party independent review, then Claude Code verifies/fixes.
+- Default: 3 rounds of review → fix iteration
+- `--rounds N`: N rounds of iteration
+- `--goal "0 CRITICAL/HIGH"`: Iterate until goal met (max 10 rounds)
 
-### `/full-auto <요구사항>`
-전체 프로젝트 라이프사이클을 자동 수행합니다.
-- Phase 0: 요구사항 확장 + 사용자 승인 (유일한 상호작용)
-- Phase 1: codex 토론으로 기획 문서 완성
-- Phase 2: TDD 기반 코드 구현
-- Phase 3: codex 코드 리뷰 (3라운드)
-- Phase 4: 릴리즈 검증 및 폴리싱
+### `/full-auto <requirements>`
+Automated full project lifecycle.
+- Phase 0: Requirements expansion + user approval (only interaction)
+- Phase 1: codex discussion to complete planning docs
+- Phase 2: TDD-based code implementation
+- Phase 3: codex code review (3 rounds)
+- Phase 4: Release verification and polishing
 
 ### `/check-docs [docs_dir]`
-문서 정합성을 검증합니다. doc↔doc 일관성 + doc↔code 매칭을 스크립트+AI로 검증하고 자동 수정.
-- 1단계: 스크립트 구조적 검사 (doc-consistency + doc-code-check)
-- 2단계: codex 의미적 검증 (데이터 모델, API, 용어 일관성)
-- 3단계: 최종 확인 (스크립트 재실행)
+Document consistency verification. Validates doc↔doc consistency + doc↔code matching via scripts + AI, with auto-fix.
+- Step 1: Script-based structural checks (doc-consistency + doc-code-check)
+- Step 2: codex semantic validation (data models, APIs, terminology consistency)
+- Step 3: Final confirmation (re-run scripts)
 
 ### `/add-e2e [docs_dir]`
-기존 프로젝트에 E2E 테스트를 추가합니다.
-- 문서 경로 지정 시: 문서 분석 → 문서↔코드 정합성 → 시나리오 도출
-- 인수 없이 실행 시: 코드 분석 → 핵심 플로우 추론 → 회귀 방지 테스트 작성
-- 프레임워크 자동 선택: Web→Playwright, Flutter→integration_test, Mobile→Maestro
+Adds E2E tests to existing projects.
+- With docs path: Document analysis → doc↔code consistency → scenario derivation
+- Without args: Code analysis → core flow inference → regression prevention tests
+- Auto framework selection: Web → Playwright, Flutter → integration_test, Mobile → Maestro
 
-## 핵심 메커니즘
+## Core Mechanisms
 
-### Ralph Loop 내장
-- Stop Hook이 세션 종료를 물리적으로 차단
-- completion-promise + 검증 파일(.claude-verification.json)로 거짓 완료 방지
-- Iteration 단위 작업 분할로 컨텍스트 고갈 방지
+### Built-in Ralph Loop
+- Stop Hook physically prevents session termination
+- completion-promise + verification file (.claude-verification.json) prevents false completion
+- Iteration-based task splitting prevents context exhaustion
 
-### 5원칙 통합
-1. **DoD (Definition of Done)**: DONE.md 템플릿으로 완료 기준 명확화
-2. **SPEC**: SPEC.md 템플릿으로 구현 기준 명확화
-3. **티켓 분할**: 문서를 독립 검증 가능한 티켓으로 분할
-4. **Fresh Context Verification**: 별도 AI가 fresh context에서 검증
-5. **Handoff**: Iteration 간 맥락(왜/어떻게) 전달
+### 5 Principles Integration
+1. **DoD (Definition of Done)**: DONE.md template for clear completion criteria
+2. **SPEC**: SPEC.md template for clear implementation criteria
+3. **Ticket Splitting**: Split documents into independently verifiable tickets
+4. **Fresh Context Verification**: Separate AI verifies in fresh context
+5. **Handoff**: Context transfer (why/how) between iterations
 
-## 파일 구조
+## File Structure
 
 ```
 auto-complete-loop/
-├── .claude-plugin/plugin.json           # 플러그인 메타데이터
+├── .claude-plugin/plugin.json           # Plugin metadata
 ├── commands/
-│   ├── implement-docs-auto.md           # 기획 문서 → 코드 구현
-│   ├── plan-docs-auto.md               # 기획 문서 2자 토론 완성
-│   ├── plan-docs-auto-gemini.md         # 기획 문서 3자 토론 완성 (gemini 포함)
-│   ├── polish-for-release.md            # 릴리즈 전 폴리싱 (2자)
-│   ├── polish-for-release-gemini.md     # 릴리즈 전 폴리싱 (3자, gemini 포함)
-│   ├── code-review-loop.md             # 코드 리뷰 자동 반복 (2자)
-│   ├── code-review-loop-gemini.md       # 코드 리뷰 자동 반복 (3자, gemini 포함)
-│   ├── full-auto.md                     # 기획→구현→검수 올인원
-│   ├── add-e2e.md                       # 기존 프로젝트에 E2E 테스트 추가
-│   └── check-docs.md                    # 문서 정합성 검증 (doc↔doc + doc↔code)
+│   ├── implement-docs-auto.md           # Planning docs → code implementation
+│   ├── plan-docs-auto.md               # Planning docs 2-party discussion
+│   ├── plan-docs-auto-gemini.md         # Planning docs 3-party discussion (with gemini)
+│   ├── polish-for-release.md            # Pre-release polishing (2-party)
+│   ├── polish-for-release-gemini.md     # Pre-release polishing (3-party, with gemini)
+│   ├── code-review-loop.md             # Auto iterative code review (2-party)
+│   ├── code-review-loop-gemini.md       # Auto iterative code review (3-party, with gemini)
+│   ├── full-auto.md                     # Plan → implement → review all-in-one
+│   ├── add-e2e.md                       # Add E2E tests to existing project
+│   └── check-docs.md                    # Document consistency check (doc↔doc + doc↔code)
 ├── hooks/
-│   └── stop-hook.sh                     # Stop hook (Ralph Loop 확장)
+│   ├── hooks.json                       # Hook configuration
+│   └── stop-hook.sh                     # Stop hook (Ralph Loop extension)
 ├── scripts/
-│   └── shared-gate.sh                   # 범용 품질 게이트 + 유틸리티
-├── rules/shared-rules.md               # 모든 스킬 공통 규칙
-├── templates/                           # DONE.md, SPEC.md 템플릿
-└── README.md
+│   └── shared-gate.sh                   # Universal quality gate + utilities
+├── rules/shared-rules.md               # Common rules for all skills
+├── templates/                           # DONE.md, SPEC.md templates
+├── README.md                           # English
+└── README.ko.md                        # Korean
 ```
 
-## shared-gate.sh 서브커맨드
+## shared-gate.sh Subcommands
 
-| 서브커맨드 | 용도 |
-|-----------|------|
-| `init --template <type>` | progress JSON 초기화 (full-auto/plan/implement/review/polish/e2e/doc-check) |
-| `init-ralph <promise> <progress_file> [max]` | Ralph Loop 파일 생성 |
-| `status` | 현재 상태 요약 출력 |
-| `update-step <step> <status>` | 단계 상태 전이 (동적 검증) |
-| `quality-gate` | 빌드/타입/린트/테스트 일괄 실행 + verification.json 기록 |
-| `record-error --file --type --msg` | 에러 반복 판별 + errorHistory 업데이트 |
-| `check-tools` | codex/gemini CLI 존재 확인 |
-| `find-debug-code [dir]` | console.log/print/debugger 탐색 |
-| `doc-consistency [dir]` | 문서 간 일관성 검사 |
-| `doc-code-check [dir]` | 문서↔코드 매칭 |
-| `e2e-gate` | E2E 테스트 프레임워크 감지 + 실행 |
+| Subcommand | Purpose |
+|------------|---------|
+| `init --template <type>` | Initialize progress JSON (full-auto/plan/implement/review/polish/e2e/doc-check) |
+| `init-ralph <promise> <progress_file> [max]` | Create Ralph Loop files |
+| `status` | Output current status summary |
+| `update-step <step> <status>` | Step state transition (dynamic validation) |
+| `quality-gate` | Run build/type/lint/test batch + record verification.json |
+| `record-error --file --type --msg` | Error recurrence detection + errorHistory update |
+| `check-tools` | Check codex/gemini CLI availability |
+| `find-debug-code [dir]` | Find console.log/print/debugger |
+| `doc-consistency [dir]` | Inter-document consistency check |
+| `doc-code-check [dir]` | Document ↔ code matching |
+| `e2e-gate` | E2E test framework detection + execution |
 
-글로벌 옵션: `--progress-file <path>` (미지정 시 자동 탐지)
+Global option: `--progress-file <path>` (auto-detected if not specified)

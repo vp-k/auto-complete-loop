@@ -1,5 +1,17 @@
 # Specification
 
+## Target Users (Personas Reference)
+- 페르소나 1: [이름] — [역할], [핵심 니즈]
+- 페르소나 2: [이름] — [역할], [핵심 니즈]
+
+## Core Jobs (JTBD Reference)
+- When [상황], I want to [행동], So I can [가치]
+
+## Success Criteria
+- North Star Metric: [지표]
+- SC-1: [정성적/정량적 기준]
+- SC-2: [기준]
+
 ## User Stories
 - US-001: As a [역할], I want to [행동], so that [가치]
   - AC-001-1: [수락 기준]

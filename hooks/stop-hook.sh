@@ -35,15 +35,18 @@ fi
 FRONTMATTER=$(awk '/^---$/{i++; if(i==2) exit; next} i==1{print}' "$RALPH_STATE_FILE")
 
 # CR 문자 제거 (Windows CRLF 대응)
-ITERATION=$(echo "$FRONTMATTER" | grep "^iteration:" | sed 's/iteration: *//' | tr -d '\r')
-MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep "^max_iterations:" | sed 's/max_iterations: *//' | tr -d '\r')
-COMPLETION_PROMISE=$(echo "$FRONTMATTER" | grep "^completion_promise:" | sed 's/completion_promise: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r')
+ITERATION=$(echo "$FRONTMATTER" | grep "^iteration:" | sed 's/iteration: *//' | tr -d '\r' || true)
+MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep "^max_iterations:" | sed 's/max_iterations: *//' | tr -d '\r' || true)
+COMPLETION_PROMISE=$(echo "$FRONTMATTER" | grep "^completion_promise:" | sed 's/completion_promise: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r' || true)
 PROGRESS_FILE_FROM_FRONTMATTER=$(echo "$FRONTMATTER" | grep "^progress_file:" | sed 's/progress_file: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r' || true)
 
 # 데이터 검증
 if ! [[ "$ITERATION" =~ ^[0-9]+$ ]] || ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
-  echo "Ralph loop state file is corrupted. Removing and allowing stop."
-  rm -f "$RALPH_STATE_FILE" ".claude/ralph-loop-failure-history.local"
+  echo "Auto Complete Loop: WARNING - Ralph loop state file is corrupted (iteration=$ITERATION, max=$MAX_ITERATIONS)."
+  echo "Auto Complete Loop: State file preserved at $RALPH_STATE_FILE for manual inspection."
+  echo "Auto Complete Loop: To recover, fix or delete $RALPH_STATE_FILE manually."
+  # fail-closed: 손상 상태에서 루프 중단하되 파일 보존
+  rm -f ".claude/ralph-loop-failure-history.local"
   exit 0
 fi
 
@@ -80,7 +83,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
   # 먼저 <promise> 태그 존재 여부를 grep으로 확인 (perl 불필요)
   PROMISE_TEXT=""
   if [[ -n "$LAST_OUTPUT" ]] && echo "$LAST_OUTPUT" | grep -q '<promise>' 2>/dev/null; then
-    # sed로 promise 태그 내용 추출 (단일 라인 + 멀티라인 대응)
+    # sed로 promise 태그 내용 추출 (단일 라인 전용 — 규약상 항상 단일 라인)
     PROMISE_TEXT=$(echo "$LAST_OUTPUT" | sed -n 's/.*<promise>\(.*\)<\/promise>.*/\1/p' | head -1 | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   fi
 
@@ -92,13 +95,27 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
     # 1. progress 파일 검증 (존재하는 경우)
     # 프론트매터에 지정된 파일만 검증. 미지정 시 기존 glob 폴백 (하위 호환)
     VERIFIED_PROGRESS_FILES=()
-    if [[ -n "${PROGRESS_FILE_FROM_FRONTMATTER:-}" ]] && [[ -f "$PROGRESS_FILE_FROM_FRONTMATTER" ]]; then
-      PROGRESS_FILES_TO_CHECK=("$PROGRESS_FILE_FROM_FRONTMATTER")
+    if [[ -n "${PROGRESS_FILE_FROM_FRONTMATTER:-}" ]]; then
+      # frontmatter에 지정된 파일만 사용 (파일 부재 시 glob fallback 금지)
+      if [[ -f "$PROGRESS_FILE_FROM_FRONTMATTER" ]]; then
+        PROGRESS_FILES_TO_CHECK=("$PROGRESS_FILE_FROM_FRONTMATTER")
+      else
+        # 지정된 파일이 없으면 검증 실패 (증거 없이 통과 방지)
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}Specified progress file $PROGRESS_FILE_FROM_FRONTMATTER not found. "
+        PROGRESS_FILES_TO_CHECK=()
+      fi
     else
+      # frontmatter 미지정 시 glob 폴백 (하위 호환)
       PROGRESS_FILES_TO_CHECK=()
       for pf in .claude-*progress*.json; do
         [[ -f "$pf" ]] && PROGRESS_FILES_TO_CHECK+=("$pf")
       done
+      # fail-closed: glob 결과도 0개면 검증 실패 (progress 증거 없음)
+      if [[ ${#PROGRESS_FILES_TO_CHECK[@]} -eq 0 ]]; then
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}No progress files found (frontmatter unset, glob empty). "
+      fi
     fi
     for PROGRESS_FILE in "${PROGRESS_FILES_TO_CHECK[@]}"; do
       VERIFIED_PROGRESS_FILES+=("$PROGRESS_FILE")
@@ -145,25 +162,57 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
               VERIFICATION_PASSED="false"
               FAILURE_REASONS="${FAILURE_REASONS}$PROGRESS_FILE: DoD checklist not all checked. "
             fi
+          else
+            VERIFICATION_PASSED="false"
+            FAILURE_REASONS="${FAILURE_REASONS}$PROGRESS_FILE: DoD is empty (no completion criteria defined). "
           fi
-          # dod가 빈 객체이면 검증 건너뜀 (DoD 미설정 상태)
+        fi
+
+        # fail-closed: progress 파일에 documents/steps/dod 중 하나도 없으면 검증 실패
+        if [[ "$HAS_DOCUMENTS" != "true" ]] && [[ "$HAS_STEPS" != "true" ]] && [[ "$HAS_DOD" != "true" ]]; then
+          VERIFICATION_PASSED="false"
+          FAILURE_REASONS="${FAILURE_REASONS}$PROGRESS_FILE: no documents, steps, or dod found (empty progress). "
         fi
       fi
     done
 
-    # 2. .claude-verification.json 검증 (존재하는 경우)
-    if [[ -f ".claude-verification.json" ]]; then
-      # exitCode 필드들 수집 (존재하는 항목만)
-      ALL_VERIFIED=$(jq '
+    # 2. .claude-verification.json 검증 (필수)
+    if [[ ! -f ".claude-verification.json" ]]; then
+      VERIFICATION_PASSED="false"
+      FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json not found (quality gate evidence required). "
+    elif [[ -f ".claude-verification.json" ]]; then
+      # exitCode 기반 게이트 (build/typeCheck/lint/test): exitCode == 0
+      ALL_EXITCODES_OK=$(jq '
         [to_entries[] | select(.value | type == "object" and has("exitCode") and .exitCode != null) | .value.exitCode]
-        | if length == 0 then true
+        | if length == 0 then false
           else all(. == 0)
           end
       ' .claude-verification.json 2>/dev/null || echo "false")
 
-      if [[ "$ALL_VERIFIED" != "true" ]]; then
+      if [[ "$ALL_EXITCODES_OK" != "true" ]]; then
         VERIFICATION_PASSED="false"
-        FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: verification incomplete or exitCodes not all 0. "
+        FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: exitCode-based gates not all 0. "
+      fi
+
+      # result 기반 게이트 (secretScan/artifactCheck/smokeCheck/designPolish): result != "fail"
+      ALL_RESULTS_OK=$(jq '
+        [to_entries[] | select(.value | type == "object" and has("result") and .result != null) | .value.result]
+        | if length == 0 then true
+          else all(. == "pass" or . == "skip" or . == "soft_fail")
+          end
+      ' .claude-verification.json 2>/dev/null || echo "false")
+
+      # fail-closed: verification.json에 exitCode 기반 게이트가 하나도 없으면 검증 불충분
+      if [[ "$ALL_EXITCODES_OK" = "false" ]]; then
+        HAS_ANY_GATE=$(jq '[to_entries[] | select(.value | type == "object" and has("exitCode"))] | length' .claude-verification.json 2>/dev/null || echo "0")
+        if [[ "$HAS_ANY_GATE" = "0" ]]; then
+          FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: no quality gate entries found (empty verification). "
+        fi
+      fi
+
+      if [[ "$ALL_RESULTS_OK" != "true" ]]; then
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: result-based gates have failures (fail). "
       fi
     fi
 
@@ -182,7 +231,16 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
 
       # 무한 루프 감지: 동일 실패 해시가 3회 연속 시 강제 탈출
       FAILURE_HISTORY_FILE=".claude/ralph-loop-failure-history.local"
-      CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | md5sum | cut -d' ' -f1)
+      # 크로스 플랫폼 해시 (md5sum → md5 → sha256sum → cksum 폴백)
+      if command -v md5sum &>/dev/null; then
+        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | md5sum | cut -d' ' -f1)
+      elif command -v md5 &>/dev/null; then
+        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | md5)
+      elif command -v sha256sum &>/dev/null; then
+        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | sha256sum | cut -d' ' -f1)
+      else
+        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | cksum | cut -d' ' -f1)
+      fi
       REPEAT_COUNT=0
       if [[ -f "$FAILURE_HISTORY_FILE" ]]; then
         REPEAT_COUNT=$(grep -c "^${CURRENT_FAILURE_HASH}$" "$FAILURE_HISTORY_FILE" 2>/dev/null || echo "0")
@@ -191,8 +249,11 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       REPEAT_COUNT=$((REPEAT_COUNT + 1))
 
       if [[ $REPEAT_COUNT -ge 3 ]]; then
-        echo "Auto Complete Loop: Same failure repeated ${REPEAT_COUNT} times. Breaking loop."
+        echo "Auto Complete Loop: WARNING - Same failure repeated ${REPEAT_COUNT} times. Breaking loop due to unresolvable verification failures."
+        echo "Auto Complete Loop: Unresolved issues: ${FAILURE_REASONS}"
+        echo "Auto Complete Loop: Progress files preserved for manual inspection."
         rm -f "$RALPH_STATE_FILE" "$FAILURE_HISTORY_FILE"
+        # exit 0 to stop the loop, but progress files are NOT deleted (unlike success path)
         exit 0
       fi
       # 아래의 루프 계속 로직으로 진행

@@ -135,6 +135,20 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "ALL_DOCS_REVIEWED"
 - 프로젝트의 핵심 원칙, 경계, 책임 파악
 - 이 문서가 "헌법"으로서 모든 하위 문서의 기준임을 인지
 
+### overview.md 구조 검증 (PM Planning 산출물)
+
+정의 문서에 다음 섹션이 존재하는지 검증합니다:
+- Problem Statement
+- Target Users / 페르소나
+- Core Jobs (JTBD)
+- 핵심 가정 + 리스크
+- 성공 기준
+
+**누락 섹션 감지 시**: Claude가 1회 자동 보완 시도. 보완 후 경고 출력:
+"overview.md에 [섹션명]이 누락되어 자동 보완했습니다. 확인해주세요."
+
+이 검증은 **하드 실패가 아닌 자동 보완** — 기존 프로젝트(PM Planning 없이 직접 /plan-docs-auto 실행) 호환성 유지.
+
 ## 2단계: 문서 목록 파악
 
 README($2)에서:

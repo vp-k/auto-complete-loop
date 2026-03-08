@@ -99,6 +99,16 @@ parse_progress_file_arg() {
     case "$1" in
       --progress-file)
         PROGRESS_FILE="${2:?--progress-file requires a path}"
+        # 경로 검증: 절대경로/.. 차단, allowlist 패턴
+        if [[ "$PROGRESS_FILE" == /* ]]; then
+          die "--progress-file must be a relative path, got '$PROGRESS_FILE'"
+        fi
+        if [[ "$PROGRESS_FILE" == *..* ]]; then
+          die "--progress-file must not contain '..', got '$PROGRESS_FILE'"
+        fi
+        if [[ ! "$PROGRESS_FILE" =~ ^\.claude-.*progress.*\.json$ ]]; then
+          die "--progress-file must match pattern '.claude-*progress*.json', got '$PROGRESS_FILE'"
+        fi
         shift 2
         ;;
       *)
@@ -450,6 +460,17 @@ cmd_init_ralph() {
   fi
   if [[ "$progress_file" == *$'\n'* ]] || [[ "$progress_file" == *$'\r'* ]]; then
     die "init-ralph: progress_file must not contain newlines"
+  fi
+
+  # 입력 검증: progress_file 경로 조작 방지
+  if [[ "$progress_file" == /* ]]; then
+    die "init-ralph: progress_file must be a relative path, got '$progress_file'"
+  fi
+  if [[ "$progress_file" == *..* ]]; then
+    die "init-ralph: progress_file must not contain '..', got '$progress_file'"
+  fi
+  if [[ ! "$progress_file" =~ ^\.claude-.*progress.*\.json$ ]]; then
+    die "init-ralph: progress_file must match pattern '.claude-*progress*.json', got '$progress_file'"
   fi
 
   mkdir -p .claude
@@ -1032,6 +1053,15 @@ cmd_artifact_check() {
 cmd_smoke_check() {
   local port="${1:-3000}"
   local timeout="${2:-15}"
+
+  # 입력 검증: port/timeout은 반드시 정수
+  if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+    die "smoke-check: port must be a positive integer, got '$port'"
+  fi
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
+    die "smoke-check: timeout must be a positive integer, got '$timeout'"
+  fi
+
   echo "=== Smoke Check (port: $port, timeout: ${timeout}s) ==="
   require_jq
 
@@ -1421,7 +1451,7 @@ cmd_doc_consistency() {
   echo ""
   echo "[1] Data Model Terms"
   local models
-  models=$(grep -rh -oP '(?<=###?\s)([\w]+(?:\s?(?:Model|Schema|Table|Entity|Type|Interface)))' "$docs_dir"/*.md 2>/dev/null | sort -u || true)
+  models=$(grep -rh -oE '#{2,3}\s+[A-Za-z0-9_]+\s?(Model|Schema|Table|Entity|Type|Interface)' "$docs_dir"/*.md 2>/dev/null | sed 's/^#*\s*//' | sort -u || true)
   if [[ -n "$models" ]]; then
     while IFS= read -r model; do
       local count
@@ -1439,7 +1469,7 @@ cmd_doc_consistency() {
   echo ""
   echo "[2] API Endpoints"
   local endpoints
-  endpoints=$(grep -rhoP '(GET|POST|PUT|PATCH|DELETE)\s+/[\w/{}:-]+' "$docs_dir"/*.md 2>/dev/null | sort -u || true)
+  endpoints=$(grep -rhoE '(GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_/{}\:.-]+' "$docs_dir"/*.md 2>/dev/null | sort -u || true)
   if [[ -n "$endpoints" ]]; then
     local ep_count
     ep_count=$(echo "$endpoints" | wc -l)
@@ -1461,8 +1491,8 @@ cmd_doc_consistency() {
   echo ""
   echo "[3] Naming Convention"
   local camel snake
-  camel=$(grep -rhoP '\b[a-z]+[A-Z][a-zA-Z]*\b' "$docs_dir"/*.md 2>/dev/null | sort -u | head -10 || true)
-  snake=$(grep -rhoP '\b[a-z]+_[a-z_]+\b' "$docs_dir"/*.md 2>/dev/null | sort -u | head -10 || true)
+  camel=$(grep -rhoE '[a-z]+[A-Z][a-zA-Z]*' "$docs_dir"/*.md 2>/dev/null | sort -u | head -10 || true)
+  snake=$(grep -rhoE '[a-z]+_[a-z_]+' "$docs_dir"/*.md 2>/dev/null | sort -u | head -10 || true)
   if [[ -n "$camel" ]] && [[ -n "$snake" ]]; then
     echo "  Mixed conventions detected (may be intentional):"
     echo "  camelCase samples: $(echo "$camel" | head -3 | tr '\n' ', ')"
@@ -1475,11 +1505,11 @@ cmd_doc_consistency() {
   echo ""
   echo "[4] Cross-references"
   local refs
-  refs=$(grep -rhoP '(?:참조|see|ref):\s*[\w-]+\.md' "$docs_dir"/*.md 2>/dev/null || true)
+  refs=$(grep -rhoE '(참조|see|ref):\s*[A-Za-z0-9_-]+\.md' "$docs_dir"/*.md 2>/dev/null || true)
   if [[ -n "$refs" ]]; then
     while read -r ref; do
       local target
-      target=$(echo "$ref" | grep -oP '[\w-]+\.md')
+      target=$(echo "$ref" | grep -oE '[A-Za-z0-9_-]+\.md')
       if [[ ! -f "$docs_dir/$target" ]]; then
         echo "  BROKEN REF: $ref -> $docs_dir/$target not found"
         ((issues++)) || true
@@ -1507,7 +1537,7 @@ cmd_doc_code_check() {
   echo ""
   echo "[1] Route Matching"
   local doc_routes
-  doc_routes=$(grep -rhoP '(GET|POST|PUT|PATCH|DELETE)\s+/[\w/{}:-]+' "$docs_dir"/*.md SPEC.md 2>/dev/null | sort -u || true)
+  doc_routes=$(grep -rhoE '(GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_/{}\:.-]+' "$docs_dir"/*.md SPEC.md 2>/dev/null | sort -u || true)
   if [[ -n "$doc_routes" ]]; then
     while IFS= read -r route; do
       local method path
@@ -1530,7 +1560,7 @@ cmd_doc_code_check() {
   echo ""
   echo "[2] Model Matching"
   local doc_models
-  doc_models=$(grep -rhoP '(?:model|schema|table|interface|type)\s+(\w+)' "$docs_dir"/*.md SPEC.md 2>/dev/null | awk '{print $2}' | sort -u || true)
+  doc_models=$(grep -rhoE '(model|schema|table|interface|type)\s+[A-Za-z0-9_]+' "$docs_dir"/*.md SPEC.md 2>/dev/null | awk '{print $2}' | sort -u || true)
   if [[ -n "$doc_models" ]]; then
     while IFS= read -r model; do
       local found
@@ -1733,6 +1763,10 @@ cmd_design_polish_gate() {
     return 2
   fi
 
+  # Stale 아티팩트 정리 (이전 실행 결과가 판정을 왜곡하지 않도록)
+  rm -f .design-polish/accessibility/wcag-report*.json 2>/dev/null || true
+  rm -f .design-polish/screenshots/current-*.png 2>/dev/null || true
+
   # 서버 시작 (smoke-check 로직 재사용)
   local port=3000
   local start_cmd=""
@@ -1809,12 +1843,17 @@ cmd_design_polish_gate() {
   # WCAG 리포트 요약
   local wcag_violations=0
   local wcag_summary="no report"
-  if [[ -f ".design-polish/accessibility/wcag-report.json" ]]; then
-    wcag_violations=$(jq '[.violations // [] | .[]] | length' ".design-polish/accessibility/wcag-report.json" 2>/dev/null || echo "0")
+  local wcag_report_missing=false
+  if [[ -f ".design-polish/accessibility/wcag-report.json" ]] || [[ -f ".design-polish/accessibility/wcag-report-main.json" ]]; then
+    local wcag_file=".design-polish/accessibility/wcag-report.json"
+    [[ -f "$wcag_file" ]] || wcag_file=".design-polish/accessibility/wcag-report-main.json"
+    wcag_violations=$(jq '[.violations // [] | .[]] | length' "$wcag_file" 2>/dev/null || echo "0")
     wcag_summary="$wcag_violations violations found"
     echo "[design-polish-gate] WCAG: $wcag_summary"
   else
     echo "[design-polish-gate] WARNING: WCAG report not generated"
+    wcag_report_missing=true
+    wcag_summary="report not generated"
   fi
 
   # 스크린샷 확인
@@ -1829,6 +1868,8 @@ cmd_design_polish_gate() {
   ts=$(timestamp)
   if [[ "$capture_exit" -ne 0 ]]; then
     result="soft_fail"
+  elif [[ "$wcag_report_missing" == "true" ]]; then
+    result="soft_fail"
   elif [[ "$wcag_violations" -gt 0 ]]; then
     result="soft_fail"
   else
@@ -1842,6 +1883,19 @@ cmd_design_polish_gate() {
   else
     jq -n --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
       '{"designPolish": {"timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary}}' > "$VERIFICATION_FILE"
+  fi
+
+  # DoD design_quality 갱신
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    local has_dq
+    has_dq=$(jq '.dod | has("design_quality")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    if [[ "$has_dq" == "true" ]]; then
+      local dq_checked="false"
+      [[ "$result" == "pass" ]] && dq_checked="true"
+      jq_inplace "$PROGRESS_FILE" \
+        --argjson checked "$dq_checked" --arg ev "design-polish-gate: $result ($wcag_summary)" \
+        '.dod.design_quality.checked = $checked | .dod.design_quality.evidence = $ev'
+    fi
   fi
 
   echo "=== DESIGN POLISH GATE: ${result^^} ==="

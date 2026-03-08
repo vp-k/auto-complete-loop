@@ -15,6 +15,13 @@
 
 set -euo pipefail
 
+# jq 의존성 사전 검증
+if ! command -v jq &>/dev/null; then
+  echo "Auto Complete Loop: ERROR - jq is required but not found. Install jq to use Ralph Loop."
+  echo '{"decision": "allow"}'
+  exit 0
+fi
+
 RALPH_STATE_FILE=".claude/ralph-loop.local.md"
 
 # 임시 파일 정리 trap
@@ -39,6 +46,17 @@ ITERATION=$(echo "$FRONTMATTER" | grep "^iteration:" | sed 's/iteration: *//' | 
 MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep "^max_iterations:" | sed 's/max_iterations: *//' | tr -d '\r' || true)
 COMPLETION_PROMISE=$(echo "$FRONTMATTER" | grep "^completion_promise:" | sed 's/completion_promise: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r' || true)
 PROGRESS_FILE_FROM_FRONTMATTER=$(echo "$FRONTMATTER" | grep "^progress_file:" | sed 's/progress_file: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r' || true)
+
+# progress_file 경로 검증 (경로 조작 방지)
+if [[ -n "${PROGRESS_FILE_FROM_FRONTMATTER:-}" ]]; then
+  if [[ "$PROGRESS_FILE_FROM_FRONTMATTER" == /* ]] || [[ "$PROGRESS_FILE_FROM_FRONTMATTER" == *..* ]]; then
+    echo "Auto Complete Loop: WARNING - progress_file path rejected (path traversal): $PROGRESS_FILE_FROM_FRONTMATTER"
+    PROGRESS_FILE_FROM_FRONTMATTER=""
+  elif [[ ! "$PROGRESS_FILE_FROM_FRONTMATTER" =~ ^\.claude-.*progress.*\.json$ ]]; then
+    echo "Auto Complete Loop: WARNING - progress_file rejected (pattern mismatch): $PROGRESS_FILE_FROM_FRONTMATTER"
+    PROGRESS_FILE_FROM_FRONTMATTER=""
+  fi
+fi
 
 # 데이터 검증
 if ! [[ "$ITERATION" =~ ^[0-9]+$ ]] || ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then

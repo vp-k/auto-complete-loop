@@ -2269,8 +2269,9 @@ cmd_design_polish_gate() {
     local has_dq
     has_dq=$(jq '.dod | has("design_quality")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
     if [[ "$has_dq" == "true" ]]; then
-      local dq_checked="false"
-      [[ "$result" == "pass" ]] && dq_checked="true"
+      # pass/skip/soft_fail은 모두 비차단 → checked=true (verification SKILL.md 정의 준수)
+      local dq_checked="true"
+      [[ "$result" == "hard_fail" ]] && dq_checked="false"
       jq_inplace "$PROGRESS_FILE" \
         --argjson checked "$dq_checked" --arg ev "design-polish-gate: $result ($wcag_summary)" \
         '.dod.design_quality.checked = $checked | .dod.design_quality.evidence = $ev'

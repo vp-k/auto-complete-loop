@@ -978,12 +978,19 @@ cmd_vuln_scan() {
       pip_output=$(pip-audit --format json 2>/dev/null) && pip_exit=0 || pip_exit=$?
       if [[ $pip_exit -ne 0 ]]; then
         local pip_count
-        pip_count=$(echo "$pip_output" | jq 'length' 2>/dev/null || echo "0")
-        total_vulns=$((total_vulns + pip_count))
-        # pip-audit doesn't classify by severity easily; count all as high
-        found_high=$((found_high + pip_count))
-        scan_details="${scan_details}pip-audit: $pip_count vulnerabilities; "
-        echo "[vuln-scan] pip-audit: $pip_count vulnerabilities found"
+        pip_count=$(echo "$pip_output" | jq 'length' 2>/dev/null)
+        if [[ -z "$pip_count" ]] || ! [[ "$pip_count" =~ ^[0-9]+$ ]]; then
+          # 파싱 실패: fail-closed (HIGH 처리)
+          found_high=$((found_high + 1))
+          scan_details="${scan_details}pip-audit: parse failed (treating as HIGH); "
+          echo "[vuln-scan] pip-audit: ERROR (output not parseable, treating as HIGH)"
+        else
+          total_vulns=$((total_vulns + pip_count))
+          # pip-audit doesn't classify by severity easily; count all as high
+          found_high=$((found_high + pip_count))
+          scan_details="${scan_details}pip-audit: $pip_count vulnerabilities; "
+          echo "[vuln-scan] pip-audit: $pip_count vulnerabilities found"
+        fi
       else
         echo "[vuln-scan] pip-audit: PASS"
       fi
@@ -999,11 +1006,17 @@ cmd_vuln_scan() {
       go_output=$(govulncheck ./... 2>&1) && go_exit=0 || go_exit=$?
       if [[ $go_exit -ne 0 ]]; then
         local go_count
-        go_count=$(echo "$go_output" | grep -c "Vulnerability" || echo "0")
-        total_vulns=$((total_vulns + go_count))
-        found_high=$((found_high + go_count))
-        scan_details="${scan_details}govulncheck: $go_count vulnerabilities; "
-        echo "[vuln-scan] govulncheck: $go_count vulnerabilities found"
+        go_count=$(echo "$go_output" | grep -c "Vulnerability" 2>/dev/null || echo "")
+        if [[ -z "$go_count" ]] || ! [[ "$go_count" =~ ^[0-9]+$ ]]; then
+          found_high=$((found_high + 1))
+          scan_details="${scan_details}govulncheck: parse failed (treating as HIGH); "
+          echo "[vuln-scan] govulncheck: ERROR (output not parseable, treating as HIGH)"
+        else
+          total_vulns=$((total_vulns + go_count))
+          found_high=$((found_high + go_count))
+          scan_details="${scan_details}govulncheck: $go_count vulnerabilities; "
+          echo "[vuln-scan] govulncheck: $go_count vulnerabilities found"
+        fi
       else
         echo "[vuln-scan] govulncheck: PASS"
       fi
@@ -1038,11 +1051,17 @@ cmd_vuln_scan() {
       cargo_output=$(cargo audit --json 2>/dev/null) && cargo_exit=0 || cargo_exit=$?
       if [[ $cargo_exit -ne 0 ]]; then
         local cargo_count
-        cargo_count=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null || echo "0")
-        total_vulns=$((total_vulns + cargo_count))
-        found_high=$((found_high + cargo_count))
-        scan_details="${scan_details}cargo-audit: $cargo_count vulnerabilities; "
-        echo "[vuln-scan] cargo audit: $cargo_count vulnerabilities found"
+        cargo_count=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null)
+        if [[ -z "$cargo_count" ]] || ! [[ "$cargo_count" =~ ^[0-9]+$ ]]; then
+          found_high=$((found_high + 1))
+          scan_details="${scan_details}cargo-audit: parse failed (treating as HIGH); "
+          echo "[vuln-scan] cargo audit: ERROR (output not parseable, treating as HIGH)"
+        else
+          total_vulns=$((total_vulns + cargo_count))
+          found_high=$((found_high + cargo_count))
+          scan_details="${scan_details}cargo-audit: $cargo_count vulnerabilities; "
+          echo "[vuln-scan] cargo audit: $cargo_count vulnerabilities found"
+        fi
       else
         echo "[vuln-scan] cargo audit: PASS"
       fi

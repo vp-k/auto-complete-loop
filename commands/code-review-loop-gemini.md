@@ -112,7 +112,17 @@ codex exec --skip-git-repo-check '## 역할
 파일을 직접 찾고, 읽고, 분석하세요. 테스트 파일과 설정 파일은 제외합니다.
 
 ## 전문 리뷰 관점
-1. **Security (SEC)**: 인증/인가 누락, 입력 검증 부재, 민감 정보 노출, SQL injection, XSS
+1. **Security (SEC)**: 아래 서브카테고리별로 분류하여 보고
+   - SEC-INJ: SQL/NoSQL/Command injection
+   - SEC-XSS: Cross-site scripting, 미이스케이프 출력
+   - SEC-AUTH: 인증/인가 우회, 세션 관리 미흡
+   - SEC-TOCTOU: Time-of-check to time-of-use race condition
+   - SEC-LLM: LLM 출력을 DB/shell/eval에 직접 전달하는 패턴
+   - SEC-CRYPTO: truncation vs hashing, MD5/SHA1, 하드코딩 salt
+   - SEC-TYPE: JS == vs ===, PHP loose comparison 등 type coercion
+   - SEC-RACE: 동시성 race condition (find_or_create without unique index 등)
+   - SEC-TIME: 토큰 만료, 세션 관리 타이밍 이슈
+   - SEC-SECRET: 시크릿/API키 노출, 하드코딩 자격증명
 2. **Error Handling (ERR)**: try-catch 누락, 에러 응답 불일치, 에지 케이스 미처리
 3. **Data Consistency (DATA)**: 트랜잭션 누락, 스키마 불일치, race condition
 

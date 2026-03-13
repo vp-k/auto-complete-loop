@@ -1,0 +1,10 @@
+{
+  "healthScore": 100,
+  "timestamp": "2026-03-13T16:34:17Z",
+  "breakdown": {
+    "build": 25,
+    "test": 30,
+    "lint": 20,
+    "typeCheck": 25
+  }
+}

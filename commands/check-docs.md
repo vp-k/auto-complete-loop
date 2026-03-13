@@ -51,7 +51,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template doc-check "프
 생성 후 `docsDir`을 jq로 설정합니다:
 
 ```bash
-jq --arg dir "${docsDir}" '.docsDir = $dir' .claude-doc-check-progress.json > tmp.$$.json && mv tmp.$$.json .claude-doc-check-progress.json
+tmp=$(mktemp) && jq --arg dir "${docsDir}" '.docsDir = $dir' .claude-doc-check-progress.json > "$tmp" && mv "$tmp" .claude-doc-check-progress.json
 ```
 
 ### 0-4. Ralph Loop 파일 생성

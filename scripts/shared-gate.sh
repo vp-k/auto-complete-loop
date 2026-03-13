@@ -9,6 +9,7 @@
 #   update-step <step_name> <status> [--progress-file] - 단계 상태 전이
 #   quality-gate [--progress-file <path>]              - 빌드/타입/린트/테스트 일괄 실행
 #   e2e-gate [--progress-file <path>]                  - E2E 테스트 프레임워크 감지/실행
+#   vuln-scan [--progress-file <path>]                  - 의존성 취약점 자동 검사 (언어별 감지)
 #   secret-scan                                        - 시크릿 유출 스캔 (HARD_FAIL)
 #   artifact-check                                     - 빌드 아티팩트 존재/크기 검증
 #   smoke-check [port] [timeout]                       - 서버 기동 + 헬스체크
@@ -856,6 +857,59 @@ cmd_quality_gate() {
     fi
   fi
 
+  # ─── Health Score 산출 (0-100) ───
+  local health_score=0
+  local score_build=0 score_test=0 score_lint=0 score_type=0
+
+  # 카테고리별 가중 점수: Build 25%, Test 30%, Lint 20%, TypeCheck 25%
+  local build_exit_val test_exit_val lint_exit_val type_exit_val
+  build_exit_val=$(echo "$results" | jq '.build.exitCode // null' 2>/dev/null)
+  test_exit_val=$(echo "$results" | jq '.test.exitCode // null' 2>/dev/null)
+  lint_exit_val=$(echo "$results" | jq '.lint.exitCode // null' 2>/dev/null)
+  type_exit_val=$(echo "$results" | jq '.typeCheck.exitCode // null' 2>/dev/null)
+
+  # null(스킵)은 만점 처리 (해당 카테고리가 없는 프로젝트)
+  [[ "$build_exit_val" == "null" || "$build_exit_val" == "0" ]] && score_build=25 || score_build=0
+  [[ "$test_exit_val" == "null" || "$test_exit_val" == "0" ]] && score_test=30 || score_test=0
+  [[ "$lint_exit_val" == "null" || "$lint_exit_val" == "0" ]] && score_lint=20 || score_lint=0
+  [[ "$type_exit_val" == "null" || "$type_exit_val" == "0" ]] && score_type=25 || score_type=0
+
+  health_score=$((score_build + score_test + score_lint + score_type))
+
+  echo ""
+  echo "Health Score: $health_score / 100 (Build:$score_build/25 Test:$score_test/30 Lint:$score_lint/20 Type:$score_type/25)"
+
+  # Regression Baseline 비교
+  local baseline_file=".claude-quality-baseline.json"
+  if [[ -f "$baseline_file" ]]; then
+    local prev_score
+    prev_score=$(jq '.healthScore // 0' "$baseline_file" 2>/dev/null || echo "0")
+    local diff=$((health_score - prev_score))
+    if [[ $diff -lt 0 ]]; then
+      echo "WARNING: Health score REGRESSION: $prev_score → $health_score (${diff})"
+    elif [[ $diff -gt 0 ]]; then
+      echo "Health score IMPROVED: $prev_score → $health_score (+${diff})"
+    else
+      echo "Health score UNCHANGED: $health_score"
+    fi
+  fi
+
+  # Baseline 저장
+  jq -n \
+    --argjson score "$health_score" \
+    --arg ts "$ts" \
+    --argjson bld "$score_build" \
+    --argjson tst "$score_test" \
+    --argjson lnt "$score_lint" \
+    --argjson typ "$score_type" \
+    '{"healthScore": $score, "timestamp": $ts, "breakdown": {"build": $bld, "test": $tst, "lint": $lnt, "typeCheck": $typ}}' \
+    > "$baseline_file"
+
+  # verification.json에 health score 추가
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --argjson hs "$health_score" '.healthScore = $hs'
+  fi
+
   if [[ "$any_ran" == "false" ]]; then
     echo "=== WARNING: ALL GATES SKIPPED (no project type detected) ==="
     return 1
@@ -868,21 +922,272 @@ cmd_quality_gate() {
   fi
 }
 
+# ─── vuln-scan: 의존성 취약점 자동 검사 ───
+
+cmd_vuln_scan() {
+  echo "=== Vulnerability Scan ==="
+  require_jq
+
+  local found_critical=0
+  local found_high=0
+  local total_vulns=0
+  local scan_ran=false
+  local scan_details=""
+
+  # Node.js (npm/yarn/pnpm)
+  if [[ -f "package.json" ]]; then
+    scan_ran=true
+    echo "[vuln-scan] Detected: Node.js"
+    local npm_output npm_exit
+    npm_output=$(npm audit --json 2>/dev/null) && npm_exit=0 || npm_exit=$?
+    if [[ $npm_exit -ne 0 ]] && [[ -n "$npm_output" ]]; then
+      # JSON 파싱 가능 여부 검증
+      if echo "$npm_output" | jq empty 2>/dev/null; then
+        local npm_critical npm_high
+        npm_critical=$(echo "$npm_output" | jq '.metadata.vulnerabilities.critical // 0' 2>/dev/null || echo "0")
+        npm_high=$(echo "$npm_output" | jq '.metadata.vulnerabilities.high // 0' 2>/dev/null || echo "0")
+        local npm_total
+        npm_total=$(echo "$npm_output" | jq '.metadata.vulnerabilities.total // 0' 2>/dev/null || echo "0")
+        found_critical=$((found_critical + npm_critical))
+        found_high=$((found_high + npm_high))
+        total_vulns=$((total_vulns + npm_total))
+        scan_details="${scan_details}npm: critical=$npm_critical, high=$npm_high, total=$npm_total; "
+        echo "[vuln-scan] npm audit: critical=$npm_critical, high=$npm_high, total=$npm_total"
+      else
+        # JSON 파싱 불가 — npm audit 비정상 실패
+        found_high=$((found_high + 1))
+        scan_details="${scan_details}npm: audit output not parseable (scan error); "
+        echo "[vuln-scan] npm audit: ERROR (output not parseable, treating as HIGH)"
+      fi
+    elif [[ $npm_exit -ne 0 ]]; then
+      # npm audit 실행 실패 (출력 없음)
+      found_high=$((found_high + 1))
+      scan_details="${scan_details}npm: audit failed (no output); "
+      echo "[vuln-scan] npm audit: ERROR (execution failed, treating as HIGH)"
+    else
+      echo "[vuln-scan] npm audit: PASS"
+    fi
+  fi
+
+  # Python (pip-audit)
+  if [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
+    if command -v pip-audit >/dev/null 2>&1; then
+      scan_ran=true
+      echo "[vuln-scan] Detected: Python (pip-audit)"
+      local pip_output pip_exit
+      pip_output=$(pip-audit --format json 2>/dev/null) && pip_exit=0 || pip_exit=$?
+      if [[ $pip_exit -ne 0 ]]; then
+        local pip_count
+        pip_count=$(echo "$pip_output" | jq 'length' 2>/dev/null || echo "0")
+        total_vulns=$((total_vulns + pip_count))
+        # pip-audit doesn't classify by severity easily; count all as high
+        found_high=$((found_high + pip_count))
+        scan_details="${scan_details}pip-audit: $pip_count vulnerabilities; "
+        echo "[vuln-scan] pip-audit: $pip_count vulnerabilities found"
+      else
+        echo "[vuln-scan] pip-audit: PASS"
+      fi
+    fi
+  fi
+
+  # Go (govulncheck)
+  if [[ -f "go.mod" ]]; then
+    if command -v govulncheck >/dev/null 2>&1; then
+      scan_ran=true
+      echo "[vuln-scan] Detected: Go (govulncheck)"
+      local go_output go_exit
+      go_output=$(govulncheck ./... 2>&1) && go_exit=0 || go_exit=$?
+      if [[ $go_exit -ne 0 ]]; then
+        local go_count
+        go_count=$(echo "$go_output" | grep -c "Vulnerability" || echo "0")
+        total_vulns=$((total_vulns + go_count))
+        found_high=$((found_high + go_count))
+        scan_details="${scan_details}govulncheck: $go_count vulnerabilities; "
+        echo "[vuln-scan] govulncheck: $go_count vulnerabilities found"
+      else
+        echo "[vuln-scan] govulncheck: PASS"
+      fi
+    fi
+  fi
+
+  # Flutter/Dart (pub outdated)
+  if [[ -f "pubspec.yaml" ]]; then
+    scan_ran=true
+    echo "[vuln-scan] Detected: Dart/Flutter"
+    local dart_cmd="dart"
+    command -v flutter >/dev/null 2>&1 && dart_cmd="flutter"
+    local pub_output
+    pub_output=$($dart_cmd pub outdated 2>&1) || true
+    # Count major version behind as potential risk
+    local outdated_count
+    outdated_count=$(echo "$pub_output" | grep -c "resolvable" || echo "0")
+    if [[ "$outdated_count" -gt 0 ]]; then
+      echo "[vuln-scan] pub outdated: $outdated_count packages have newer versions"
+      scan_details="${scan_details}pub outdated: $outdated_count packages; "
+    else
+      echo "[vuln-scan] pub outdated: all up to date"
+    fi
+  fi
+
+  # Rust (cargo audit)
+  if [[ -f "Cargo.toml" ]]; then
+    if command -v cargo-audit >/dev/null 2>&1; then
+      scan_ran=true
+      echo "[vuln-scan] Detected: Rust (cargo audit)"
+      local cargo_output cargo_exit
+      cargo_output=$(cargo audit --json 2>/dev/null) && cargo_exit=0 || cargo_exit=$?
+      if [[ $cargo_exit -ne 0 ]]; then
+        local cargo_count
+        cargo_count=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null || echo "0")
+        total_vulns=$((total_vulns + cargo_count))
+        found_high=$((found_high + cargo_count))
+        scan_details="${scan_details}cargo-audit: $cargo_count vulnerabilities; "
+        echo "[vuln-scan] cargo audit: $cargo_count vulnerabilities found"
+      else
+        echo "[vuln-scan] cargo audit: PASS"
+      fi
+    fi
+  fi
+
+  # verification.json에 기록
+  local ts
+  ts=$(timestamp)
+  local scan_result
+  if [[ "$scan_ran" == "false" ]]; then
+    scan_result="skipped"
+  elif [[ "$found_critical" -gt 0 ]]; then
+    scan_result="hard_fail"
+  elif [[ "$found_high" -gt 0 ]]; then
+    scan_result="soft_fail"
+  else
+    scan_result="pass"
+  fi
+
+  local vuln_json
+  vuln_json=$(jq -n \
+    --arg ts "$ts" \
+    --argjson critical "$found_critical" \
+    --argjson high "$found_high" \
+    --argjson total "$total_vulns" \
+    --arg result "$scan_result" \
+    --arg details "$scan_details" \
+    '{"vulnScan": {"timestamp": $ts, "critical": $critical, "high": $high, "total": $total, "result": $result, "details": $details}}')
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --argjson vs "$(echo "$vuln_json" | jq '.vulnScan')" '.vulnScan = $vs'
+  else
+    echo "$vuln_json" > "$VERIFICATION_FILE"
+  fi
+
+  if [[ "$scan_ran" == "false" ]]; then
+    echo "=== VULN SCAN: SKIP (no supported package manager detected) ==="
+    return 0
+  elif [[ "$found_critical" -gt 0 ]]; then
+    echo "=== VULN SCAN HARD_FAIL: $found_critical CRITICAL vulnerability(ies) ==="
+    echo "ACTION: Fix critical vulnerabilities before proceeding."
+    exit 1
+  elif [[ "$found_high" -gt 0 ]]; then
+    echo "=== VULN SCAN SOFT_FAIL: $found_high HIGH vulnerability(ies) (warning) ==="
+    return 1
+  else
+    echo "=== VULN SCAN PASSED ==="
+    return 0
+  fi
+}
+
 # ─── secret-scan: 시크릿 유출 스캔 (HARD_FAIL) ───
 
 cmd_secret_scan() {
   echo "=== Secret Scan ==="
   local found=0
   local patterns=(
+    # AWS
     'AKIA[0-9A-Z]{16}'
+    # OpenAI
     'sk-[a-zA-Z0-9]{20,}'
+    # GitHub PAT
     'ghp_[a-zA-Z0-9]{36}'
+    # GitLab PAT
     'glpat-[a-zA-Z0-9\-]{20,}'
-    '-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+    # Private Key
+    '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+    # Slack
     'xox[bps]-[a-zA-Z0-9\-]+'
+    # JWT
     'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.'
+    # Azure
+    'AccountKey=[a-zA-Z0-9+/=]{40,}'
+    # GCP service account
+    '"type"[[:space:]]*:[[:space:]]*"service_account"'
+    # Database URL with credentials
+    '(mysql|postgres|postgresql|mongodb|redis):\/\/[^:]+:[^@]+@'
+    # Twilio
+    'SK[0-9a-fA-F]{32}'
+    # SendGrid
+    'SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}'
+    # Stripe
+    '(sk|pk)_(test|live)_[a-zA-Z0-9]{20,}'
+    # Generic password/secret assignment (single-quote safe for cross-platform grep)
+    '(password|secret|api_key|apikey|access_token)[[:space:]]*[=:][[:space:]]*["'"'"'][^[:space:]"'"'"']{8,}'
   )
 
+  # verification.json 기록 헬퍼
+  _record_secret_scan() {
+    local scan_found=$1 scan_result=$2 scan_tool=$3
+    require_jq
+    local ts
+    ts=$(timestamp)
+    if [[ -f "$VERIFICATION_FILE" ]]; then
+      jq_inplace "$VERIFICATION_FILE" \
+        --arg ts "$ts" --argjson count "$scan_found" --arg result "$scan_result" --arg tool "$scan_tool" \
+        '.secretScan = {"timestamp": $ts, "found": $count, "result": $result, "tool": $tool}'
+    else
+      jq -n --arg ts "$ts" --argjson count "$scan_found" --arg result "$scan_result" --arg tool "$scan_tool" \
+        '{"secretScan": {"timestamp": $ts, "found": $count, "result": $result, "tool": $tool}}' > "$VERIFICATION_FILE"
+    fi
+  }
+
+  # 외부 도구가 설치된 경우 우선 사용
+  if command -v gitleaks >/dev/null 2>&1; then
+    echo "[secret-scan] Using gitleaks (external tool)..."
+    local gl_output
+    local gl_exit
+    gl_output=$(gitleaks detect --source . --no-git --report-format json 2>&1) && gl_exit=0 || gl_exit=$?
+    if [[ $gl_exit -ne 0 ]]; then
+      local gl_count
+      gl_count=$(echo "$gl_output" | jq 'length' 2>/dev/null || echo "0")
+      _record_secret_scan "$gl_count" "fail" "gitleaks"
+      echo "=== SECRET SCAN FAILED (gitleaks): $gl_count potential secret(s) found ==="
+      exit 1
+    else
+      _record_secret_scan 0 "pass" "gitleaks"
+      echo "[secret-scan] PASS (gitleaks: no secrets detected)"
+      echo "=== SECRET SCAN PASSED ==="
+      return 0
+    fi
+  elif command -v trufflehog >/dev/null 2>&1; then
+    echo "[secret-scan] Using trufflehog (external tool)..."
+    local th_output
+    local th_exit
+    th_output=$(trufflehog filesystem . --json 2>&1) && th_exit=0 || th_exit=$?
+    if [[ $th_exit -ne 0 ]] && { [[ -z "$th_output" ]] || [[ "$th_output" == "[]" ]]; }; then
+      # trufflehog 실행 자체가 실패 (크래시/권한 등) — fail-open 방지
+      _record_secret_scan 0 "error" "trufflehog"
+      echo "=== SECRET SCAN ERROR (trufflehog): tool execution failed (exit=$th_exit) ==="
+      exit 1
+    elif [[ -n "$th_output" ]] && [[ "$th_output" != "[]" ]]; then
+      _record_secret_scan 1 "fail" "trufflehog"
+      echo "=== SECRET SCAN FAILED (trufflehog): potential secrets found ==="
+      exit 1
+    else
+      _record_secret_scan 0 "pass" "trufflehog"
+      echo "[secret-scan] PASS (trufflehog: no secrets detected)"
+      echo "=== SECRET SCAN PASSED ==="
+      return 0
+    fi
+  fi
+
+  # Fallback: 내장 regex 패턴 스캔
   # 루트 재귀 스캔 (exclude로 불필요 디렉토리 제외)
   # .env* 파일도 루트 스캔에 포함됨 (.env.example만 exclude)
   local scan_dirs=(".")
@@ -1100,10 +1405,15 @@ cmd_smoke_check() {
 
   echo "[smoke-check] Starting server: $start_cmd"
 
-  # 백그라운드로 서버 시작
+  # 백그라운드로 서버 시작 (mktemp로 고유 로그 파일 생성)
   local server_pid
-  eval "$start_cmd" > /tmp/smoke-check-server.log 2>&1 &
+  local smoke_log
+  smoke_log=$(mktemp /tmp/smoke-check-XXXXXX.log)
+  eval "$start_cmd" > "$smoke_log" 2>&1 &
   server_pid=$!
+
+  # 중단 시에도 서버 프로세스와 로그 파일 정리
+  trap 'kill "$server_pid" 2>/dev/null; pkill -P "$server_pid" 2>/dev/null; wait "$server_pid" 2>/dev/null; rm -f "$smoke_log"; trap - EXIT INT TERM' EXIT INT TERM
 
   # 서버 응답 대기
   local elapsed=0
@@ -1148,10 +1458,10 @@ cmd_smoke_check() {
     result="soft_fail"
     echo "[smoke-check] SOFT_FAIL (server did not respond within ${timeout}s)"
     echo "Server log (last 5 lines):"
-    tail -5 /tmp/smoke-check-server.log 2>/dev/null || true
+    tail -5 "$smoke_log" 2>/dev/null || true
   fi
 
-  rm -f /tmp/smoke-check-server.log
+  rm -f "$smoke_log"
 
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" \
@@ -1794,8 +2104,13 @@ cmd_design_polish_gate() {
 
   echo "[design-polish-gate] Starting server: $start_cmd"
   local server_pid
-  eval "$start_cmd" > /tmp/design-polish-server.log 2>&1 &
+  local dp_log
+  dp_log=$(mktemp /tmp/design-polish-XXXXXX.log)
+  eval "$start_cmd" > "$dp_log" 2>&1 &
   server_pid=$!
+
+  # 중단 시에도 서버 프로세스와 로그 파일 정리
+  trap 'kill "$server_pid" 2>/dev/null; pkill -P "$server_pid" 2>/dev/null; wait "$server_pid" 2>/dev/null; rm -f "$dp_log"; trap - EXIT INT TERM' EXIT INT TERM
 
   # 서버 응답 대기 (최대 15초)
   local elapsed=0
@@ -1820,7 +2135,7 @@ cmd_design_polish_gate() {
     kill "$server_pid" 2>/dev/null || true
     pkill -P "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
-    rm -f /tmp/design-polish-server.log
+    rm -f "$dp_log"
     echo "[design-polish-gate] SKIP (server failed to start)"
     _dp_record_skip "server failed to start"
     echo "=== DESIGN POLISH GATE: SKIP ==="
@@ -1942,6 +2257,7 @@ main() {
     # 하위 호환: update-phase도 update-step으로 처리
     update-phase)      cmd_update_step "$@" ;;
     quality-gate)      cmd_quality_gate "$@" ;;
+    vuln-scan)         cmd_vuln_scan "$@" ;;
     secret-scan)       cmd_secret_scan "$@" ;;
     artifact-check)    cmd_artifact_check "$@" ;;
     smoke-check)       cmd_smoke_check "$@" ;;
@@ -1963,6 +2279,7 @@ main() {
       echo "  status                                     - Show current status"
       echo "  update-step <step> <status>                - Transition step state"
       echo "  quality-gate                               - Run build/type/lint/test (+ env manifest)"
+      echo "  vuln-scan                                  - Dependency vulnerability scan (auto-detect)"
       echo "  secret-scan                                - Scan for hardcoded secrets (HARD_FAIL)"
       echo "  artifact-check                             - Check build artifact exists (SOFT_FAIL)"
       echo "  smoke-check [port] [timeout]               - Server start + healthcheck (SOFT_FAIL)"

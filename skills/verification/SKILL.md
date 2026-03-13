@@ -156,6 +156,58 @@ git add -A && git commit -m "[auto] 최종 검증 및 폴리싱 완료"
 
 DoD 전체 checked 확인 후, Phase 전이는 오케스트레이터가 수행.
 
+### Step 4-8: Version Bump + PR 생성 (Opt-in)
+
+Phase 4 완료 후, 사용자에게 버전 업 + PR 생성을 제안합니다.
+
+#### Version Bump 규칙
+
+diff 크기 기반 자동 결정:
+- **patch** (0.0.x): 변경 50줄 미만 (버그 수정, 소규모 변경)
+- **minor** (0.x.0): 변경 50줄 이상 (새 기능, 개선)
+- **major** (x.0.0): breaking change 감지 시 (API 변경, 삭제 등)
+
+```bash
+# diff 크기 측정 (POSIX 호환)
+local base_branch="${BASE_BRANCH:-main}"
+local diff_lines
+diff_lines=$(git diff --stat "HEAD~$(git rev-list --count HEAD --not "$base_branch")" | tail -1 | awk '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/ && $(i+1) ~ /insertion/) print $i}' || echo "0")
+
+# breaking change 감지
+local has_breaking
+has_breaking=$(git log --oneline "$base_branch"..HEAD | grep -ciE 'breaking|BREAKING' || echo "0")
+```
+
+**Version 파일 업데이트** (프로젝트 유형별):
+- `package.json`: `npm version <patch|minor|major> --no-git-tag-version`
+- `pubspec.yaml`: `version:` 필드 직접 수정
+- `Cargo.toml`: `version =` 필드 직접 수정
+- `pyproject.toml`: `version =` 필드 직접 수정
+
+#### PR 생성 (사용자 확인 후)
+
+1. **사용자 확인**: "PR을 생성하시겠습니까?" (AskUserQuestion)
+2. **승인 시**:
+   ```bash
+   # 변경 커밋
+   git add -A && git commit -m "[auto] version bump to vX.Y.Z"
+
+   # PR 생성 (gh CLI)
+   gh pr create \
+     --title "Release vX.Y.Z: [주요 변경 요약]" \
+     --body "## Summary
+   - [자동 생성된 변경 요약]
+
+   ## Quality
+   - Health Score: [점수]/100
+   - Code Review: [라운드] rounds, CRITICAL/HIGH: 0
+   - Tests: All passing
+
+   ## Changelog
+   [릴리즈 노트에서 발췌]"
+   ```
+3. **거부 시**: 버전 업만 로컬에 커밋, PR 생성 건너뜀
+
 ### Iteration 관리
 
 - Group A (Step 4-1~4-4), Group B (Step 4-5~4-7)로 분할 가능

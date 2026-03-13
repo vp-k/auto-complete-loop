@@ -1,0 +1,33 @@
+{
+  "mode": "goal",
+  "targetRounds": 20,
+  "goal": "모든 이슈 발견 0",
+  "goalMet": false,
+  "scope": "전체 프로젝트 (scripts, commands, skills)",
+  "currentRound": 1,
+  "status": "in_progress",
+  "roundResults": [],
+  "findingHistory": [],
+  "dod": {
+    "all_rounds_complete": {
+      "checked": false,
+      "evidence": null
+    },
+    "build_pass": {
+      "checked": false,
+      "evidence": null
+    },
+    "no_critical_high": {
+      "checked": false,
+      "evidence": null
+    }
+  },
+  "handoff": {
+    "lastIteration": null,
+    "completedInThisIteration": "",
+    "nextSteps": "Round 1 시작",
+    "keyDecisions": [],
+    "warnings": "",
+    "currentApproach": ""
+  }
+}

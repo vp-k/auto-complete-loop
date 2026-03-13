@@ -1,0 +1,27 @@
+{
+  "scope": "gstack 기반 개선사항 2차 리뷰 (수정 반영 후)",
+  "created": "2026-03-14T00:00:00Z",
+  "status": "completed",
+  "outputPath": "code-review-result.md",
+  "phase": "report",
+  "resolvedFiles": [
+    "scripts/shared-gate.sh",
+    "commands/code-review-loop.md",
+    "commands/code-review-loop-gemini.md",
+    "skills/code-review/SKILL.md",
+    "skills/implementation/SKILL.md",
+    "skills/pm-planning/SKILL.md",
+    "skills/verification/SKILL.md",
+    "../design-polish/scripts/capture.cjs",
+    "../design-polish/skills/design-polish/SKILL.md"
+  ],
+  "chunks": [
+    { "id": 1, "label": "ACL core scripts + skills", "files": ["scripts/shared-gate.sh","commands/code-review-loop.md","commands/code-review-loop-gemini.md","skills/code-review/SKILL.md","skills/implementation/SKILL.md","skills/pm-planning/SKILL.md","skills/verification/SKILL.md"], "status": "reviewed", "findingsCount": 7 },
+    { "id": 2, "label": "design-polish capture + skill", "files": ["../design-polish/scripts/capture.cjs","../design-polish/skills/design-polish/SKILL.md"], "status": "reviewed", "findingsCount": 5 }
+  ],
+  "totalFindings": 12,
+  "confirmedFindings": 10,
+  "dismissedFindings": 2,
+  "turnCount": 0,
+  "lastCompactAt": 0
+}

@@ -868,16 +868,37 @@ cmd_quality_gate() {
   lint_exit_val=$(echo "$results" | jq '.lint.exitCode // null' 2>/dev/null)
   type_exit_val=$(echo "$results" | jq '.typeCheck.exitCode // null' 2>/dev/null)
 
-  # null(스킵)은 만점 처리 (해당 카테고리가 없는 프로젝트)
-  [[ "$build_exit_val" == "null" || "$build_exit_val" == "0" ]] && score_build=25 || score_build=0
-  [[ "$test_exit_val" == "null" || "$test_exit_val" == "0" ]] && score_test=30 || score_test=0
-  [[ "$lint_exit_val" == "null" || "$lint_exit_val" == "0" ]] && score_lint=20 || score_lint=0
-  [[ "$type_exit_val" == "null" || "$type_exit_val" == "0" ]] && score_type=25 || score_type=0
+  # 실행된 카테고리만 가중치에 포함 (스킵된 카테고리는 제외 후 재정규화)
+  local total_weight=0
+  local earned_weight=0
 
-  health_score=$((score_build + score_test + score_lint + score_type))
+  if [[ "$build_exit_val" != "null" ]]; then
+    total_weight=$((total_weight + 25))
+    [[ "$build_exit_val" == "0" ]] && earned_weight=$((earned_weight + 25))
+  fi
+  if [[ "$test_exit_val" != "null" ]]; then
+    total_weight=$((total_weight + 30))
+    [[ "$test_exit_val" == "0" ]] && earned_weight=$((earned_weight + 30))
+  fi
+  if [[ "$lint_exit_val" != "null" ]]; then
+    total_weight=$((total_weight + 20))
+    [[ "$lint_exit_val" == "0" ]] && earned_weight=$((earned_weight + 20))
+  fi
+  if [[ "$type_exit_val" != "null" ]]; then
+    total_weight=$((total_weight + 25))
+    [[ "$type_exit_val" == "0" ]] && earned_weight=$((earned_weight + 25))
+  fi
+
+  # 재정규화: 실행된 카테고리 기준 100점 만점으로 환산
+  if [[ "$total_weight" -gt 0 ]]; then
+    health_score=$(( (earned_weight * 100) / total_weight ))
+  else
+    health_score=0
+  fi
+  local coverage=$(( (total_weight * 100) / 100 ))
 
   echo ""
-  echo "Health Score: $health_score / 100 (Build:$score_build/25 Test:$score_test/30 Lint:$score_lint/20 Type:$score_type/25)"
+  echo "Health Score: $health_score / 100 (coverage: ${coverage}% of gates executed)"
 
   # Regression Baseline 비교
   local baseline_file=".claude-quality-baseline.json"
@@ -894,15 +915,23 @@ cmd_quality_gate() {
     fi
   fi
 
+  # 개별 카테고리 점수 (baseline 호환)
+  local s_bld=0 s_tst=0 s_lnt=0 s_typ=0
+  [[ "$build_exit_val" != "null" && "$build_exit_val" == "0" ]] && s_bld=25
+  [[ "$test_exit_val" != "null" && "$test_exit_val" == "0" ]] && s_tst=30
+  [[ "$lint_exit_val" != "null" && "$lint_exit_val" == "0" ]] && s_lnt=20
+  [[ "$type_exit_val" != "null" && "$type_exit_val" == "0" ]] && s_typ=25
+
   # Baseline 저장
   jq -n \
     --argjson score "$health_score" \
     --arg ts "$ts" \
-    --argjson bld "$score_build" \
-    --argjson tst "$score_test" \
-    --argjson lnt "$score_lint" \
-    --argjson typ "$score_type" \
-    '{"healthScore": $score, "timestamp": $ts, "breakdown": {"build": $bld, "test": $tst, "lint": $lnt, "typeCheck": $typ}}' \
+    --argjson bld "$s_bld" \
+    --argjson tst "$s_tst" \
+    --argjson lnt "$s_lnt" \
+    --argjson typ "$s_typ" \
+    --argjson cov "$coverage" \
+    '{"healthScore": $score, "timestamp": $ts, "coverage": $cov, "breakdown": {"build": $bld, "test": $tst, "lint": $lnt, "typeCheck": $typ}}' \
     > "$baseline_file"
 
   # verification.json에 health score 추가

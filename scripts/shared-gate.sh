@@ -1359,12 +1359,18 @@ cmd_smoke_check() {
   local port="${1:-3000}"
   local timeout="${2:-15}"
 
-  # 입력 검증: port/timeout은 반드시 정수
+  # 입력 검증: port/timeout은 반드시 정수 + 범위 검증
   if ! [[ "$port" =~ ^[0-9]+$ ]]; then
     die "smoke-check: port must be a positive integer, got '$port'"
   fi
+  if [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+    die "smoke-check: port must be 1-65535, got '$port'"
+  fi
   if ! [[ "$timeout" =~ ^[0-9]+$ ]]; then
     die "smoke-check: timeout must be a positive integer, got '$timeout'"
+  fi
+  if [[ "$timeout" -lt 1 ]]; then
+    die "smoke-check: timeout must be >= 1, got '$timeout'"
   fi
 
   echo "=== Smoke Check (port: $port, timeout: ${timeout}s) ==="

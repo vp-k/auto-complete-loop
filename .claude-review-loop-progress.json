@@ -4,10 +4,65 @@
   "goal": "모든 이슈 발견 0",
   "goalMet": false,
   "scope": "전체 프로젝트 (scripts, commands, skills)",
-  "currentRound": 1,
+  "currentRound": 2,
   "status": "in_progress",
-  "roundResults": [],
-  "findingHistory": [],
+  "roundResults": [
+    {
+      "round": 1,
+      "findings": {
+        "total": 4,
+        "confirmed": 3,
+        "dismissed": 1,
+        "bySeverity": {
+          "CRITICAL": 0,
+          "HIGH": 1,
+          "MEDIUM": 2,
+          "LOW": 0
+        }
+      },
+      "fixes": {
+        "attempted": 3,
+        "succeeded": 3,
+        "failed": 0
+      },
+      "timestamp": "2026-03-14T01:30:00Z"
+    }
+  ],
+  "findingHistory": [
+    {
+      "id": "SEC-HIGH-1",
+      "file": "../design-polish/scripts/capture.cjs",
+      "line": 292,
+      "description": "CI 환경에서 sandbox 자동 비활성화",
+      "severity": "HIGH",
+      "category": "SEC",
+      "discoveredInRound": 1,
+      "status": "fixed",
+      "fixedInRound": 1
+    },
+    {
+      "id": "ERR-MEDIUM-3",
+      "file": "scripts/shared-gate.sh",
+      "line": 1412,
+      "description": "백그라운드 서버 trap 정리 누락",
+      "severity": "MEDIUM",
+      "category": "ERR",
+      "discoveredInRound": 1,
+      "status": "fixed",
+      "fixedInRound": 1
+    },
+    {
+      "id": "SEC-MEDIUM-4",
+      "file": "commands/check-docs.md",
+      "line": 54,
+      "description": "예측 가능한 tmp 파일명",
+      "severity": "MEDIUM",
+      "category": "SEC",
+      "discoveredInRound": 1,
+      "status": "fixed",
+      "fixedInRound": 1
+    }
+  ],
   "dod": {
     "all_rounds_complete": {
       "checked": false,
@@ -23,11 +78,14 @@
     }
   },
   "handoff": {
-    "lastIteration": null,
-    "completedInThisIteration": "",
-    "nextSteps": "Round 1 시작",
-    "keyDecisions": [],
-    "warnings": "",
-    "currentApproach": ""
+    "lastIteration": 1,
+    "completedInThisIteration": "Round 1: 4건 발견 → 3건 확인/수정 (CI sandbox, trap 정리, tmp 파일명), 1건 기각 (eval 고정문자열)",
+    "nextSteps": "Round 2: git diff 기반 변경 파일 리뷰",
+    "keyDecisions": [
+      "eval은 고정문자열만 사용하므로 기각",
+      "CI=true sandbox 비활성화 제거, UNSAFE_NO_SANDBOX만 유지"
+    ],
+    "warnings": "없음",
+    "currentApproach": "codex 독립 리뷰 → Claude 검증 → 자동 수정"
   }
 }

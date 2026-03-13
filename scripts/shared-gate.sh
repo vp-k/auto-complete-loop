@@ -1462,6 +1462,7 @@ cmd_smoke_check() {
   fi
 
   rm -f "$smoke_log"
+  trap - EXIT INT TERM
 
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" \
@@ -2149,11 +2150,12 @@ cmd_design_polish_gate() {
   echo "[design-polish-gate] Running capture: node $dp_root/scripts/capture.cjs --wcag /"
   node "$dp_root/scripts/capture.cjs" --wcag / 2>&1 && capture_exit=0 || capture_exit=$?
 
-  # 서버 프로세스 정리
+  # 서버 프로세스 정리 (trap도 해제)
   kill "$server_pid" 2>/dev/null || true
   pkill -P "$server_pid" 2>/dev/null || true
   wait "$server_pid" 2>/dev/null || true
-  rm -f /tmp/design-polish-server.log
+  rm -f "$dp_log"
+  trap - EXIT INT TERM
 
   # WCAG 리포트 요약
   local wcag_violations=0

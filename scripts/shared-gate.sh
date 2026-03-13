@@ -2079,7 +2079,7 @@ cmd_design_polish_gate() {
   rm -f .design-polish/screenshots/current-*.png 2>/dev/null || true
 
   # 서버 시작 (smoke-check 로직 재사용)
-  local port=3000
+  local port="${1:-3000}"
   local start_cmd=""
   if [[ -f "package.json" ]]; then
     local pm="npm"
@@ -2145,10 +2145,10 @@ cmd_design_polish_gate() {
 
   echo "[design-polish-gate] Server ready on port $port"
 
-  # capture.cjs 실행 (WCAG + 스크린샷)
+  # capture.cjs 실행 (WCAG + 스크린샷, 포트 전달)
   local capture_exit=0
-  echo "[design-polish-gate] Running capture: node $dp_root/scripts/capture.cjs --wcag /"
-  node "$dp_root/scripts/capture.cjs" --wcag / 2>&1 && capture_exit=0 || capture_exit=$?
+  echo "[design-polish-gate] Running capture: BASE_URL=http://localhost:$port node $dp_root/scripts/capture.cjs --wcag /"
+  BASE_URL="http://localhost:$port" node "$dp_root/scripts/capture.cjs" --wcag / 2>&1 && capture_exit=0 || capture_exit=$?
 
   # 서버 프로세스 정리 (trap도 해제)
   kill "$server_pid" 2>/dev/null || true

@@ -2147,6 +2147,7 @@ cmd_design_polish_gate() {
     echo "[design-polish-gate] SKIP (server failed to start)"
     _dp_record_skip "server failed to start"
     echo "=== DESIGN POLISH GATE: SKIP ==="
+    trap - EXIT INT TERM
     return 2
   fi
 

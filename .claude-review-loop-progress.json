@@ -4,7 +4,7 @@
   "goal": "모든 이슈 발견 0",
   "goalMet": false,
   "scope": "전체 프로젝트 (scripts, commands, skills)",
-  "currentRound": 3,
+  "currentRound": 4,
   "status": "in_progress",
   "roundResults": [
     {
@@ -46,6 +46,26 @@
         "failed": 0
       },
       "timestamp": "2026-03-14T02:00:00Z"
+    },
+    {
+      "round": 3,
+      "findings": {
+        "total": 3,
+        "confirmed": 3,
+        "dismissed": 0,
+        "bySeverity": {
+          "CRITICAL": 0,
+          "HIGH": 0,
+          "MEDIUM": 3,
+          "LOW": 0
+        }
+      },
+      "fixes": {
+        "attempted": 3,
+        "succeeded": 3,
+        "failed": 0
+      },
+      "timestamp": "2026-03-14T02:30:00Z"
     }
   ],
   "findingHistory": [
@@ -103,6 +123,39 @@
       "discoveredInRound": 2,
       "status": "fixed",
       "fixedInRound": 2
+    },
+    {
+      "id": "SEC-MEDIUM-R3-1",
+      "file": "../design-polish/scripts/capture.cjs",
+      "line": 399,
+      "description": "SSRF 내부IP 차단 부재",
+      "severity": "MEDIUM",
+      "category": "SEC",
+      "discoveredInRound": 3,
+      "status": "fixed",
+      "fixedInRound": 3
+    },
+    {
+      "id": "DATA-MEDIUM-R3-2",
+      "file": "../design-polish/scripts/capture.cjs",
+      "line": 495,
+      "description": "wcagOnly 부분 실패 미추적",
+      "severity": "MEDIUM",
+      "category": "DATA",
+      "discoveredInRound": 3,
+      "status": "fixed",
+      "fixedInRound": 3
+    },
+    {
+      "id": "ERR-MEDIUM-R3-3",
+      "file": "scripts/shared-gate.sh",
+      "line": 2082,
+      "description": "dp-gate 포트 하드코딩",
+      "severity": "MEDIUM",
+      "category": "ERR",
+      "discoveredInRound": 3,
+      "status": "fixed",
+      "fixedInRound": 3
     }
   ],
   "dod": {
@@ -120,13 +173,10 @@
     }
   },
   "handoff": {
-    "lastIteration": 2,
-    "completedInThisIteration": "Round 2: 4건 발견 → 2건 확인/수정 (URL scheme 검증, dp_log 경로 불일치), 2건 기각",
-    "nextSteps": "Round 3: 수정 후 재리뷰",
-    "keyDecisions": [
-      "git add -A는 .gitignore 존중하므로 기각",
-      "goal 모드 max 규칙은 일관성 있어 기각"
-    ],
+    "lastIteration": 3,
+    "completedInThisIteration": "Round 3: 3건 발견 → 3건 모두 수정 (SSRF 내부IP 차단, wcagOnly failures 추적, dp-gate 포트 파라미터화)",
+    "nextSteps": "Round 4: 재리뷰",
+    "keyDecisions": [],
     "warnings": "없음",
     "currentApproach": "codex 독립 리뷰 → Claude 검증 → 자동 수정"
   }

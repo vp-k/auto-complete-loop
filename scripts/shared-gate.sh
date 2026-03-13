@@ -2080,9 +2080,12 @@ cmd_design_polish_gate() {
 
   # 서버 시작 (smoke-check 로직 재사용)
   local port="${1:-3000}"
-  # 입력 검증: port는 반드시 정수
+  # 입력 검증: port는 반드시 1-65535 범위의 정수
   if ! [[ "$port" =~ ^[0-9]+$ ]]; then
     die "design-polish-gate: port must be a positive integer, got '$port'"
+  fi
+  if [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
+    die "design-polish-gate: port must be 1-65535, got '$port'"
   fi
   local start_cmd=""
   if [[ -f "package.json" ]]; then

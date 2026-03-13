@@ -4,7 +4,7 @@
   "goal": "모든 이슈 발견 0",
   "goalMet": false,
   "scope": "전체 프로젝트 (scripts, commands, skills)",
-  "currentRound": 4,
+  "currentRound": 5,
   "status": "in_progress",
   "roundResults": [
     {
@@ -66,6 +66,26 @@
         "failed": 0
       },
       "timestamp": "2026-03-14T02:30:00Z"
+    },
+    {
+      "round": 4,
+      "findings": {
+        "total": 3,
+        "confirmed": 2,
+        "dismissed": 1,
+        "bySeverity": {
+          "CRITICAL": 0,
+          "HIGH": 1,
+          "MEDIUM": 1,
+          "LOW": 0
+        }
+      },
+      "fixes": {
+        "attempted": 2,
+        "succeeded": 2,
+        "failed": 0
+      },
+      "timestamp": "2026-03-14T03:00:00Z"
     }
   ],
   "findingHistory": [
@@ -173,8 +193,8 @@
     }
   },
   "handoff": {
-    "lastIteration": 3,
-    "completedInThisIteration": "Round 3: 3건 발견 → 3건 모두 수정 (SSRF 내부IP 차단, wcagOnly failures 추적, dp-gate 포트 파라미터화)",
+    "lastIteration": 4,
+    "completedInThisIteration": "Round 4: 3건 발견 → 2건 수정 (dp-gate port 검증, wcag-only 성공 판정), 1건 기각 (DNS 기반 SSRF)",
     "nextSteps": "Round 4: 재리뷰",
     "keyDecisions": [],
     "warnings": "없음",

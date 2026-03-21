@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # PreToolUse:Bash - --no-verify 플래그 차단 (fail-closed)
-# git commit/push에서 --no-verify 사용을 차단하여 pre-commit hook 보호
+# git commit/push에서 --no-verify 및 -n 사용을 차단하여 pre-commit hook 보호
 #
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
 # 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "allow"}
+
+BLOCK_MSG='{"decision": "block", "reason": "--no-verify는 사용할 수 없습니다. pre-commit hook을 우회하면 품질 게이트가 무력화됩니다. hook 실패 시 근본 원인을 해결하세요."}'
 
 # jq 미설치 시 fail-closed
 if ! command -v jq &>/dev/null; then
@@ -19,9 +21,18 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || {
   exit 0
 }
 
-if echo "$COMMAND" | grep -qE '\-\-no-verify'; then
-  echo '{"decision": "block", "reason": "--no-verify는 사용할 수 없습니다. pre-commit hook을 우회하면 품질 게이트가 무력화됩니다. hook 실패 시 근본 원인을 해결하세요."}'
+# --no-verify 차단
+if echo "$COMMAND" | grep -qE -- '--no-verify'; then
+  echo "$BLOCK_MSG"
   exit 0
+fi
+
+# git commit/push의 -n (short form of --no-verify) 차단
+if echo "$COMMAND" | grep -qE 'git\s+(commit|push)'; then
+  if echo "$COMMAND" | grep -qE '(^|\s)-[a-zA-Z]*n(\s|$)'; then
+    echo "$BLOCK_MSG"
+    exit 0
+  fi
 fi
 
 echo '{"decision": "allow"}'

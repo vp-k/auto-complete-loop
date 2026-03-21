@@ -10,7 +10,7 @@ set -euo pipefail
 
 # progress 파일 찾기
 PROGRESS_FILE=""
-for f in .claude-progress.json .claude-review-loop-progress.json .claude-implement-progress.json .claude-plan-progress.json; do
+for f in .claude-full-auto-progress.json .claude-progress.json .claude-review-loop-progress.json .claude-implement-progress.json .claude-plan-progress.json .claude-polish-progress.json .claude-e2e-progress.json .claude-doc-check-progress.json; do
   if [ -f "$f" ]; then
     PROGRESS_FILE="$f"
     break

@@ -1,6 +1,6 @@
 {
   "name": "auto-complete-loop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI 코딩 완주 프레임워크. Ralph Loop 내장 + DoD/SPEC/TDD/Fresh Context Verification으로 AI가 끝까지 완성하도록 강제",
   "author": {
     "name": "user01"

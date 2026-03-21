@@ -27,8 +27,9 @@ if echo "$COMMAND" | grep -qE -- '--no-verify'; then
   exit 0
 fi
 
-# git commit/push의 -n (short form of --no-verify) 차단
-if echo "$COMMAND" | grep -qE 'git\s+(commit|push)'; then
+# git commit의 -n (short form of --no-verify) 차단
+# 주의: git push -n은 dry-run이므로 차단하지 않음
+if echo "$COMMAND" | grep -qE 'git\s+commit'; then
   if echo "$COMMAND" | grep -qE '(^|\s)-[a-zA-Z]*n(\s|$)'; then
     echo "$BLOCK_MSG"
     exit 0

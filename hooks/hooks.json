@@ -1,6 +1,51 @@
 {
-  "description": "Auto Complete Loop - 완주 강제 stop hook",
+  "description": "Auto Complete Loop - 품질 보장 훅 시스템",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/block-no-verify.sh",
+            "description": "--no-verify 플래그 차단 (pre-commit hook 보호)"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/doc-file-warning.sh",
+            "description": "불필요 문서 파일 생성 차단"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/console-warn.sh",
+            "description": "편집/생성 파일 디버그 코드 경고"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.sh",
+            "description": "컴팩션 전 컨텍스트 요약 출력 (읽기 전용)"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

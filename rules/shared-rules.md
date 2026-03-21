@@ -25,103 +25,12 @@
 5. 해당 progress 파일의 dod 체크리스트 업데이트 (evidence 포함)
 
 ## Error Classification & Escalation
+→ 상세 규칙: `Read ${CLAUDE_PLUGIN_ROOT}/rules/error-escalation-rules.md`
+에러 발생 시 L0→L5 에스컬레이션, 범위 축소 절차는 분리된 규칙 파일 참조.
 
-### 에러 레벨 (Progress Heuristic)
-| 레벨 | 분류 | 예시 |
-|------|------|------|
-| L0 | environment | 패키지 미설치, PATH, 권한 |
-| L1 | build | 컴파일 에러, 번들 실패 |
-| L2 | type | 타입 불일치, 인터페이스 누락 |
-| L3 | runtime | 테스트 실패, 런타임 에러 |
-| L4 | quality | 린트, 코드 스타일, 경고 |
-
-**방향 판별**: L0→L1→...→L4 = 진행(forward), 역방향 = 회귀(backward)
-회귀 2회 연속 시 현재 접근법을 재검토 (codex 호출 또는 다른 접근법)
-
-### 에스컬레이션 (레벨별 시도 예산)
-
-각 레벨마다 독립적인 시도 예산이 있으며, 예산 소진 시 다음 레벨로 에스컬레이트.
-레벨 전환 시 `record-error --reset-count`로 카운터 리셋.
-
-| 레벨 | 예산 | 설명 |
-|------|------|------|
-| **L0: 즉시 수정** | 3회 | 같은 방법 내 수정 (import 추가, 타입 수정, 간단한 로직) |
-| **L1: 다른 방법** | 3회 | 같은 설계, 다른 구현 (라이브러리 교체, 패턴 변경, API 변경) |
-| **L2: codex 분석** | 1회 | codex-cli에 근본 원인 분석 요청 + `git stash`로 안전 지점 확보 |
-| **L3: 완전히 다른 접근법** | 3회 | 설계/아키텍처 수준 전환 (REST→GraphQL, CSR→SSR, WebSocket→폴링). codex 분석 기반 |
-| **L4: 범위 축소** | 1회 | 최소 동작 버전으로 구현 + `scopeReductions`에 기록 |
-| **L5: 사용자 개입** | - | 선택지 제시 |
-
-에러 기록:
-```bash
-# 일반 기록
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L4> --action "시도한 행동"
-# 레벨 전환 시 카운터 리셋
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L4> --reset-count
-```
-
-record-error exit code:
-- `exit 0`: 현재 레벨 예산 내 → 계속 시도
-- `exit 1`: 현재 레벨 예산 소진 → 다음 레벨로 에스컬레이트
-- `exit 2`: L2 도달 → codex 분석 필요
-- `exit 3`: L5 도달 → 사용자 개입 필요
-
-## Scope Reduction (범위 축소)
-
-**원칙**: 동작하는 제품 + 문서화된 갭 > 모든 기능 갖춘 깨진 제품
-
-**범위 축소 조건:**
-- 동일 기능에서 5회 이상 실패 (다른 접근법까지 시도한 후)
-- codex 분석 + 접근법 전환 후에도 해결 불가
-- 해당 기능이 전체 시스템의 핵심 경로가 아닌 경우
-
-**절차:**
-1. 기능을 최소 동작 버전으로 구현 (예: 실시간 알림 → 폴링 기반 알림)
-2. progress 파일 `scopeReductions` 배열에 기록:
-   ```json
-   {"feature": "실시간 알림", "original": "WebSocket 실시간 알림",
-    "reduced": "30초 폴링 기반 알림", "reason": "WebSocket 연결 안정성 4회 실패",
-    "ticket": "POST_RELEASE_001"}
-   ```
-3. 프로젝트 루트에 `SCOPE_REDUCTIONS.md` 생성/업데이트
-4. 코드에 `// SCOPE_REDUCED: <ticket>` 주석 추가
-
-**범위 축소 불가 항목** (핵심 경로):
-- 인증/인가
-- 데이터 CRUD의 기본 동작
-- 빌드/배포 파이프라인
-
-## 포기 방지
-- L0→L1→L2→L3→L4→L5 순서로 에스컬레이트
-- 각 레벨에서 예산만큼 시도 후 다음 레벨로 자동 에스컬레이트
-- 범위 축소는 핵심 경로(인증, CRUD 기본, 빌드) 제외
-- "사용자가 직접 확인해주세요" 금지 (L5 전까지)
-
-## 프로젝트 규모 판정 (중앙 기준)
-
-모든 Phase/DoD/스킬에서 규모 조건이 필요할 때 이 기준을 참조합니다.
-
-| 규모 | 기준 |
-|------|------|
-| Small | 기능 5개 미만 |
-| Medium | 기능 5~15개 |
-| Large | 아래 중 1개 이상 충족: 기획 문서 8개+, 모듈/기능 그룹 4개+, 외부/타팀 이해관계자 3팀+ |
-
-**규모별 활성화 항목:**
-
-| 항목 | Small | Medium | Large |
-|------|-------|--------|-------|
-| MoSCoW 분류 | O | O | O |
-| ICE 점수 | - | O | O |
-| Kano 조정 | - | O | O |
-| 핵심 사용자 플로우 | - | O | O |
-| 이해관계자 맵 | - | - | O |
-| 커뮤니케이션 계획 | - | - | O |
-
-**DoD 키 규모별 관리 (방식 A):**
-- Small/Medium에서는 Large 전용 DoD 키(`stakeholders_mapped`)를 **아예 생성하지 않음**
-- stop-hook은 dod에 존재하는 키만 전부 `checked=true`이면 통과
-- Phase 0 Step 0-9.5에서 2차 재판정 시 DoD 키 동적 추가/삭제
+## 프로젝트 규모 판정
+→ 상세 규칙: `Read ${CLAUDE_PLUGIN_ROOT}/rules/project-size-rules.md`
+Small(<5)/Medium(5~15)/Large(8+docs) 기준 및 DoD 키 관리는 분리된 규칙 파일 참조.
 
 ## 의존성 관리 (패키지 설치)
 
@@ -165,18 +74,28 @@ record-error exit code:
 6. **자동 전환**: 작업 완료 → 다음 작업으로 확인 없이 자동 진행
 7. **질문 금지**: 명시적으로 허용된 시점 외에는 AskUserQuestion 사용 금지
 
-## 컨텍스트 관리 (Prompt Too Long 방지)
+## 컨텍스트 관리 (전략적 컴팩션)
 
-### 자동 `/compact` 실행 시점
-| 조건 | 트리거 |
-|------|--------|
-| 단일 작업 내 | 12턴 이상 → `/compact` |
+### 컴팩션 원칙
+- **구현 중 컴팩션 금지**: 코드 작성/수정 도중에는 `/compact` 실행하지 않음
+- **논리적 경계에서만 실행**: 아래 시점에서 수동 `/compact` 실행
+- **PreCompact 훅이 handoff 자동 저장**: 컴팩션 전 중요 컨텍스트가 파일에 보존됨
+
+### `/compact` 실행 시점 (논리적 경계)
+| 시점 | 설명 |
+|------|------|
+| Phase 전환 | Phase 0→1, 1→2 등 단계 전환 직전 |
+| 마일스톤 완료 | 주요 문서/기능 구현 완료 후 |
+| 작업 방향 전환 | 실패한 접근법 → 새 접근법 전환 시 |
+| 리서치 → 구현 전환 | 조사/탐색 → 코드 작성 전환 시 |
 | "prompt too long" 에러 | 즉시 `/compact` |
-| 작업 전환 시 | 다음 작업 시작 전 `/compact` |
 
-### 에러 감지
-- "prompt too long", "context length exceeded" 메시지 감지 시 즉시 `/compact`
-- `/compact` 후에도 반복 시:
+### 컴팩션 전 컨텍스트 출력 (PreCompact 훅)
+PreCompact 훅이 progress 파일의 현재 상태를 stdout에 출력 → compact 요약에 포함됨.
+**주의**: 이 훅은 progress 파일을 수정하지 않음. `/compact` 전에 handoff 필드를 수동 업데이트할 것.
+
+### 컴팩션 후 복구 불가 시
+- `/compact` 후에도 "prompt too long" 반복 시:
   1. 현재 진행 상황을 progress 파일에 저장
   2. handoff 필드 업데이트
   3. 세션을 자연스럽게 종료 (Stop Hook이 다음 iteration 자동 시작)
@@ -229,3 +148,45 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
 - 이전 실행 결과 재사용
 
 **원칙:** evidence 없으면 checked=true 불가. 로그 없으면 완료 없음.
+
+## 모델 라우팅 가이드
+
+서브에이전트 또는 Agent 도구 사용 시 모델 선택 기준:
+
+| 모델 | 용도 | 예시 |
+|------|------|------|
+| **Sonnet** | 메인 서브에이전트, 코드 구현, 멀티에이전트 오케스트레이션 | Explore, 코드 리뷰, 구현 에이전트 |
+| **Opus** | 복잡한 아키텍처 결정, 심층 분석, 리서치 | Plan, 보안 분석, 근본 원인 분석 |
+
+- **Haiku는 사용하지 않음**
+- 모델 미지정 시 부모 세션의 모델을 상속
+- Agent 도구의 `model` 파라미터로 지정: `"model": "sonnet"` 또는 `"model": "opus"`
+
+## 에이전트 정의 형식 (YAML Frontmatter)
+
+agents/ 디렉토리에 에이전트를 정의할 때 YAML frontmatter 형식을 사용합니다:
+
+```markdown
+---
+name: agent-name
+description: 에이전트의 역할 (한 줄)
+model: sonnet
+tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+---
+
+# Agent Name
+
+에이전트의 상세 동작 로직...
+```
+
+**필수 필드:**
+- `name`: 에이전트 식별자 (kebab-case)
+- `description`: 트리거 판단에 사용되는 설명
+- `model`: `sonnet` 또는 `opus` (Haiku 사용 금지)
+
+**선택 필드:**
+- `tools`: 사용 가능한 도구 제한 목록 (미지정 시 모든 도구 사용 가능)

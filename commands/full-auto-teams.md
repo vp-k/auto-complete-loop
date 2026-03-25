@@ -19,7 +19,7 @@ argument-hint: <요구사항 (자연어)>
 ## 파라미터
 
 - PROMISE_TAG: `FULL_AUTO_TEAMS_COMPLETE`
-- PROGRESS_FILE: `.claude-full-auto-progress.json`
+- PROGRESS_FILE: `.claude-full-auto-teams-progress.json`
 - PHASE_3_SKILL: `skills/team-code-review/SKILL.md`
 - PHASE_3_STEPS: Step 3-1 ~ 3-7
 

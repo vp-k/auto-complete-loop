@@ -58,6 +58,43 @@ progress 파일에 아키텍처 맥락 저장 (크래시 복구용):
 git add -A && git commit -m "[auto] 프로젝트 스캐폴딩 완료"
 ```
 
+### Step 2-2.5: Acceptance Criteria 사전 합의 (문서별)
+
+각 문서 구현 시작 전, codex에게 검증 포인트를 질의하여 Phase 3 리뷰 기준을 사전 확정:
+
+```bash
+codex exec --skip-git-repo-check '## Acceptance Criteria 도출
+
+다음 기획 문서를 읽고, 이 문서의 구현이 완료되었다고 판단할 핵심 검증 포인트 5개를 제시하라.
+각 포인트는 코드 리뷰 시 pass/fail로 판정할 수 있도록 구체적이어야 한다.
+
+### 기획 문서
+파일: [문서 경로] — 직접 읽고 분석하세요
+
+### 출력 형식
+1. [검증 포인트]: [pass 조건]
+2. ...
+'
+```
+
+결과를 progress 파일에 저장:
+```json
+"phases": {
+  "phase_2": {
+    "documents": [{
+      "name": "auth.md",
+      "acceptanceCriteria": [
+        "JWT 토큰 발급/검증 로직이 미들웨어로 분리되어 있다",
+        "리프레시 토큰 로테이션이 구현되어 있다",
+        "..."
+      ]
+    }]
+  }
+}
+```
+
+Phase 3 코드 리뷰 시 이 기준을 codex 프롬프트에 포함하여 검증.
+
 ### Step 2-3: 문서별 티켓 분할
 
 문서 구현 시작 전 해당 문서를 티켓으로 분할:
@@ -132,7 +169,7 @@ Self-check 후, Agent 도구로 검증 에이전트를 별도 생성하여 fresh
 
 ### Step 2-6: 에러 자동 복구
 
-`shared-rules.md`의 Error Classification & Escalation 참조.
+`rules/error-escalation-rules.md` 참조.
 
 에러 기록:
 ```bash

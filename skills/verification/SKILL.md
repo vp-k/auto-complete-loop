@@ -57,16 +57,34 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .clau
 
 DoD 업데이트: `security_review`, `secret_scan`
 
-### Step 4-3: 디버그 코드 제거 + 코드 정리
+### Step 4-3: Cleanup Pass (De-Sloppify)
 
-1. 디버그 코드 탐색:
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh find-debug-code
-   ```
-2. console.log, print, debugger 등 제거
-3. 주석 처리된 코드 정리
-4. 미사용 import 제거
-5. 불필요한 파일 정리
+구현 중 "~하지 마" 지시보다 구현 후 정리 패스가 더 신뢰성 높음.
+이 단계는 코드 리뷰(Phase 3)와 독립적인 **코드 정리 전용** 패스.
+
+**4-3a: 디버그 코드 제거**
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh find-debug-code
+```
+- console.log, print, debugger, breakpoint 등 제거
+- 테스트 파일의 의도적 로깅은 유지
+
+**4-3b: 코드 위생 정리**
+- 주석 처리된 코드 블록 제거 (TODO 주석은 유지)
+- 미사용 import/require 제거
+- 빈 파일, 빈 함수 정리
+- 불필요한 타입 캐스팅 제거
+
+**4-3c: 일관성 정리**
+- 네이밍 일관성 확인 (camelCase/snake_case 혼용)
+- 에러 메시지 포맷 일관성
+- 로깅 레벨 적절성 (info/warn/error)
+
+**4-3d: 정리 후 품질 재검증**
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
+```
+정리 작업이 기존 기능을 깨뜨리지 않았는지 확인.
 
 ### Step 4-4: 문서화 확인 + Launch Readiness
 
@@ -139,14 +157,40 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh artifact-check --progress-file
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --progress-file .claude-full-auto-progress.json
 ```
 
-### Step 4-7: 최종 검증
+### Step 4-7: 최종 검증 (다차원 체크리스트)
 
-모든 정리/폴리싱 완료 후:
+모든 정리/폴리싱 완료 후, 기술 게이트 + 다차원 품질 평가를 수행:
 
-1. 빌드 재실행 -> 성공
-2. 테스트 재실행 -> 전체 통과
-3. 린트 재실행 -> 경고 없음
-4. 결과를 `.claude-verification.json`에 기록
+#### 4-7a: 기술 게이트 (하드 임계값 — 하나라도 실패 시 차단)
+1. 빌드 재실행 → 성공
+2. 테스트 재실행 → 전체 통과
+3. 린트 재실행 → 경고 없음
+
+#### 4-7b: 다차원 품질 평가 (소프트 — 각 차원별 pass/fail 기록)
+
+| 차원 | 평가 기준 | pass 조건 |
+|------|----------|----------|
+| 기능 완성도 | SPEC.md/기획 문서 대비 구현 비율 | 100% 구현 (scope reduction 제외) |
+| 보안 | Phase 3 리뷰 + Phase 4 시크릿 스캔 결과 | CRITICAL/HIGH SEC finding 0개 |
+| 성능 | N+1 쿼리, 메모리 누수, 대량 데이터 처리 | CRITICAL/HIGH PERF finding 0개 |
+| 코드 품질 | 중복, 복잡도, 테스트 커버리지 | 주요 비즈니스 로직 테스트 존재 |
+| 문서화 | README, API 문서, 환경 변수 설명 | 필수 문서 존재 |
+
+각 차원의 결과를 `.claude-verification.json`에 기록:
+```json
+"qualityDimensions": {
+  "featureCompleteness": { "result": "pass", "evidence": "12/12 features implemented" },
+  "security": { "result": "pass", "evidence": "0 SEC CRITICAL/HIGH findings" },
+  "performance": { "result": "pass", "evidence": "0 PERF CRITICAL/HIGH findings" },
+  "codeQuality": { "result": "pass", "evidence": "85% test coverage on business logic" },
+  "documentation": { "result": "pass", "evidence": "README + API docs + .env.example" }
+}
+```
+
+소프트 차원에서 fail이 있으면 경고 출력하되 Phase 완료는 차단하지 않음 (정보 제공용).
+
+#### 4-7c: 결과 기록
+4. 결과를 `.claude-verification.json`에 기록 (기술 게이트 + 다차원 품질)
 5. progress 파일의 dod 체크리스트 최종 업데이트
 
 자동 커밋:

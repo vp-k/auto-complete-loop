@@ -19,6 +19,8 @@
 #   doc-consistency [docs_dir]                         - 문서 간 일관성 검사
 #   doc-code-check [docs_dir]                          - 문서↔코드 매칭
 #   design-polish-gate                                 - WCAG 체크 + 스크린샷 캡처 (SOFT_FAIL)
+#   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
+#   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신
 
 set -euo pipefail
 
@@ -2285,6 +2287,142 @@ cmd_design_polish_gate() {
   return 0
 }
 
+# ─── recover: 복구/재개 정보 자동 출력 ───
+
+cmd_recover() {
+  require_jq
+  require_progress
+
+  migrate_schema_v2 "$PROGRESS_FILE"
+
+  echo "=== Recovery Info ==="
+  echo "Progress: $PROGRESS_FILE"
+
+  # 전체 상태
+  local status
+  status=$(jq -r '.status // "unknown"' "$PROGRESS_FILE")
+  echo "Status: $status"
+
+  if [[ "$status" == "completed" ]]; then
+    echo "All phases completed. No recovery needed."
+    return 0
+  fi
+
+  # 현재 Phase
+  local current_phase
+  current_phase=$(jq -r '.currentPhase // .handoff.currentPhase // "unknown"' "$PROGRESS_FILE")
+  echo "Current Phase: $current_phase"
+
+  # steps 요약
+  echo ""
+  echo "=== Phase Status ==="
+  jq -r '.steps[] | "  \(.name): \(.status)"' "$PROGRESS_FILE" 2>/dev/null || true
+
+  # handoff 정보 (핵심)
+  local has_handoff
+  has_handoff=$(jq 'has("handoff") and (.handoff | length > 0)' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+
+  if [[ "$has_handoff" == "true" ]]; then
+    echo ""
+    echo "=== Handoff (Resume Here) ==="
+    local last_iter completed next_steps warnings approach
+    last_iter=$(jq -r '.handoff.lastIteration // "?"' "$PROGRESS_FILE")
+    completed=$(jq -r '.handoff.completedInThisIteration // "N/A"' "$PROGRESS_FILE")
+    next_steps=$(jq -r '.handoff.nextSteps // "N/A"' "$PROGRESS_FILE")
+    warnings=$(jq -r '.handoff.warnings // ""' "$PROGRESS_FILE")
+    approach=$(jq -r '.handoff.currentApproach // ""' "$PROGRESS_FILE")
+
+    echo "  Last Iteration: $last_iter"
+    echo "  Completed: $completed"
+    echo "  Next Steps: $next_steps"
+    [[ -n "$warnings" && "$warnings" != "null" ]] && echo "  ⚠ Warnings: $warnings"
+    [[ -n "$approach" && "$approach" != "null" ]] && echo "  Approach: $approach"
+
+    # key decisions
+    local decisions
+    decisions=$(jq -r '.handoff.keyDecisions // [] | join(", ")' "$PROGRESS_FILE" 2>/dev/null)
+    [[ -n "$decisions" ]] && echo "  Key Decisions: $decisions"
+  else
+    echo ""
+    echo "No handoff data found. Start from current phase: $current_phase"
+  fi
+
+  # DoD 미완료 항목
+  local unchecked
+  unchecked=$(jq -r '[.dod // {} | to_entries[] | select(.value.checked != true) | .key] | join(", ")' "$PROGRESS_FILE" 2>/dev/null)
+  if [[ -n "$unchecked" ]]; then
+    echo ""
+    echo "=== Unchecked DoD ==="
+    echo "  $unchecked"
+  fi
+
+  echo ""
+  echo "=== Action ==="
+  echo "Resume from: $current_phase"
+  echo "Follow handoff.nextSteps above."
+}
+
+# ─── handoff-update: Handoff 필드 일괄 갱신 ───
+
+cmd_handoff_update() {
+  require_jq
+  require_progress
+
+  local phase="" completed="" next_steps="" warnings="" approach="" iteration=""
+  local decisions=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --phase)       phase="${2:?--phase requires value}"; shift 2 ;;
+      --completed)   completed="${2:?--completed requires value}"; shift 2 ;;
+      --next-steps)  next_steps="${2:?--next-steps requires value}"; shift 2 ;;
+      --warnings)    warnings="${2:-}"; shift 2 ;;
+      --approach)    approach="${2:-}"; shift 2 ;;
+      --iteration)   iteration="${2:?--iteration requires value}"; shift 2 ;;
+      --decision)    decisions+=("${2:?--decision requires value}"); shift 2 ;;
+      *) die "Unknown option: $1. Usage: handoff-update --phase <p> --completed <c> --next-steps <n> [--warnings <w>] [--approach <a>] [--iteration <i>] [--decision <d>]..." ;;
+    esac
+  done
+
+  # 최소 필수 인수
+  [[ -n "$next_steps" ]] || die "handoff-update requires at least --next-steps"
+
+  # handoff 객체가 없으면 생성
+  local has_handoff
+  has_handoff=$(jq 'has("handoff")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  if [[ "$has_handoff" != "true" ]]; then
+    jq_inplace "$PROGRESS_FILE" '.handoff = {}'
+  fi
+
+  # 각 필드 업데이트 (제공된 것만)
+  if [[ -n "$next_steps" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg v "$next_steps" '.handoff.nextSteps = $v'
+  fi
+  if [[ -n "$phase" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg v "$phase" '.handoff.currentPhase = $v'
+  fi
+  if [[ -n "$completed" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg v "$completed" '.handoff.completedInThisIteration = $v'
+  fi
+  if [[ -n "$warnings" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg v "$warnings" '.handoff.warnings = $v'
+  fi
+  if [[ -n "$approach" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg v "$approach" '.handoff.currentApproach = $v'
+  fi
+  if [[ -n "$iteration" ]]; then
+    jq_inplace "$PROGRESS_FILE" --argjson v "$iteration" '.handoff.lastIteration = $v'
+  fi
+  if [[ ${#decisions[@]} -gt 0 ]]; then
+    local decisions_json
+    decisions_json=$(printf '%s\n' "${decisions[@]}" | jq -R . | jq -s .)
+    jq_inplace "$PROGRESS_FILE" --argjson v "$decisions_json" '.handoff.keyDecisions = $v'
+  fi
+
+  echo "OK: handoff updated"
+  jq '.handoff' "$PROGRESS_FILE"
+}
+
 # ─── add-dod-key: DoD 키 동적 추가 (idempotent) ───
 
 cmd_add_dod_key() {
@@ -2334,6 +2472,8 @@ main() {
     e2e-gate)           cmd_e2e_gate "$@" ;;
     design-polish-gate) cmd_design_polish_gate "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
+    recover)           cmd_recover "$@" ;;
+    handoff-update)    cmd_handoff_update "$@" ;;
     help|--help|-h)
       echo "Usage: shared-gate.sh <subcommand> [--progress-file <path>] [args]"
       echo ""
@@ -2362,6 +2502,9 @@ main() {
       echo "  e2e-gate                                   - Run E2E tests (auto-detect framework)"
       echo "  design-polish-gate                         - WCAG check + screenshot capture (SOFT_FAIL)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
+      echo "  recover                                     - Show recovery info (handoff + next steps)"
+      echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"
+      echo "                                             - Update handoff fields atomically"
       echo ""
       echo "Global options:"
       echo "  --progress-file <path>  Specify progress file (auto-detected if omitted)"

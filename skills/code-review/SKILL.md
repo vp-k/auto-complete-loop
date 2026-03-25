@@ -14,7 +14,8 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
 
 1. 구현된 전체 코드를 리뷰 범위로 설정
 2. progress 파일에서 `phases.phase_2.completedFiles` 확인
-3. 리뷰 우선순위: 보안 관련 > 비즈니스 로직 > UI/UX > 유틸리티
+3. progress 파일에서 `phases.phase_2.documents[].acceptanceCriteria` 로드 (있으면 codex 프롬프트에 포함)
+4. 리뷰 우선순위: 보안 관련 > 비즈니스 로직 > UI/UX > 유틸리티
 
 ### Step 3-2: codex-cli 리뷰 라운드
 
@@ -44,16 +45,34 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
    ### 리뷰 대상 파일
    [파일 경로 목록 — 직접 읽고 검토]
 
+   ### 리뷰 원칙 (회의적 리뷰어 역할)
+   - 수정이 필요 없다고 판단하더라도, 최소 1개 이상의 개선점을 반드시 찾아라.
+   - 이전 라운드에서 "수정됨"으로 표시된 항목도 재검증하라. 수정이 불완전하거나 새로운 문제를 도입했을 수 있다.
+   - 의심스러우면 severity를 한 단계 높게 판정하라. 과소평가보다 과대평가가 안전하다.
+   - "이 정도면 괜찮다"는 판단을 경계하라. 프로덕션에서 장애를 일으킬 코드를 찾는 것이 목표다.
+
+   ### 심각도 판정 기준 (Few-shot 참고)
+   **CRITICAL 예시**: `db.query("SELECT * FROM users WHERE id = " + userId)` → SEC-INJ (SQL injection)
+   **HIGH 예시**: `catch(e) {}` 빈 catch 블록 → ERR (에러 무시)
+   **MEDIUM 예시**: API 응답에서 페이지네이션 없이 전체 목록 반환 → PERF (대량 데이터)
+   **LOW 예시**: 함수명 `getData`가 구체적이지 않음 → CODE (네이밍)
+
    ### 출력 형식
-   각 발견을 Critical/High/Medium/Low로 분류.
-   파일명:줄번호와 함께 구체적 수정 방안 제시.
+   각 발견을 아래 형식으로 출력:
+   ### {CATEGORY}-{SEVERITY}-{번호}: {제목}
+   - 파일: {경로}
+   - 라인: {줄번호}
+   - 설명: {문제 상세}
+   - 권장: {수정안}
+   finding 없으면 "NO_FINDINGS".
+   마지막 줄: FINDING_COUNT: N
    '
    ```
 
 2. **Claude Code가 codex 피드백 분석**
    - Critical/High: 즉시 수정
-   - Medium: 판단하여 수용 또는 사유와 함께 스킵
-   - Low: 합리적이면 수용, 과도하면 스킵
+   - Medium: 즉시 수정 (스킵 금지)
+   - Low: 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵 (사유 기록 필수)
 
 3. **수정 후 품질 게이트 재실행**
    ```bash
@@ -72,7 +91,15 @@ progress 파일에 라운드 결과 기록:
 "phase_3": {
   "currentRound": 2,
   "roundResults": [
-    { "round": 1, "critical": 0, "high": 2, "medium": 3, "low": 1, "fixed": 5, "skipped": 1 }
+    {
+      "round": 1,
+      "critical": 0, "high": 2, "medium": 3, "low": 1,
+      "fixed": 5,
+      "dismissed": 1,
+      "dismissedDetails": [
+        { "id": "CODE-LOW-003", "reason": "테스트 파일의 의도적 매직넘버, 프로덕션 코드 아님" }
+      ]
+    }
   ]
 }
 ```
@@ -103,8 +130,7 @@ progress 파일에 라운드 결과 기록:
 
 ### Step 3-3: 리뷰 완료 조건
 
-- Critical/High 발견이 0개
-- 또는 3라운드 완료 후 신규 Critical/High 0개
+- Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복)
 - 품질 게이트 통과
 
 ### Step 3-4: Phase 3 완료
@@ -113,7 +139,7 @@ progress 파일에 라운드 결과 기록:
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
    ```
-2. DoD 업데이트: `code_review_pass.checked = true`, evidence에 "N라운드 리뷰 완료, CRITICAL/HIGH: 0"
+2. DoD 업데이트: `code_review_pass.checked = true`, evidence에 "N라운드 리뷰 완료, CRITICAL/HIGH/MEDIUM: 0"
 3. Phase 전이는 오케스트레이터가 수행
 
 ### Iteration 관리

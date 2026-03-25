@@ -46,6 +46,17 @@
         ]
       }
     ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/task-completed-gate.sh",
+            "description": "Agent Teams 태스크 완료 시 finding 형식 검증"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

@@ -158,7 +158,8 @@ sec-reviewer나 quality-reviewer가 "코드상 문제없음"이라 판정한 부
    ```
 6. **자동 커밋** (품질 게이트 통과 시):
    ```bash
-   git add -A && git commit -m "[auto] Phase 3 팀 코드 리뷰 Round N 수정: X건 finding 수정"
+   # 수정한 파일만 스테이징 (git add -A 금지 — 비의도 파일/시크릿 포함 방지)
+   git add <수정한 파일 목록> && git commit -m "[auto] Phase 3 팀 코드 리뷰 Round N 수정: X건 finding 수정"
    ```
 
 progress 파일에 라운드 결과 기록:

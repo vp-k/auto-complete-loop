@@ -31,20 +31,21 @@ if [[ -z "$TASK_OUTPUT" ]]; then
   exit 0
 fi
 
-# NO_FINDINGS는 즉시 통과
-if echo "$TASK_OUTPUT" | grep -q "NO_FINDINGS"; then
+# NO_FINDINGS — 라인 단위 정확 일치로 검사 (부분 문자열 우회 방지)
+if echo "$TASK_OUTPUT" | grep -qxF "NO_FINDINGS"; then
   exit 0
 fi
 
-# FINDING_COUNT 확인
-if ! echo "$TASK_OUTPUT" | grep -qE "FINDING_COUNT:[[:space:]]*[0-9]+"; then
+# FINDING_COUNT 라인만 정확히 추출 (다른 숫자에 오염 방지)
+FINDING_COUNT_LINE=$(echo "$TASK_OUTPUT" | grep -E "^FINDING_COUNT:[[:space:]]*[0-9]+$" || true)
+if [[ -z "$FINDING_COUNT_LINE" ]]; then
   echo "FINDING_COUNT가 누락되었습니다. 보고서 마지막에 'FINDING_COUNT: N'을 추가해주세요."
   exit 2
 fi
+FINDING_COUNT=$(echo "$FINDING_COUNT_LINE" | sed 's/FINDING_COUNT:[[:space:]]*//')
 
 # finding 형식 검증 (최소 1개의 finding이 올바른 형식인지)
 if ! echo "$TASK_OUTPUT" | grep -qE "###[[:space:]]+(SEC|ERR|DATA|PERF|CODE|LIVE)-(CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+"; then
-  FINDING_COUNT=$(echo "$TASK_OUTPUT" | grep -oE "[0-9]+" | tail -1) || FINDING_COUNT="0"
   if [[ "${FINDING_COUNT:-0}" -gt 0 ]]; then
     echo "finding이 있지만 올바른 형식이 아닙니다."
     echo "형식: ### {CATEGORY}-{SEVERITY}-{번호}: {제목}"

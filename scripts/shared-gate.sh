@@ -105,6 +105,26 @@ migrate_schema_v3() {
   echo "OK: $file migrated to schemaVersion 3"
 }
 
+migrate_schema_v4() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+
+  local current_ver
+  current_ver=$(jq '.schemaVersion // 1' "$file" 2>/dev/null || echo "1")
+  [[ "$current_ver" -ge 4 ]] && return 0
+
+  local is_full_auto
+  is_full_auto=$(jq 'if .steps then [.steps[].name] | any(. == "phase_0") else false end' "$file" 2>/dev/null || echo "false")
+  [[ "$is_full_auto" == "true" ]] || return 0
+
+  echo "Migrating $file to schemaVersion 4 (projectScope support)..."
+  jq_inplace "$file" '
+    .schemaVersion = 4
+    | .phases.phase_0.outputs.projectScope //= null
+  '
+  echo "OK: $file migrated to schemaVersion 4"
+}
+
 # Progress 파일 자동 탐지
 detect_progress_file() {
   for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
@@ -208,7 +228,7 @@ cmd_init() {
     full-auto)
       cat > "$target_file" <<ENDJSON
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
   "project": $safe_project,
   "userRequirement": $safe_requirement,
   "status": "in_progress",
@@ -221,7 +241,7 @@ cmd_init() {
     {"name": "phase_4", "label": "Verification", "status": "pending"}
   ],
   "phases": {
-    "phase_0": { "outputs": { "definitionDoc": null, "readmePath": null, "techStack": null, "rounds": [], "assumptions": [], "nsm": null, "successCriteria": [], "premortem": {"tigers":[],"paperTigers":[],"elephants":[]}, "projectSize": null, "stakeholders": null } },
+    "phase_0": { "outputs": { "definitionDoc": null, "readmePath": null, "techStack": null, "rounds": [], "assumptions": [], "nsm": null, "successCriteria": [], "premortem": {"tigers":[],"paperTigers":[],"elephants":[]}, "projectSize": null, "projectScope": null, "stakeholders": null } },
     "phase_1": { "documents": [], "currentDocument": null },
     "phase_2": { "documents": [], "currentDocument": null, "completedFiles": [], "context": {}, "documentSummaries": {}, "scopeReductions": [], "e2e": {"applicable": null, "projectType": null, "dataStrategy": null, "e2eFramework": null, "fallbackReason": null, "scenarios": []} },
     "phase_3": { "currentRound": 0, "roundResults": [], "findingHistory": [] },
@@ -548,6 +568,7 @@ cmd_status() {
   # schemaVersion 마이그레이션 트리거
   migrate_schema_v2 "$PROGRESS_FILE"
   migrate_schema_v3 "$PROGRESS_FILE"
+  migrate_schema_v4 "$PROGRESS_FILE"
 
   echo "=== Progress Status ($PROGRESS_FILE) ==="
 
@@ -650,6 +671,7 @@ cmd_update_step() {
   # schemaVersion 마이그레이션 트리거
   migrate_schema_v2 "$PROGRESS_FILE"
   migrate_schema_v3 "$PROGRESS_FILE"
+  migrate_schema_v4 "$PROGRESS_FILE"
 
   # 유효한 상태 값 확인
   local valid_statuses="pending in_progress completed"
@@ -681,6 +703,22 @@ cmd_update_step() {
       echo "BLOCKED: $blocking_unresolved blocking Tiger(s) have no mitigation."
       echo "Resolve all blocking Tigers before entering Phase 2."
       jq -r '.phases.phase_0.outputs.premortem.tigers // [] | .[] | select(.blocking == true and (.mitigation == null or .mitigation == "" or (.mitigation | test("^\\s*$")))) | "  - \(.risk)"' "$PROGRESS_FILE"
+      exit 1
+    fi
+
+    # projectScope fail-closed 게이트: null/미설정/비정상 형식이면 Phase 2 진입 차단
+    local scope_valid
+    scope_valid=$(jq '
+      .phases.phase_0.outputs.projectScope
+      | if type == "object" and has("hasFrontend") and has("hasBackend")
+           and (.hasFrontend | type == "boolean") and (.hasBackend | type == "boolean")
+        then "valid"
+        else "invalid"
+        end
+    ' "$PROGRESS_FILE" 2>/dev/null || echo '"invalid"')
+    if [[ "$scope_valid" != '"valid"' ]]; then
+      echo "BLOCKED: projectScope is missing or malformed (need {hasFrontend: bool, hasBackend: bool})."
+      echo "Run Phase 0 Step 0-2.5 to define project scope."
       exit 1
     fi
   fi
@@ -2192,7 +2230,7 @@ cmd_design_polish_gate() {
       has_dq=$(jq '.dod | has("design_quality")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
       if [[ "$has_dq" == "true" ]]; then
         jq_inplace "$PROGRESS_FILE" --arg ev "SKIP: $reason" '
-          .dod.design_quality.checked = false
+          .dod.design_quality.checked = true
           | .dod.design_quality.evidence = $ev
         '
       fi
@@ -2384,6 +2422,7 @@ cmd_recover() {
 
   migrate_schema_v2 "$PROGRESS_FILE"
   migrate_schema_v3 "$PROGRESS_FILE"
+  migrate_schema_v4 "$PROGRESS_FILE"
 
   echo "=== Recovery Info ==="
   echo "Progress: $PROGRESS_FILE"

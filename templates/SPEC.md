@@ -12,11 +12,26 @@
 - SC-1: [정성적/정량적 기준]
 - SC-2: [기준]
 
-## User Stories
-- US-001: As a [역할], I want to [행동], so that [가치]
-  - AC-001-1: [수락 기준]
-  - AC-001-2: [예외 케이스]
-  - AC-001-3: [에러 시나리오]
+## User Stories — Frontend
+(projectScope.hasFrontend=true일 때 필수. false면 이 섹션을 "N/A — 프론트엔드 없음"으로 표기)
+
+- US-F-001: As a [역할], I want to [UI 행동], so that [가치]
+  - AC-F-001-1: [UI 수락 기준]
+  - AC-F-001-2: [UX 예외 케이스]
+
+## User Stories — Backend
+(projectScope.hasBackend=true일 때 필수. false면 이 섹션을 "N/A — 백엔드 없음"으로 표기)
+
+- US-B-001: As a [역할], I want to [API 행동], so that [가치]
+  - AC-B-001-1: [API 수락 기준]
+  - AC-B-001-2: [에러 시나리오]
+
+## Frontend Pages & Components
+(projectScope.hasFrontend=true일 때 필수)
+
+| 페이지/컴포넌트 | 경로/위치 | 주요 기능 | 연관 US |
+|---------------|----------|----------|--------|
+| [PageName] | /path | [설명] | US-F-001 |
 
 ## Data Model
 | 엔티티 | 필드 | 타입 | 제약조건 | 설명 |

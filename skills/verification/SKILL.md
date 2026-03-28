@@ -220,16 +220,32 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --progress-file .c
 | 차원 | 평가 기준 | pass 조건 |
 |------|----------|----------|
 | 기능 완성도 | SPEC.md/기획 문서 대비 구현 비율 | 100% 구현 (scope reduction 제외) |
+| **레이어 커버리지** | **projectScope 대비 아티팩트 존재** | **필수 레이어 파일 모두 존재 (아래 상세)** |
 | 보안 | Phase 3 리뷰 + Phase 4 시크릿 스캔 결과 | CRITICAL/HIGH SEC finding 0개 |
 | 성능 | N+1 쿼리, 메모리 누수, 대량 데이터 처리 | CRITICAL/HIGH PERF finding 0개 |
 | 코드 품질 | 중복, 복잡도, 테스트 커버리지 | 주요 비즈니스 로직 테스트 존재 |
 | 문서화 | README, API 문서, 환경 변수 설명 | 필수 문서 존재 |
 | E2E 커버리지 | E2E 시나리오 vs SPEC.md 유저스토리 | high/medium 시나리오 전체 통과 (applicable=false 시 N/A) |
 
+#### 레이어 커버리지 검증 (하드 게이트)
+
+progress 파일의 `phases.phase_0.outputs.projectScope`를 기반으로:
+
+1. `hasFrontend: true` → 프론트엔드 파일 존재 확인:
+   - 페이지/컴포넌트 파일 (*.tsx, *.jsx, *.vue, *.svelte, page.*, layout.* 등)
+   - **0개면 → FAIL** ("프론트엔드 미구현 — projectScope에서 hasFrontend=true")
+2. `hasBackend: true` → 백엔드 파일 존재 확인:
+   - API 라우트/컨트롤러/서비스 파일 (route.*, controller.*, service.*, handler.* 등)
+   - **0개면 → FAIL** ("백엔드 미구현 — projectScope에서 hasBackend=true")
+3. `projectScope`가 null이면 → **FAIL** ("projectScope 미정의 — Phase 0 Step 0-2.5에서 정의 필요")
+
+**FAIL 시**: Phase 2로 회귀하여 누락 레이어 구현. Phase 4를 통과할 수 없음.
+
 각 차원의 결과를 `.claude-verification.json`에 기록:
 ```json
 "qualityDimensions": {
   "featureCompleteness": { "result": "pass", "evidence": "12/12 features implemented" },
+  "layerCoverage": { "result": "pass", "evidence": "frontend: 15 files, backend: 8 files" },
   "security": { "result": "pass", "evidence": "0 SEC CRITICAL/HIGH findings" },
   "performance": { "result": "pass", "evidence": "0 PERF CRITICAL/HIGH findings" },
   "codeQuality": { "result": "pass", "evidence": "85% test coverage on business logic" },

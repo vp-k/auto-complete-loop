@@ -37,6 +37,19 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
    ```
 4. **위반 시**: 구현 중 기존 유틸리티와 동일 기능을 새로 작성하려 하면 기존 것을 사용
 
+### Step 2-1.8: 구현 스코프 검증
+
+progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 구현 계획을 확인합니다.
+
+1. `hasFrontend: true` → 구현 문서/티켓 목록에 프론트엔드 항목이 1개 이상 존재하는지 확인
+2. `hasBackend: true` → 구현 문서/티켓 목록에 백엔드 항목이 1개 이상 존재하는지 확인
+3. **누락 발견 시**: SPEC.md의 해당 레이어 User Stories를 기반으로 문서를 자동 생성하고 티켓 분할에 포함
+4. `projectScope`가 null이면: **Phase 0 Step 0-2.5로 되돌아가 projectScope를 정의한 후 재시도** (Phase 1→2 게이트에서 이미 차단되어야 하지만 이중 안전장치)
+
+**절대 금지**: 한 레이어만 구현하고 Phase 3으로 넘어가는 것. `hasFrontend: true`인데 프론트엔드 구현 없이 Phase 2를 완료할 수 없습니다.
+
+---
+
 ### Step 2-2: 프로젝트 구조 설계
 
 Claude가 직접 최적의 구조 설계:

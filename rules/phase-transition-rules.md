@@ -32,6 +32,20 @@ Phase 1 완료 시:
      - 재검증 통과 시 아래로 진행
   4. 없으면 → 통과
 
+  *** 스코프 완전성 게이트 (Pre-mortem 가드 통과 후 추가 검증) ***
+  0. progress 파일에서 phases.phase_0.outputs.projectScope 조회
+     - projectScope가 null 또는 미설정이면 → "projectScope 미정의 — Phase 0에서 Step 0-2.5 수행 필요" → Phase 2 전이 차단 (fail-closed)
+  1. projectScope 존재 확인 후:
+  2. projectScope.hasFrontend=true인 경우:
+     - SPEC.md에 "User Stories — Frontend" **AND** "Frontend Pages & Components" 섹션 모두 존재 확인
+     - 기획 문서 목록에 프론트엔드 관련 내용이 1건 이상 있는지 확인
+     - 하나라도 없으면 → "프론트엔드 기획 문서 누락" 경고 → Phase 2 전이 차단
+       - Phase 1에서 프론트엔드 문서 추가 작성 후 재시도
+  3. projectScope.hasBackend=true인 경우:
+     - SPEC.md에 "User Stories — Backend" **AND** "API Contract" 섹션 모두 존재 확인
+     - 하나라도 없으면 → "백엔드 기획 문서 누락" 경고 → Phase 2 전이 차단
+  4. 통과 시 아래로 진행
+
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_1 completed --progress-file {PROGRESS_FILE}
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_2 in_progress --progress-file {PROGRESS_FILE}
   (shared-gate.sh의 update-phase에서도 이중 검사: blocking Tiger 미해결 시 exit 1)

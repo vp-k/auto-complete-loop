@@ -99,6 +99,44 @@ Won't 항목은 Non-Goals로 이동.
 
 ---
 
+### Step 0-2.5: 아키텍처 레이어 매핑
+
+요구사항에서 필요한 아키텍처 레이어를 **명시적으로** 식별합니다.
+
+#### 1. 기능별 레이어 태깅
+
+각 기능이 어떤 레이어에 걸치는지 매핑합니다:
+
+| 기능 | Frontend | Backend (API + DB 포함) |
+|------|----------|------------------------|
+| (예) 로그인 | ✅ 로그인 페이지 | ✅ Auth API + users 테이블 |
+| (예) 대시보드 | ✅ 대시보드 UI | ✅ Stats API + 집계 쿼리 |
+
+#### 2. 프로젝트 스코프 결정
+
+- Frontend 있는 기능이 1개 이상 → `hasFrontend: true`
+- Backend 있는 기능이 1개 이상 → `hasBackend: true`
+
+#### 3. progress 파일에 기록
+
+```bash
+jq '.phases.phase_0.outputs.projectScope = {"hasFrontend": true, "hasBackend": true}' {PROGRESS_FILE} > /tmp/pg.tmp && mv /tmp/pg.tmp {PROGRESS_FILE}
+```
+
+#### 4. overview.md에 레이어 섹션 추가
+
+기술 스택 아래에 다음 섹션을 반드시 포함:
+
+```markdown
+## 아키텍처 레이어
+- Frontend: [프레임워크] — pages, components, hooks
+- Backend: [프레임워크 + DB/ORM] — endpoints, services, middleware, schema, migrations
+```
+
+**주의**: 이 레이어 매핑은 이후 Phase 1→2 전이 게이트, Phase 2 구현 검증, Phase 4 아티팩트 검증에서 사용됩니다. 누락 시 전체 워크플로우가 차단됩니다.
+
+---
+
 ### Step 0-3: 가정 식별 + 우선순위화 (Discovery)
 
 기능 목록 도출 후, **"이 기능이 필요하다는 가정"**을 명시합니다.

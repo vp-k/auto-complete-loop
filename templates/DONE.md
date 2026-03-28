@@ -23,7 +23,10 @@
 - [ ] (Large) 이해관계자 맵 작성됨
 
 ## 구현 DoD
-- [ ] SPEC.md의 모든 유저스토리 구현
+- [ ] SPEC.md의 모든 유저스토리 구현 (Frontend + Backend 모두)
+- [ ] projectScope.hasFrontend=true → 프론트엔드 페이지/컴포넌트 구현 완료
+- [ ] projectScope.hasBackend=true → API 엔드포인트/서비스 구현 완료
+- [ ] 모든 레이어의 User Stories가 구현됨 (US-F-* + US-B-*)
 - [ ] 백엔드: 테스트 커버리지 충분
 - [ ] .env.example에 환경 변수 반영
 - [ ] 코드 리뷰 완료

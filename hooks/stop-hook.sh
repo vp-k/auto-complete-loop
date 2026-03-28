@@ -228,6 +228,45 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         fi
       fi
 
+      # qualityDimensions 필수 검사
+      QD_EXISTS=$(jq 'has("qualityDimensions")' .claude-verification.json 2>/dev/null || echo "false")
+      if [[ "$QD_EXISTS" != "true" ]]; then
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: qualityDimensions missing (Phase 4 verification required). "
+      else
+        # layerCoverage 하드 게이트: 필수 존재 + result=pass 필요
+        LC_RESULT=$(jq '.qualityDimensions.layerCoverage.result // "missing"' .claude-verification.json 2>/dev/null || echo '"missing"')
+        if [[ "$LC_RESULT" != '"pass"' ]]; then
+          VERIFICATION_PASSED="false"
+          FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: layerCoverage ${LC_RESULT} (must be pass). "
+        fi
+
+        # 나머지 차원은 소프트 — fail 시 경고만 (차단 안 함)
+        QD_SOFT_FAIL=$(jq '
+          [.qualityDimensions | to_entries[]
+           | select(.key != "layerCoverage")
+           | select(.value | type == "object" and has("result") and .result == "fail")
+           | .key] | join(", ")
+        ' .claude-verification.json 2>/dev/null || echo "")
+        if [[ -n "$QD_SOFT_FAIL" ]]; then
+          echo "WARNING: soft quality dimensions failed: ${QD_SOFT_FAIL} (not blocking)"
+        fi
+      fi
+
+      # 필수 게이트 검증: test가 실행되었는지 확인 (SKIP이면 DoD와 일관성 검사)
+      TEST_EXIT=$(jq '.test.exitCode // "missing"' .claude-verification.json 2>/dev/null || echo "missing")
+      if [[ "$TEST_EXIT" = "null" ]] || [[ "$TEST_EXIT" = "missing" ]]; then
+        # test가 SKIP된 경우: 모든 progress 파일의 dod.test_pass.checked를 검사
+        for _pf in "${VERIFIED_PROGRESS_FILES[@]:-}"; do
+          [[ -z "$_pf" ]] || [[ ! -f "$_pf" ]] && continue
+          _test_dod=$(jq '.dod.test_pass.checked // false' "$_pf" 2>/dev/null || echo "false")
+          if [[ "$_test_dod" = "true" ]]; then
+            VERIFICATION_PASSED="false"
+            FAILURE_REASONS="${FAILURE_REASONS}test was skipped but ${_pf}: dod.test_pass is checked=true (inconsistency). "
+          fi
+        done
+      fi
+
       if [[ "$ALL_RESULTS_OK" != "true" ]]; then
         VERIFICATION_PASSED="false"
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: result-based gates have failures (fail). "

@@ -28,6 +28,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
    - **smokeCheck**: `result: "pass"` 또는 `result: "skip"` (**`soft_fail`과 `fail`은 모두 불합격** — 서버가 기동되지 않으면 완주 불가)
      - `skip`은 서버가 불필요한 프로젝트(라이브러리, CLI, serverless)에서만 허용
      - `soft_fail`(서버 기동 실패) 및 `fail`(--strict 모드 하드 실패)은 반드시 해결 후 `pass`로 전환해야 함
+   - **통합 검증 게이트** (Phase 4 Step 4-6.5에서 실행, 모두 exit 0이어야 함):
+     - `placeholder-check`: TODO/placeholder/FIXME 잔존 0건
+     - `external-service-check`: SPEC.md 명시 외부 서비스의 SDK/config 존재
+     - `service-test-check`: `hasBackend=true` 시 서비스/라우트 테스트 파일 존재
+     - `integration-smoke`: `hasFrontend+hasBackend` 시 연동 검증 (API URL, CORS, 서버 기동) 통과
 4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
 
 ### Iteration 단위 작업 규칙

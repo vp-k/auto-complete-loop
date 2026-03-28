@@ -195,6 +195,10 @@ auto-complete-loop/
 | `doc-code-check [dir]` | 문서↔코드 매칭 |
 | `e2e-gate` | E2E 테스트 프레임워크 감지 + 실행 |
 | `design-polish-gate [--strict]` | WCAG 체크 + 스크린샷 캡처. `--strict` 시 WCAG 위반→FAIL 승격 |
+| `placeholder-check` | TODO/placeholder/FIXME 잔존 감지 (HARD_FAIL) |
+| `external-service-check` | SPEC.md 기반 외부 서비스 SDK/config 존재 확인 (HARD_FAIL) |
+| `service-test-check` | 백엔드 서비스/라우트 통합 테스트 존재 확인 (HARD_FAIL) |
+| `integration-smoke` | 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL) |
 | `add-dod-key <key>` | DoD 키 동적 추가 (idempotent) |
 
 글로벌 옵션: `--progress-file <path>` (미지정 시 자동 탐지)

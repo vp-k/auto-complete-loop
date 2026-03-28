@@ -19,6 +19,10 @@
 #   doc-consistency [docs_dir]                         - 문서 간 일관성 검사
 #   doc-code-check [docs_dir]                          - 문서↔코드 매칭
 #   design-polish-gate [--strict]                       - WCAG 체크 + 스크린샷 캡처 (--strict: FAIL 승격)
+#   placeholder-check                                  - TODO/placeholder/FIXME 잔존 감지 (HARD_FAIL)
+#   external-service-check                             - SPEC.md 기반 외부 서비스 SDK/config 존재 확인 (HARD_FAIL)
+#   service-test-check                                 - 백엔드 서비스/라우트 통합 테스트 존재 확인 (HARD_FAIL)
+#   integration-smoke                                  - 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL)
 #   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
 #   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신
 
@@ -2548,6 +2552,334 @@ cmd_design_polish_gate() {
   return 0
 }
 
+# ─── placeholder-check: TODO/placeholder/FIXME 잔존 감지 (HARD_FAIL) ───
+
+cmd_placeholder_check() {
+  echo "=== Placeholder Check ==="
+
+  # 검색 대상 디렉토리 결정
+  local search_dirs=()
+  for d in src lib app server client pages components routes services controllers handlers; do
+    [[ -d "$d" ]] && search_dirs+=("$d")
+  done
+
+  if [[ ${#search_dirs[@]} -eq 0 ]]; then
+    echo "[placeholder-check] SKIP (no source directories found)"
+    return 0
+  fi
+
+  # placeholder 패턴 검색 (테스트 파일 제외)
+  local found_lines
+  found_lines=$(grep -rnE \
+    "TODO.*(연동|integration|implement|실제|real)|placeholder|FIXME.*(연동|integration|implement)" \
+    "${search_dirs[@]}" \
+    --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" \
+    --include="*.py" --include="*.go" --include="*.dart" --include="*.java" \
+    2>/dev/null | grep -vE "(test|spec|__test__|__tests__|\.test\.|\.spec\.)" || true)
+
+  local count=0
+  if [[ -n "$found_lines" ]]; then
+    count=$(echo "$found_lines" | wc -l | tr -d ' ')
+  fi
+
+  echo "[placeholder-check] Found $count placeholder(s) in source code"
+
+  if [[ "$count" -gt 0 ]]; then
+    echo "$found_lines" | head -10
+    [[ "$count" -gt 10 ]] && echo "  ... and $((count - 10)) more"
+    echo "=== PLACEHOLDER CHECK: FAIL ($count placeholder(s) remaining) ==="
+    return 1
+  fi
+
+  echo "=== PLACEHOLDER CHECK: PASS ==="
+  return 0
+}
+
+# ─── external-service-check: 외부 서비스 스텁 검증 (HARD_FAIL) ───
+
+cmd_external_service_check() {
+  echo "=== External Service Check ==="
+
+  # SPEC.md에서 외부 서비스 키워드 추출
+  local spec_file=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
+
+  if [[ -z "$spec_file" ]]; then
+    echo "[external-service-check] SKIP (no SPEC.md found)"
+    return 0
+  fi
+
+  # 서비스별 키워드 → SDK/config 패턴 매핑
+  local -A service_keywords=(
+    ["payment"]="stripe|toss|portone|iamport|paypal|braintree"
+    ["oauth"]="nextauth|passport|oauth|google-auth|kakao.*auth|naver.*login"
+    ["email"]="nodemailer|sendgrid|ses|mailgun|postmark|resend"
+    ["sms"]="twilio|sens|aligo|coolsms"
+    ["storage"]="s3|cloudinary|uploadthing|multer.*s3"
+    ["push"]="firebase.*messaging|fcm|onesignal|expo.*notification"
+  )
+
+  local total_services=0 missing_services=0 missing_list=""
+
+  for service in "${!service_keywords[@]}"; do
+    # SPEC.md에 해당 서비스 언급이 있는지 확인
+    if grep -qiE "(${service}|결제|payment|로그인|login|이메일|email|SMS|문자|알림|push|저장소|upload)" "$spec_file" 2>/dev/null; then
+      # 더 정확한 매칭: 서비스별 구체적 키워드
+      local spec_pattern
+      case "$service" in
+        payment) spec_pattern="결제|payment|pay|billing|checkout|주문.*완료" ;;
+        oauth)   spec_pattern="소셜.*로그인|social.*login|OAuth|카카오.*로그인|네이버.*로그인|구글.*로그인|SSO" ;;
+        email)   spec_pattern="이메일|email|메일.*발송|mail.*send|인증.*메일|verification.*email" ;;
+        sms)     spec_pattern="SMS|문자|인증.*번호|verification.*code.*sms" ;;
+        storage) spec_pattern="파일.*업로드|file.*upload|이미지.*저장|image.*storage|S3" ;;
+        push)    spec_pattern="푸시.*알림|push.*notification|FCM|알림.*발송" ;;
+      esac
+
+      if grep -qiE "$spec_pattern" "$spec_file" 2>/dev/null; then
+        total_services=$((total_services + 1))
+        local sdk_pattern="${service_keywords[$service]}"
+
+        # 소스 코드에서 실제 SDK import/require/config 존재 확인
+        local found_sdk=false
+        for d in src lib app server client pages components; do
+          if [[ -d "$d" ]]; then
+            if grep -rqlE "$sdk_pattern" "$d" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.py" --include="*.go" 2>/dev/null; then
+              found_sdk=true
+              break
+            fi
+          fi
+        done
+
+        # .env.example에서 관련 환경 변수 확인
+        if [[ "$found_sdk" == "false" ]] && [[ -f ".env.example" ]]; then
+          local env_pattern
+          case "$service" in
+            payment) env_pattern="TOSS|PORTONE|STRIPE|PAYMENT|IAMPORT" ;;
+            oauth)   env_pattern="NEXTAUTH|OAUTH|GOOGLE_CLIENT|KAKAO|NAVER.*CLIENT" ;;
+            email)   env_pattern="SMTP|SENDGRID|SES|MAIL" ;;
+            sms)     env_pattern="TWILIO|SENS|ALIGO|SMS" ;;
+            storage) env_pattern="AWS.*KEY|S3|CLOUDINARY|UPLOAD" ;;
+            push)    env_pattern="FIREBASE|FCM|ONESIGNAL" ;;
+          esac
+          if grep -qiE "$env_pattern" ".env.example" 2>/dev/null; then
+            found_sdk=true
+          fi
+        fi
+
+        if [[ "$found_sdk" == "false" ]]; then
+          missing_services=$((missing_services + 1))
+          missing_list="${missing_list}  - ${service}: SPEC에 명시되었으나 SDK/config 미발견\n"
+          echo "  [FAIL] $service: specified in SPEC but no SDK/config found in source"
+        else
+          echo "  [PASS] $service: SDK/config found"
+        fi
+      fi
+    fi
+  done
+
+  if [[ "$total_services" -eq 0 ]]; then
+    echo "[external-service-check] SKIP (no external services detected in SPEC)"
+    return 0
+  fi
+
+  echo "[external-service-check] Services: $((total_services - missing_services))/$total_services verified"
+
+  if [[ "$missing_services" -gt 0 ]]; then
+    echo -e "$missing_list"
+    echo "=== EXTERNAL SERVICE CHECK: FAIL ($missing_services service(s) missing SDK/config) ==="
+    return 1
+  fi
+
+  echo "=== EXTERNAL SERVICE CHECK: PASS ==="
+  return 0
+}
+
+# ─── service-test-check: 서비스/라우트 통합 테스트 존재 확인 (HARD_FAIL) ───
+
+cmd_service_test_check() {
+  echo "=== Service Test Check ==="
+  require_jq
+
+  # projectScope 확인
+  local has_backend="false"
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  fi
+
+  if [[ "$has_backend" != "true" ]]; then
+    echo "[service-test-check] SKIP (hasBackend is not true)"
+    return 0
+  fi
+
+  # 테스트 디렉토리에서 서비스/라우트 관련 테스트 파일 검색
+  local test_files=0
+  local search_pattern="(service|route|controller|handler|api|endpoint)"
+
+  for test_dir in test tests __tests__ src/**/__tests__ src/**/*.test.* src/**/*.spec.*; do
+    if [[ -d "$test_dir" ]] 2>/dev/null; then
+      local found
+      found=$(find "$test_dir" -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "test_*" \) 2>/dev/null | grep -iE "$search_pattern" | wc -l | tr -d ' ')
+      test_files=$((test_files + found))
+    fi
+  done
+
+  # 파일명 패턴으로도 검색 (flat 구조 대응)
+  for d in test tests __tests__; do
+    if [[ -d "$d" ]]; then
+      local found
+      found=$(find "$d" -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "test_*" \) 2>/dev/null | grep -iE "$search_pattern" | wc -l | tr -d ' ')
+      test_files=$((test_files + found))
+    fi
+  done
+
+  # src 내부의 인라인 테스트 파일도 검색
+  if [[ -d "src" ]]; then
+    local inline_tests
+    inline_tests=$(find src -type f \( -name "*.test.*" -o -name "*.spec.*" \) 2>/dev/null | grep -iE "$search_pattern" | wc -l | tr -d ' ')
+    test_files=$((test_files + inline_tests))
+  fi
+
+  echo "[service-test-check] Found $test_files service/route test file(s)"
+
+  if [[ "$test_files" -eq 0 ]]; then
+    echo "[service-test-check] WARNING: hasBackend=true but no service/route tests found"
+    echo "  Expected: test files matching pattern *service*|*route*|*controller*|*handler*|*api*|*endpoint*"
+    echo "  Searched: test/ tests/ __tests__/ src/**/*.test.* src/**/*.spec.*"
+    echo "=== SERVICE TEST CHECK: FAIL ==="
+    return 1
+  fi
+
+  echo "=== SERVICE TEST CHECK: PASS ==="
+  return 0
+}
+
+# ─── integration-smoke: 프론트↔백엔드 연동 검증 (HARD_FAIL) ───
+
+cmd_integration_smoke() {
+  echo "=== Integration Smoke ==="
+  require_jq
+
+  # projectScope 확인
+  local has_frontend="false" has_backend="false"
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  fi
+
+  if [[ "$has_frontend" != "true" ]] || [[ "$has_backend" != "true" ]]; then
+    echo "[integration-smoke] SKIP (requires hasFrontend=true AND hasBackend=true)"
+    return 0
+  fi
+
+  local checks_total=0 checks_pass=0 checks_fail=0
+
+  # 1. .env.example에 API URL 관련 환경 변수 존재 확인
+  checks_total=$((checks_total + 1))
+  if [[ -f ".env.example" ]]; then
+    if grep -qiE "(API_URL|BASE_URL|BACKEND_URL|SERVER_URL|NEXT_PUBLIC_API|VITE_API)" ".env.example" 2>/dev/null; then
+      echo "  [PASS] .env.example contains API URL variable"
+      checks_pass=$((checks_pass + 1))
+    else
+      echo "  [FAIL] .env.example exists but no API URL variable (API_URL, BASE_URL, etc.)"
+      checks_fail=$((checks_fail + 1))
+    fi
+  else
+    echo "  [FAIL] .env.example not found"
+    checks_fail=$((checks_fail + 1))
+  fi
+
+  # 2. 프론트엔드 코드에서 API 호출 패턴 존재 확인
+  checks_total=$((checks_total + 1))
+  local api_call_found=false
+  local fe_dirs=("src" "app" "pages" "components" "client")
+  for d in "${fe_dirs[@]}"; do
+    if [[ -d "$d" ]]; then
+      if grep -rqlE "(fetch\(|axios\.|api\.|useQuery|useMutation|trpc\.|\.get\(|\.post\()" "$d" \
+        --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.vue" --include="*.svelte" 2>/dev/null; then
+        api_call_found=true
+        break
+      fi
+    fi
+  done
+
+  if [[ "$api_call_found" == "true" ]]; then
+    echo "  [PASS] Frontend API call patterns found"
+    checks_pass=$((checks_pass + 1))
+  else
+    echo "  [FAIL] No API call patterns found in frontend code"
+    checks_fail=$((checks_fail + 1))
+  fi
+
+  # 3. CORS 설정 확인 (백엔드)
+  checks_total=$((checks_total + 1))
+  local cors_found=false
+  local be_dirs=("src" "server" "lib" "app")
+  for d in "${be_dirs[@]}"; do
+    if [[ -d "$d" ]]; then
+      if grep -rqlE "(cors|CORS|Access-Control-Allow-Origin|@CrossOrigin)" "$d" \
+        --include="*.ts" --include="*.js" --include="*.py" --include="*.go" --include="*.java" 2>/dev/null; then
+        cors_found=true
+        break
+      fi
+    fi
+  done
+
+  if [[ "$cors_found" == "true" ]]; then
+    echo "  [PASS] CORS configuration found in backend"
+    checks_pass=$((checks_pass + 1))
+  else
+    echo "  [FAIL] No CORS configuration found in backend code"
+    checks_fail=$((checks_fail + 1))
+  fi
+
+  # 4. 백엔드 서버 기동 확인 (smoke-check 재사용)
+  checks_total=$((checks_total + 1))
+  local start_cmd
+  start_cmd=$(_detect_start_cmd)
+  if [[ -n "$start_cmd" ]]; then
+    local port="${1:-3000}"
+    if _start_and_wait_server "$start_cmd" "$port" 15 "integration-smoke"; then
+      echo "  [PASS] Backend server started successfully"
+      checks_pass=$((checks_pass + 1))
+    else
+      echo "  [FAIL] Backend server failed to start"
+      checks_fail=$((checks_fail + 1))
+    fi
+    _cleanup_server
+    trap - EXIT INT TERM
+  else
+    echo "  [FAIL] No start command detected for backend"
+    checks_fail=$((checks_fail + 1))
+  fi
+
+  # 결과 기록
+  local ts result
+  ts=$(timestamp)
+  if [[ "$checks_fail" -eq 0 ]]; then
+    result="pass"
+  else
+    result="fail"
+  fi
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --arg result "$result" --argjson total "$checks_total" --argjson pass "$checks_pass" --argjson fail "$checks_fail" \
+      '.integrationSmoke = {"timestamp": $ts, "result": $result, "checks": {"total": $total, "pass": $pass, "fail": $fail}}'
+  else
+    jq -n --arg ts "$ts" --arg result "$result" --argjson total "$checks_total" --argjson pass "$checks_pass" --argjson fail "$checks_fail" \
+      '{"integrationSmoke": {"timestamp": $ts, "result": $result, "checks": {"total": $total, "pass": $pass, "fail": $fail}}}' > "$VERIFICATION_FILE"
+  fi
+
+  echo "[integration-smoke] Checks: $checks_pass/$checks_total passed"
+  echo "=== INTEGRATION SMOKE: ${result^^} ==="
+  if [[ "$result" == "fail" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 # ─── recover: 복구/재개 정보 자동 출력 ───
 
 cmd_recover() {
@@ -2734,6 +3066,10 @@ main() {
     doc-code-check)    cmd_doc_code_check "$@" ;;
     e2e-gate)           cmd_e2e_gate "$@" ;;
     design-polish-gate) cmd_design_polish_gate "$@" ;;
+    placeholder-check)  cmd_placeholder_check "$@" ;;
+    external-service-check) cmd_external_service_check "$@" ;;
+    service-test-check) cmd_service_test_check "$@" ;;
+    integration-smoke)  cmd_integration_smoke "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;

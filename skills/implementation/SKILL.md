@@ -291,44 +291,24 @@ Edit 도구 에러 처리:
 2. `old_string` 재확인 후 재시도 (최대 3회)
 3. 3회 실패 -> Write 덮어쓰기 -> 빌드/테스트 검증 -> 실패 시 `git restore --source=HEAD -- {파일}`로 해당 파일만 롤백 (다른 변경에 영향 없음)
 
-### Step 2-6.5: Integration Smoke (모든 문서 구현 완료 후, E2E 전)
+### Step 2-6.5: Integration Smoke (모든 문서 구현 완료 후, E2E 전) — 하드 게이트
 
 `projectScope.hasFrontend=true && projectScope.hasBackend=true`인 경우에만 수행.
 
 **목적**: E2E 테스트 작성 전에 프론트↔백엔드가 실제로 연동되는지 확인.
 
-1. **백엔드 서버 기동 확인**:
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --progress-file .claude-full-auto-progress.json
-   ```
-   - SOFT_FAIL이면 즉시 수정 (E2E 진입 차단)
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh integration-smoke --progress-file .claude-full-auto-progress.json
+```
 
-2. **프론트엔드 빌드 확인**:
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
-   ```
+스크립트가 자동으로 4개 항목을 검증:
+1. `.env.example`에 API URL 환경 변수 존재
+2. 프론트엔드 코드에 API 호출 패턴 존재
+3. 백엔드 코드에 CORS 설정 존재
+4. 백엔드 서버 기동 성공
 
-3. **연동 포인트 확인** (수동 검증):
-   - 프론트엔드 API 클라이언트/fetch 호출이 백엔드 실제 엔드포인트와 일치하는지 코드 레벨 확인
-   - 환경 변수(API_URL, BASE_URL 등)가 `.env.example`에 정의되어 있는지 확인
-   - CORS 설정이 프론트엔드 origin을 허용하는지 확인
-
-4. **결과 기록**:
-   progress 파일에 기록:
-   ```json
-   "phases": {
-     "phase_2": {
-       "integrationSmoke": {
-         "serverUp": true,
-         "frontendBuild": true,
-         "apiEndpointsMatched": true,
-         "corsConfigured": true
-       }
-     }
-   }
-   ```
-
-FAIL 시 E2E 스텝 진입 금지 — 연동 문제를 먼저 해결.
+- **PASS**: 4/4 통과 → E2E 스텝 진입
+- **FAIL**: 1개 이상 실패 → **즉시 수정 필수** (L0-L5 에스컬레이션). E2E 스텝 진입 금지.
 
 ### Step 2-6.7: E2E 테스트 일괄 작성 (모든 문서 구현 완료 후)
 
@@ -370,11 +350,21 @@ E2E는 앱이 완성된 상태에서만 실행 가능하므로, 문서별 즉시
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-code-check docs/
    ```
-2. E2E 최종 확인 (`e2e.applicable == true`인 경우):
+2. **Placeholder 잔존 검사** (하드 게이트):
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh placeholder-check
+   ```
+   - FAIL 시 잔여 TODO/placeholder를 모두 제거하거나 실제 구현으로 교체
+3. **외부 서비스 연동 검증** (하드 게이트):
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh external-service-check
+   ```
+   - FAIL 시 SPEC에 명시된 외부 서비스의 SDK/config를 실제로 구현
+4. E2E 최종 확인 (`e2e.applicable == true`인 경우):
    - 모든 시나리오 `status == "completed"` 확인
    - `dod.e2e_pass.checked == true` 확인
-3. DoD 업데이트: `all_code_implemented.checked = true`
-4. Phase 전이는 오케스트레이터가 수행
+5. DoD 업데이트: `all_code_implemented.checked = true`
+6. Phase 전이는 오케스트레이터가 수행
 
 ### Iteration 관리
 

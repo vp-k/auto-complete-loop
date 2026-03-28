@@ -31,15 +31,16 @@
 - [ ] .env.example에 환경 변수 반영
 - [ ] 코드 리뷰 완료
 
-### 통합 검증 DoD (hasBackend=true 시 필수)
-- [ ] 서버 기동 성공 (smoke-check PASS, soft_fail 불가)
-- [ ] 핵심 API 엔드포인트 실제 응답 확인 (5xx 응답 0건)
-- [ ] (hasFrontend+hasBackend) 프론트↔백엔드 연동 확인 — 최소 1개 API 호출 성공
+### 통합 검증 DoD (하드 게이트 — 스크립트 강제)
+- [ ] `placeholder-check` PASS — TODO/placeholder/FIXME 잔존 0건
+- [ ] `external-service-check` PASS — SPEC 명시 외부 서비스의 SDK/config 존재
+- [ ] `service-test-check` PASS — 서비스/라우트 통합 테스트 파일 존재 (hasBackend=true 시)
+- [ ] `integration-smoke` PASS — 프론트↔백 연동 검증 통과 (hasFrontend+hasBackend 시)
+- [ ] `smoke-check --strict` PASS — 서버 기동 + 엔드포인트 검증 (hasBackend=true 시)
 
 ### 외부 서비스 연동 DoD (해당 시)
 - [ ] 외부 서비스(결제/소셜 로그인/이메일 등)는 테스트 모드로 실제 연동 (placeholder 금지)
 - [ ] 테스트 모드 불가 시: 사유 명시 + 실제 API 응답 스키마 기반 스텁 구현
-- [ ] `// TODO: 실제 연동` 류의 placeholder 코드 0건
 
 ## 릴리즈 DoD
 - [ ] 전체 빌드/테스트/린트 통과

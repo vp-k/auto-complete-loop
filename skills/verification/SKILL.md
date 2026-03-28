@@ -211,6 +211,26 @@ Phase 4에서는 `--strict` 모드로 실행:
 - SPEC.md 기반 엔드포인트 검증: 5xx 응답이 있으면 **FAIL**
 - 라이브러리/CLI 프로젝트(start 스크립트 없음)는 SKIP 유지
 
+### Step 4-6.5: 통합 검증 게이트 (하드 게이트)
+
+Phase 2에서 실행한 검증을 Phase 4에서 다시 확인합니다:
+
+```bash
+# Placeholder 잔존 검사
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh placeholder-check
+
+# 외부 서비스 연동 검증
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh external-service-check
+
+# 서비스 통합 테스트 존재 확인 (hasBackend=true 시)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh service-test-check --progress-file .claude-full-auto-progress.json
+
+# 프론트↔백 연동 검증 (hasFrontend+hasBackend 시)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh integration-smoke --progress-file .claude-full-auto-progress.json
+```
+
+각 게이트가 FAIL이면 해당 문제를 수정 후 재실행. 모두 PASS해야 Step 4-7 진행.
+
 ### Step 4-7: 최종 검증 (다차원 체크리스트)
 
 모든 정리/폴리싱 완료 후, 기술 게이트 + 다차원 품질 평가를 수행:

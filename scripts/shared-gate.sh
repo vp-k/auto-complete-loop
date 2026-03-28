@@ -2592,6 +2592,11 @@ cmd_placeholder_check() {
     found_lines="${found_lines}${found_lines:+$'\n'}${placeholder_lines}"
   fi
 
+  # 두 grep 결과의 중복 제거
+  if [[ -n "$found_lines" ]]; then
+    found_lines=$(echo "$found_lines" | sort -u)
+  fi
+
   local count=0
   if [[ -n "$found_lines" ]]; then
     count=$(echo "$found_lines" | wc -l | tr -d ' ')
@@ -2667,44 +2672,44 @@ cmd_external_service_check() {
     esac
 
     if grep -qiE "$spec_pattern" "$spec_file" 2>/dev/null; then
-        total_services=$((total_services + 1))
-        local sdk_pattern="${service_keywords[$service]}"
+      total_services=$((total_services + 1))
+      local sdk_pattern="${service_keywords[$service]}"
 
-        # 소스 코드에서 실제 SDK import/require/config 존재 확인
-        local found_sdk=false
-        for d in src lib app server client pages components; do
-          if [[ -d "$d" ]]; then
-            if grep -rqlE "$sdk_pattern" "$d" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.py" --include="*.go" 2>/dev/null; then
-              found_sdk=true
-              break
-            fi
-          fi
-        done
-
-        # .env.example에서 관련 환경 변수 확인
-        if [[ "$found_sdk" == "false" ]] && [[ -f ".env.example" ]]; then
-          local env_pattern
-          case "$service" in
-            payment) env_pattern="TOSS|PORTONE|STRIPE|PAYMENT|IAMPORT" ;;
-            oauth)   env_pattern="NEXTAUTH|OAUTH|GOOGLE_CLIENT|KAKAO|NAVER.*CLIENT" ;;
-            email)   env_pattern="SMTP|SENDGRID|SES|MAIL" ;;
-            sms)     env_pattern="TWILIO|SENS|ALIGO|SMS" ;;
-            storage) env_pattern="AWS.*KEY|S3|CLOUDINARY|UPLOAD" ;;
-            push)    env_pattern="FIREBASE|FCM|ONESIGNAL" ;;
-          esac
-          if grep -qiE "$env_pattern" ".env.example" 2>/dev/null; then
+      # 소스 코드에서 실제 SDK import/require/config 존재 확인
+      local found_sdk=false
+      for d in src lib app server client pages components; do
+        if [[ -d "$d" ]]; then
+          if grep -rqlE "$sdk_pattern" "$d" --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" --include="*.py" --include="*.go" 2>/dev/null; then
             found_sdk=true
+            break
           fi
         fi
+      done
 
-        if [[ "$found_sdk" == "false" ]]; then
-          missing_services=$((missing_services + 1))
-          missing_list="${missing_list}  - ${service}: SPEC에 명시되었으나 SDK/config 미발견\n"
-          echo "  [FAIL] $service: specified in SPEC but no SDK/config found in source"
-        else
-          echo "  [PASS] $service: SDK/config found"
+      # .env.example에서 관련 환경 변수 확인
+      if [[ "$found_sdk" == "false" ]] && [[ -f ".env.example" ]]; then
+        local env_pattern
+        case "$service" in
+          payment) env_pattern="TOSS|PORTONE|STRIPE|PAYMENT|IAMPORT" ;;
+          oauth)   env_pattern="NEXTAUTH|OAUTH|GOOGLE_CLIENT|KAKAO|NAVER.*CLIENT" ;;
+          email)   env_pattern="SMTP|SENDGRID|SES|MAIL" ;;
+          sms)     env_pattern="TWILIO|SENS|ALIGO|SMS" ;;
+          storage) env_pattern="AWS.*KEY|S3|CLOUDINARY|UPLOAD" ;;
+          push)    env_pattern="FIREBASE|FCM|ONESIGNAL" ;;
+        esac
+        if grep -qiE "$env_pattern" ".env.example" 2>/dev/null; then
+          found_sdk=true
         fi
       fi
+
+      if [[ "$found_sdk" == "false" ]]; then
+        missing_services=$((missing_services + 1))
+        missing_list="${missing_list}  - ${service}: SPEC에 명시되었으나 SDK/config 미발견\n"
+        echo "  [FAIL] $service: specified in SPEC but no SDK/config found in source"
+      else
+        echo "  [PASS] $service: SDK/config found"
+      fi
+    fi
   done
 
   # verification.json에 결과 기록

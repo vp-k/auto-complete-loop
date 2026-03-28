@@ -1640,14 +1640,15 @@ cmd_smoke_check() {
           local http_code
           http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || echo "000")
 
-          if [[ "$http_code" =~ ^5[0-9]{2}$ ]] || [[ "$http_code" == "000" ]]; then
-            echo "  [FAIL] GET $path → HTTP $http_code"
-            endpoint_fail=$((endpoint_fail + 1))
-            endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "fail"}]')
-          else
+          # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL (라우트 미구현 또는 서버 에러)
+          if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|401|403)$ ]]; then
             echo "  [PASS] GET $path → HTTP $http_code"
             endpoint_pass=$((endpoint_pass + 1))
             endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
+          else
+            echo "  [FAIL] GET $path → HTTP $http_code"
+            endpoint_fail=$((endpoint_fail + 1))
+            endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "fail"}]')
           fi
         done <<< "$endpoints"
 
@@ -2686,19 +2687,13 @@ cmd_external_service_check() {
         fi
       done
 
-      # .env.example에서 관련 환경 변수 확인
-      if [[ "$found_sdk" == "false" ]] && [[ -f ".env.example" ]]; then
-        local env_pattern
-        case "$service" in
-          payment) env_pattern="TOSS|PORTONE|STRIPE|PAYMENT|IAMPORT" ;;
-          oauth)   env_pattern="NEXTAUTH|OAUTH|GOOGLE_CLIENT|KAKAO|NAVER.*CLIENT" ;;
-          email)   env_pattern="SMTP|SENDGRID|SES|MAIL" ;;
-          sms)     env_pattern="TWILIO|SENS|ALIGO|SMS" ;;
-          storage) env_pattern="AWS.*KEY|S3|CLOUDINARY|UPLOAD" ;;
-          push)    env_pattern="FIREBASE|FCM|ONESIGNAL" ;;
-        esac
-        if grep -qiE "$env_pattern" ".env.example" 2>/dev/null; then
+      # externalServiceStubs 레코드 확인 (SKILL.md의 스키마 기반 스텁 허용 경로)
+      if [[ "$found_sdk" == "false" ]] && [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+        local has_stub
+        has_stub=$(jq -r --arg svc "$service" '.phases.phase_2.externalServiceStubs // [] | map(select(.service == $svc)) | length' "$PROGRESS_FILE" 2>/dev/null || echo "0")
+        if [[ "$has_stub" -gt 0 ]]; then
           found_sdk=true
+          echo "  [PASS] $service: schema-based stub recorded in progress (externalServiceStubs)"
         fi
       fi
 
@@ -2750,14 +2745,24 @@ cmd_service_test_check() {
   echo "=== Service Test Check ==="
   require_jq
 
-  # projectScope 확인
-  local has_backend="false"
-  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
-    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  # projectScope 확인 (fail-closed: progress 없으면 FAIL)
+  if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
+    echo "[service-test-check] FAIL (progress file not found — cannot determine projectScope)"
+    echo "=== SERVICE TEST CHECK: FAIL ==="
+    return 1
+  fi
+
+  local has_backend
+  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "null"' "$PROGRESS_FILE" 2>/dev/null || echo "null")
+
+  if [[ "$has_backend" == "null" ]]; then
+    echo "[service-test-check] FAIL (projectScope.hasBackend is not defined — run Phase 0 first)"
+    echo "=== SERVICE TEST CHECK: FAIL ==="
+    return 1
   fi
 
   if [[ "$has_backend" != "true" ]]; then
-    echo "[service-test-check] SKIP (hasBackend is not true)"
+    echo "[service-test-check] SKIP (hasBackend is false)"
     return 0
   fi
 
@@ -2802,11 +2807,21 @@ cmd_integration_smoke() {
   echo "=== Integration Smoke ==="
   require_jq
 
-  # projectScope 확인
-  local has_frontend="false" has_backend="false"
-  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
-    has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
-    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  # projectScope 확인 (fail-closed: progress 없으면 FAIL)
+  if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
+    echo "[integration-smoke] FAIL (progress file not found — cannot determine projectScope)"
+    echo "=== INTEGRATION SMOKE: FAIL ==="
+    return 1
+  fi
+
+  local has_frontend has_backend
+  has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // "null"' "$PROGRESS_FILE" 2>/dev/null || echo "null")
+  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "null"' "$PROGRESS_FILE" 2>/dev/null || echo "null")
+
+  if [[ "$has_frontend" == "null" ]] || [[ "$has_backend" == "null" ]]; then
+    echo "[integration-smoke] FAIL (projectScope not defined — run Phase 0 first)"
+    echo "=== INTEGRATION SMOKE: FAIL ==="
+    return 1
   fi
 
   if [[ "$has_frontend" != "true" ]] || [[ "$has_backend" != "true" ]]; then

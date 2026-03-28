@@ -2568,14 +2568,29 @@ cmd_placeholder_check() {
     return 0
   fi
 
-  # placeholder 패턴 검색 (테스트 파일 제외)
+  # placeholder 패턴 검색 (테스트 파일 + HTML placeholder 속성 제외)
   local found_lines
   found_lines=$(grep -rnE \
-    "TODO.*(연동|integration|implement|실제|real)|placeholder|FIXME.*(연동|integration|implement)" \
+    "TODO.*(연동|integration|implement|실제|real)|FIXME.*(연동|integration|implement)" \
     "${search_dirs[@]}" \
     --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" \
     --include="*.py" --include="*.go" --include="*.dart" --include="*.java" \
     2>/dev/null | grep -vE "(test|spec|__test__|__tests__|\.test\.|\.spec\.)" || true)
+
+  # placeholder 키워드는 HTML 속성(placeholder=, placeholder:)을 제외하고 검색
+  local placeholder_lines
+  placeholder_lines=$(grep -rnE "placeholder" \
+    "${search_dirs[@]}" \
+    --include="*.ts" --include="*.tsx" --include="*.js" --include="*.jsx" \
+    --include="*.py" --include="*.go" --include="*.dart" --include="*.java" \
+    2>/dev/null \
+    | grep -vE "(test|spec|__test__|__tests__|\.test\.|\.spec\.)" \
+    | grep -vE "(placeholder=|placeholder:|placeholder\"|placeholderText|placeholder\s*\()" \
+    || true)
+
+  if [[ -n "$placeholder_lines" ]]; then
+    found_lines="${found_lines}${found_lines:+$'\n'}${placeholder_lines}"
+  fi
 
   local count=0
   if [[ -n "$found_lines" ]]; then
@@ -2584,14 +2599,30 @@ cmd_placeholder_check() {
 
   echo "[placeholder-check] Found $count placeholder(s) in source code"
 
+  # verification.json에 결과 기록
+  local ts result
+  ts=$(timestamp)
   if [[ "$count" -gt 0 ]]; then
+    result="fail"
     echo "$found_lines" | head -10
     [[ "$count" -gt 10 ]] && echo "  ... and $((count - 10)) more"
-    echo "=== PLACEHOLDER CHECK: FAIL ($count placeholder(s) remaining) ==="
-    return 1
+  else
+    result="pass"
   fi
 
-  echo "=== PLACEHOLDER CHECK: PASS ==="
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --arg result "$result" --argjson count "$count" \
+      '.placeholderCheck = {"timestamp": $ts, "result": $result, "count": $count}'
+  elif [[ -n "$VERIFICATION_FILE" ]]; then
+    jq -n --arg ts "$ts" --arg result "$result" --argjson count "$count" \
+      '{"placeholderCheck": {"timestamp": $ts, "result": $result, "count": $count}}' > "$VERIFICATION_FILE"
+  fi
+
+  echo "=== PLACEHOLDER CHECK: ${result^^} ==="
+  if [[ "$result" == "fail" ]]; then
+    return 1
+  fi
   return 0
 }
 
@@ -2624,20 +2655,18 @@ cmd_external_service_check() {
   local total_services=0 missing_services=0 missing_list=""
 
   for service in "${!service_keywords[@]}"; do
-    # SPEC.md에 해당 서비스 언급이 있는지 확인
-    if grep -qiE "(${service}|결제|payment|로그인|login|이메일|email|SMS|문자|알림|push|저장소|upload)" "$spec_file" 2>/dev/null; then
-      # 더 정확한 매칭: 서비스별 구체적 키워드
-      local spec_pattern
-      case "$service" in
-        payment) spec_pattern="결제|payment|pay|billing|checkout|주문.*완료" ;;
-        oauth)   spec_pattern="소셜.*로그인|social.*login|OAuth|카카오.*로그인|네이버.*로그인|구글.*로그인|SSO" ;;
-        email)   spec_pattern="이메일|email|메일.*발송|mail.*send|인증.*메일|verification.*email" ;;
-        sms)     spec_pattern="SMS|문자|인증.*번호|verification.*code.*sms" ;;
-        storage) spec_pattern="파일.*업로드|file.*upload|이미지.*저장|image.*storage|S3" ;;
-        push)    spec_pattern="푸시.*알림|push.*notification|FCM|알림.*발송" ;;
-      esac
+    # SPEC.md에 해당 서비스가 구체적으로 언급되는지 확인 (서비스별 키워드)
+    local spec_pattern
+    case "$service" in
+      payment) spec_pattern="결제|payment|pay|billing|checkout|주문.*완료" ;;
+      oauth)   spec_pattern="소셜.*로그인|social.*login|OAuth|카카오.*로그인|네이버.*로그인|구글.*로그인|SSO" ;;
+      email)   spec_pattern="이메일|email|메일.*발송|mail.*send|인증.*메일|verification.*email" ;;
+      sms)     spec_pattern="SMS|문자|인증.*번호|verification.*code.*sms" ;;
+      storage) spec_pattern="파일.*업로드|file.*upload|이미지.*저장|image.*storage|S3" ;;
+      push)    spec_pattern="푸시.*알림|push.*notification|FCM|알림.*발송" ;;
+    esac
 
-      if grep -qiE "$spec_pattern" "$spec_file" 2>/dev/null; then
+    if grep -qiE "$spec_pattern" "$spec_file" 2>/dev/null; then
         total_services=$((total_services + 1))
         local sdk_pattern="${service_keywords[$service]}"
 
@@ -2676,23 +2705,37 @@ cmd_external_service_check() {
           echo "  [PASS] $service: SDK/config found"
         fi
       fi
-    fi
   done
 
+  # verification.json에 결과 기록
+  local ts result
+  ts=$(timestamp)
+
   if [[ "$total_services" -eq 0 ]]; then
+    result="skip"
     echo "[external-service-check] SKIP (no external services detected in SPEC)"
-    return 0
+  elif [[ "$missing_services" -gt 0 ]]; then
+    result="fail"
+    echo "[external-service-check] Services: $((total_services - missing_services))/$total_services verified"
+    echo -e "$missing_list"
+  else
+    result="pass"
+    echo "[external-service-check] Services: $total_services/$total_services verified"
   fi
 
-  echo "[external-service-check] Services: $((total_services - missing_services))/$total_services verified"
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --arg ts "$ts" --arg result "$result" --argjson total "$total_services" --argjson missing "$missing_services" \
+      '.externalServiceCheck = {"timestamp": $ts, "result": $result, "totalServices": $total, "missingServices": $missing}'
+  elif [[ -n "$VERIFICATION_FILE" ]]; then
+    jq -n --arg ts "$ts" --arg result "$result" --argjson total "$total_services" --argjson missing "$missing_services" \
+      '{"externalServiceCheck": {"timestamp": $ts, "result": $result, "totalServices": $total, "missingServices": $missing}}' > "$VERIFICATION_FILE"
+  fi
 
-  if [[ "$missing_services" -gt 0 ]]; then
-    echo -e "$missing_list"
-    echo "=== EXTERNAL SERVICE CHECK: FAIL ($missing_services service(s) missing SDK/config) ==="
+  echo "=== EXTERNAL SERVICE CHECK: ${result^^} ==="
+  if [[ "$result" == "fail" ]]; then
     return 1
   fi
-
-  echo "=== EXTERNAL SERVICE CHECK: PASS ==="
   return 0
 }
 
@@ -2713,32 +2756,25 @@ cmd_service_test_check() {
     return 0
   fi
 
-  # 테스트 디렉토리에서 서비스/라우트 관련 테스트 파일 검색
+  # 테스트 디렉토리에서 서비스/라우트 관련 테스트 파일 검색 (중복 제거)
   local test_files=0
   local search_pattern="(service|route|controller|handler|api|endpoint)"
 
-  for test_dir in test tests __tests__ src/**/__tests__ src/**/*.test.* src/**/*.spec.*; do
-    if [[ -d "$test_dir" ]] 2>/dev/null; then
-      local found
-      found=$(find "$test_dir" -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "test_*" \) 2>/dev/null | grep -iE "$search_pattern" | wc -l | tr -d ' ')
-      test_files=$((test_files + found))
-    fi
-  done
-
-  # 파일명 패턴으로도 검색 (flat 구조 대응)
+  # 전체 프로젝트에서 테스트 파일을 한 번만 검색
+  local all_test_files=""
   for d in test tests __tests__; do
     if [[ -d "$d" ]]; then
-      local found
-      found=$(find "$d" -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "test_*" \) 2>/dev/null | grep -iE "$search_pattern" | wc -l | tr -d ' ')
-      test_files=$((test_files + found))
+      all_test_files+=$(find "$d" -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "test_*" \) 2>/dev/null)
+      all_test_files+=$'\n'
     fi
   done
-
-  # src 내부의 인라인 테스트 파일도 검색
+  # src 내부 인라인 테스트 파일
   if [[ -d "src" ]]; then
-    local inline_tests
-    inline_tests=$(find src -type f \( -name "*.test.*" -o -name "*.spec.*" \) 2>/dev/null | grep -iE "$search_pattern" | wc -l | tr -d ' ')
-    test_files=$((test_files + inline_tests))
+    all_test_files+=$(find src -type f \( -name "*.test.*" -o -name "*.spec.*" \) 2>/dev/null)
+  fi
+
+  if [[ -n "$all_test_files" ]]; then
+    test_files=$(echo "$all_test_files" | sort -u | grep -iE "$search_pattern" | wc -l | tr -d ' ')
   fi
 
   echo "[service-test-check] Found $test_files service/route test file(s)"

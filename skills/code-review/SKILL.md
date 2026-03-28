@@ -25,7 +25,7 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
    ```bash
    codex exec --skip-git-repo-check '## 코드 리뷰 Round N
 
-   ### 리뷰 관점 (5가지 + SEC 서브카테고리)
+   ### 리뷰 관점 (6가지 + SEC 서브카테고리)
    1. SEC (보안): 아래 서브카테고리별로 분류하여 보고
       - SEC-INJ: SQL/NoSQL/Command injection, OS command injection
       - SEC-XSS: Cross-site scripting, 미이스케이프 출력
@@ -41,6 +41,12 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
    3. DATA (데이터 무결성): 검증 누락, 레이스 컨디션, 일관성
    4. PERF (성능): N+1 쿼리, 메모리 누수, 불필요한 연산
    5. CODE (코드 품질): 중복, 복잡도, 네이밍, 설계 패턴
+   6. E2E (E2E 테스트 품질):
+      - E2E 시나리오가 SPEC.md의 핵심 유저스토리를 커버하는가
+      - 테스트 독립성 (상태 공유 없음)
+      - 셀렉터 안정성 (data-testid > semantic > text)
+      - mock/seed 데이터가 실제 스키마에서 파생되었는가
+      - 외부 서비스만 모킹 (자체 백엔드는 실제 사용)
 
    ### 리뷰 대상 파일
    [파일 경로 목록 — 직접 읽고 검토]
@@ -132,6 +138,11 @@ progress 파일에 라운드 결과 기록:
 
 - Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복)
 - 품질 게이트 통과
+- E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .claude-full-auto-progress.json
+  ```
+  applicable이 false/null이면 E2E 게이트 스킵. E2E 실패 시: 수정 후 e2e-gate만 재실행 (코드 리뷰 재실행 불필요)
 
 ### Step 3-4: Phase 3 완료
 

@@ -21,6 +21,10 @@
 1. 원래 요구사항 다시 읽기
 2. 구현이 요구사항을 충족하는지 항목별 대조
 3. 빌드/테스트를 **지금** 실행 (이전 결과 재사용 금지)
+3.5. **E2E 테스트 실행** (phases.phase_2.e2e.applicable==true인 경우):
+     - `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file {PROGRESS_FILE}`
+     - phases.phase_2.e2e.scenarios의 모든 시나리오 status=="completed" 확인
+     - E2E 결과를 `.claude-verification.json`의 `e2e` 필드에 기록
 4. 결과를 `.claude-verification.json`에 기록
 5. 해당 progress 파일의 dod 체크리스트 업데이트 (evidence 포함)
 

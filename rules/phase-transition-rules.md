@@ -43,11 +43,21 @@ Phase 1 완료 시:
 Phase 2 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/implementation/SKILL.md
 Phase 2 스킬의 Step 2-1 ~ 2-7 수행
 Phase 2 완료 시:
+  *** E2E 전이 가드 (Phase 3 진입 전 필수 — phase_2 completed 마킹보다 선행) ***
+  1. progress 파일에서 phases.phase_2.e2e.applicable 조회
+  2. applicable=true인 경우:
+     - bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file {PROGRESS_FILE}
+     - phases.phase_2.e2e.scenarios에서 모든 시나리오의 status가 "completed"인지 확인
+  3. E2E 미통과 시 → "E2E 테스트 미완료" 경고 출력 → Phase 3 전이 차단
+     - Phase 2는 completed로 마킹하지 않음 (E2E 작성/수정 후 재시도)
+     - 재검증 통과 시 아래로 진행
+  4. applicable=false 또는 applicable=null인 경우 → 통과
+
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_2 completed --progress-file {PROGRESS_FILE}
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_3 in_progress --progress-file {PROGRESS_FILE}
 ```
 
-DoD: `"dod.all_code_implemented": { "checked": true, "evidence": "모든 문서 구현 + doc-code 일관성 검사 통과" }`
+DoD: `"dod.all_code_implemented": { "checked": true, "evidence": "모든 문서 구현 + doc-code 일관성 검사 + E2E 테스트 통과" }`
 
 ## Phase 3 → Phase 4
 

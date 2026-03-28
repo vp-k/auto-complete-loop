@@ -58,6 +58,67 @@ progress 파일에 아키텍처 맥락 저장 (크래시 복구용):
 git add -A && git commit -m "[auto] 프로젝트 스캐폴딩 완료"
 ```
 
+### Step 2-2.7: E2E 인프라 셋업 (1회성)
+
+프로젝트 스캐폴딩 완료 후, 티켓 분할 전에 E2E 테스트 인프라를 구성합니다.
+
+#### 적용성 판단
+- 순수 라이브러리/CLI 도구 → `phases.phase_2.e2e.applicable = false`, `dod.e2e_pass = {"checked": true, "evidence": "N/A: pure library"}`, 이후 E2E 스텝 전부 스킵
+- 나머지(web/API/flutter/mobile) → 진행
+
+#### E2E 스킬 로드 + 프로젝트 분석
+```
+Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md
+```
+스킬의 섹션 1(프로젝트 분석)에 따라:
+1. 프로젝트 유형 감지 (web/flutter_mobile/flutter_web/api/native_mobile)
+2. 데이터 전략 결정 (real-server vs mock-server)
+3. 플랫폼별 환경 검증 (에뮬레이터, 브라우저 등)
+   - 환경 미충족 시: 스킬의 폴백 전략 적용
+
+#### SPEC.md에서 E2E 시나리오 도출
+
+SPEC.md에 E2E Scenarios 섹션이 있으면 해당 시나리오를 사용.
+없으면 스킬의 섹션 4(시나리오 도출)에 따라 3-5개 도출:
+- Web: 페이지 네비게이션 + 폼 제출 + API 연동 시나리오
+- Flutter: 화면 이동 + 위젯 인터랙션 + 상태 변경 시나리오
+- API: 엔드포인트 체인 시나리오 (인증 → CRUD → 권한 검증)
+
+#### progress 파일에 E2E 정보 기록
+
+```json
+"phases": {
+  "phase_2": {
+    "e2e": {
+      "applicable": true,
+      "projectType": "web | flutter_mobile | flutter_web | api | native_mobile",
+      "dataStrategy": "real-server | mock-server",
+      "e2eFramework": "playwright | integration_test | supertest | pytest | maestro",
+      "fallbackReason": null,
+      "scenarios": [
+        {"id": "E2E-001", "title": "회원가입→로그인→대시보드", "source": "SPEC.md US-001,US-002", "priority": "high", "status": "pending", "testFile": null}
+      ]
+    }
+  }
+}
+```
+
+#### 프레임워크 설치 + 데이터 인프라 구성
+
+스킬의 섹션 2(플랫폼별 E2E 전략)에 따라 프레임워크 설치 및 데이터 인프라(seed/cleanup 또는 MSW) 구성.
+
+설치 후 기존 빌드 확인:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
+```
+
+커밋:
+```bash
+git add -A && git commit -m "[auto] E2E 프레임워크 + 인프라 설정"
+```
+
+**Iteration 관점**: 이 스텝은 독립 iteration으로 분리 가능 (프레임워크 설치 + 시나리오 도출).
+
 ### Step 2-2.5: Acceptance Criteria 사전 합의 (문서별)
 
 각 문서 구현 시작 전, codex에게 검증 포인트를 질의하여 Phase 3 리뷰 기준을 사전 확정:
@@ -184,6 +245,39 @@ Edit 도구 에러 처리:
 2. `old_string` 재확인 후 재시도 (최대 3회)
 3. 3회 실패 -> Write 덮어쓰기 -> 빌드/테스트 검증 -> 실패 시 `git restore --source=HEAD -- {파일}`로 해당 파일만 롤백 (다른 변경에 영향 없음)
 
+### Step 2-6.5: E2E 테스트 일괄 작성 (모든 문서 구현 완료 후)
+
+`phases.phase_2.e2e.applicable == true`인 경우에만 수행.
+
+**전제 조건**: 모든 문서 구현 + 유닛 테스트 통과. 앱이 기동 가능한 상태.
+E2E는 앱이 완성된 상태에서만 실행 가능하므로, 문서별 즉시 작성이 아닌 **구현 완료 후 일괄 작성**.
+
+1. 앱 기동 가능 확인:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check
+   ```
+
+2. `phases.phase_2.e2e.scenarios`의 모든 pending 시나리오를 high 우선순위부터 작성:
+   - `Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md` (섹션 5: 테스트 작성 규칙)
+   - 각 시나리오: 테스트 작성 → 개별 실행 → 통과 확인
+   - 실패 시 에러 에스컬레이션 (L0-L5) 적용
+   - 시나리오 `status = "completed"`, `testFile` 기록
+
+3. E2E 전체 실행:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .claude-full-auto-progress.json
+   ```
+
+4. 커밋:
+   ```bash
+   git add -A && git commit -m "[auto] E2E 테스트 작성 완료"
+   ```
+
+5. DoD 업데이트: `dod.e2e_pass.checked = true`, evidence에 "N개 시나리오 전체 통과"
+
+**Flakiness 대응**: 실패 시 1회 자동 재실행. 2회 연속 실패 시 에러 에스컬레이션.
+
 ### Step 2-7: Phase 2 완료
 
 모든 문서 구현 + 검증 완료 시:
@@ -191,12 +285,20 @@ Edit 도구 에러 처리:
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-code-check docs/
    ```
-2. DoD 업데이트: `all_code_implemented.checked = true`
-3. Phase 전이는 오케스트레이터가 수행
+2. E2E 최종 확인 (`e2e.applicable == true`인 경우):
+   - 모든 시나리오 `status == "completed"` 확인
+   - `dod.e2e_pass.checked == true` 확인
+3. DoD 업데이트: `all_code_implemented.checked = true`
+4. Phase 전이는 오케스트레이터가 수행
 
 ### Iteration 관리
 
-- 한 iteration에서 1~2개 문서 또는 3~5개 티켓만 처리
+- 문서 구현: 1개 문서 또는 3개 티켓 per iteration
+- E2E 작성: Phase 2 마지막 1-2 iteration에 집중
+  - Iteration N: 남은 문서 구현 완료
+  - Iteration N+1: E2E 시나리오 2-3개 작성
+  - Iteration N+2: 나머지 E2E 시나리오 + e2e-gate 전체 실행
+- Step 2-2.7 (E2E 인프라 셋업)은 독립 iteration으로 분리 가능
 - 처리 완료 후 handoff 업데이트하고 자연스럽게 종료
 
 ### 복구

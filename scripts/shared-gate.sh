@@ -83,6 +83,28 @@ migrate_schema_v2() {
   echo "OK: $file migrated to schemaVersion 2"
 }
 
+migrate_schema_v3() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+
+  # schemaVersion이 이미 3 이상이면 스킵
+  local current_ver
+  current_ver=$(jq '.schemaVersion // 1' "$file" 2>/dev/null || echo "1")
+  [[ "$current_ver" -ge 3 ]] && return 0
+
+  # full-auto progress 파일인지 확인
+  local is_full_auto
+  is_full_auto=$(jq 'if .steps then [.steps[].name] | any(. == "phase_0") else false end' "$file" 2>/dev/null || echo "false")
+  [[ "$is_full_auto" == "true" ]] || return 0
+
+  echo "Migrating $file to schemaVersion 3 (E2E support)..."
+  jq_inplace "$file" '
+    .schemaVersion = 3
+    | .phases.phase_2.e2e //= {"applicable":null,"projectType":null,"dataStrategy":null,"e2eFramework":null,"fallbackReason":null,"scenarios":[]}
+  '
+  echo "OK: $file migrated to schemaVersion 3"
+}
+
 # Progress 파일 자동 탐지
 detect_progress_file() {
   for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
@@ -201,7 +223,7 @@ cmd_init() {
   "phases": {
     "phase_0": { "outputs": { "definitionDoc": null, "readmePath": null, "techStack": null, "rounds": [], "assumptions": [], "nsm": null, "successCriteria": [], "premortem": {"tigers":[],"paperTigers":[],"elephants":[]}, "projectSize": null, "stakeholders": null } },
     "phase_1": { "documents": [], "currentDocument": null },
-    "phase_2": { "documents": [], "currentDocument": null, "completedFiles": [], "context": {}, "documentSummaries": {}, "scopeReductions": [] },
+    "phase_2": { "documents": [], "currentDocument": null, "completedFiles": [], "context": {}, "documentSummaries": {}, "scopeReductions": [], "e2e": {"applicable": null, "projectType": null, "dataStrategy": null, "e2eFramework": null, "fallbackReason": null, "scenarios": []} },
     "phase_3": { "currentRound": 0, "roundResults": [], "findingHistory": [] },
     "phase_4": { "verificationSteps": [], "designPolish": null }
   },
@@ -525,6 +547,7 @@ cmd_status() {
 
   # schemaVersion 마이그레이션 트리거
   migrate_schema_v2 "$PROGRESS_FILE"
+  migrate_schema_v3 "$PROGRESS_FILE"
 
   echo "=== Progress Status ($PROGRESS_FILE) ==="
 
@@ -626,6 +649,7 @@ cmd_update_step() {
 
   # schemaVersion 마이그레이션 트리거
   migrate_schema_v2 "$PROGRESS_FILE"
+  migrate_schema_v3 "$PROGRESS_FILE"
 
   # 유효한 상태 값 확인
   local valid_statuses="pending in_progress completed"
@@ -1970,19 +1994,38 @@ cmd_doc_code_check() {
 cmd_e2e_gate() {
   require_jq
 
+  # --strict 플래그 파싱: 프레임워크 미감지 시 exit 1 (FAIL) 대신 exit 2 (SKIP)
+  local strict_mode=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --strict) strict_mode=true; shift ;;
+      --progress-file) PROGRESS_FILE="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
   echo "=== E2E Test Gate ==="
+  [[ "$strict_mode" == "true" ]] && echo "[e2e] Strict mode enabled"
 
   local e2e_cmd="" e2e_framework=""
 
   # 프로젝트 유형 + E2E 프레임워크 자동 감지
   if [[ -f "package.json" ]]; then
-    # Web 프로젝트
+    # Web 프로젝트: Playwright > Cypress
     if ls playwright.config.* 2>/dev/null | head -1 >/dev/null 2>&1; then
       e2e_framework="playwright"
       e2e_cmd="npx playwright test --reporter=line"
     elif ls cypress.config.* 2>/dev/null | head -1 >/dev/null 2>&1; then
       e2e_framework="cypress"
       e2e_cmd="npx cypress run --reporter spec"
+    # API E2E: supertest (e2e/ 디렉토리 + supertest 의존성)
+    elif [[ -d "e2e" ]] && grep -q '"supertest"' package.json 2>/dev/null; then
+      e2e_framework="supertest"
+      if grep -q '"vitest"' package.json 2>/dev/null; then
+        e2e_cmd="npx vitest run e2e/"
+      else
+        e2e_cmd="npx jest --testPathPattern=e2e"
+      fi
     fi
   elif [[ -f "pubspec.yaml" ]]; then
     # Flutter 프로젝트
@@ -1993,11 +2036,35 @@ cmd_e2e_gate() {
       e2e_framework="maestro"
       e2e_cmd="maestro test .maestro/"
     fi
+  elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]]; then
+    # Python API E2E
+    if [[ -d "e2e" ]] || [[ -d "tests/e2e" ]]; then
+      e2e_framework="pytest"
+      if [[ -d "e2e" ]]; then
+        e2e_cmd="pytest e2e/ -v"
+      else
+        e2e_cmd="pytest tests/e2e/ -v"
+      fi
+    fi
+  elif [[ -f "go.mod" ]]; then
+    # Go API E2E
+    if [[ -d "e2e" ]] || [[ -d "tests/e2e" ]]; then
+      e2e_framework="go_test"
+      if [[ -d "e2e" ]]; then
+        e2e_cmd="go test ./e2e/... -v"
+      else
+        e2e_cmd="go test ./tests/e2e/... -v"
+      fi
+    fi
   fi
 
-  # 프레임워크 미감지 시 exit 2 (skip)
+  # 프레임워크 미감지 시: --strict이면 exit 1 (FAIL), 아니면 exit 2 (SKIP)
   if [[ -z "$e2e_cmd" ]]; then
-    echo "[e2e] SKIP (no E2E framework detected)"
+    if [[ "$strict_mode" == "true" ]]; then
+      echo "[e2e] FAIL (no E2E framework detected — strict mode)"
+    else
+      echo "[e2e] SKIP (no E2E framework detected)"
+    fi
 
     # verification.json에 e2e 키 병합
     if [[ -f "$VERIFICATION_FILE" ]]; then
@@ -2006,8 +2073,13 @@ cmd_e2e_gate() {
       echo '{"e2e": {"command": null, "framework": null, "exitCode": null, "summary": "no_e2e_framework"}}' | jq '.' > "$VERIFICATION_FILE"
     fi
 
-    echo "=== E2E SKIPPED (no framework) ==="
-    return 2
+    if [[ "$strict_mode" == "true" ]]; then
+      echo "=== E2E GATE FAILED (strict: no framework) ==="
+      return 1
+    else
+      echo "=== E2E SKIPPED (no framework) ==="
+      return 2
+    fi
   fi
 
   echo "[e2e] Framework: $e2e_framework"
@@ -2295,6 +2367,7 @@ cmd_recover() {
   require_progress
 
   migrate_schema_v2 "$PROGRESS_FILE"
+  migrate_schema_v3 "$PROGRESS_FILE"
 
   echo "=== Recovery Info ==="
   echo "Progress: $PROGRESS_FILE"

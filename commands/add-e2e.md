@@ -83,6 +83,15 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-code-check docs/
 
 **원칙**: 스크립트 = 구조적/기계적 검사, AI = 의미적 판단. 스크립트로 먼저 거르고, AI는 스크립트가 못 잡는 의미적 문제만 처리.
 
+## 공유 스킬 참조
+
+이 커맨드의 E2E 순수 로직(프로젝트 분석, 시나리오 도출, 프레임워크 설정, 테스트 작성 규칙, 정합성 전략)은
+`skills/e2e-setup/SKILL.md`에 정의되어 있습니다. 아래 Phase별 상세 지침과 함께 참조하세요:
+
+```
+Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md
+```
+
 ## 복구 감지 (0단계 전 실행)
 
 먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/shared-rules.md`를 실행하여 공통 규칙을 로드합니다.

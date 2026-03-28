@@ -24,15 +24,30 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .
 2. 전체 테스트 재실행 — 모든 테스트 통과 확인
 3. 린트/포맷 전체 검사 — 코드 스타일 일관성 확인
 
-### Step 4-1.5: E2E 테스트 검증
+### Step 4-1.5: E2E 테스트 검증 (하드 게이트)
+
+#### 적용성 확인
+1. progress 파일의 `phases.phase_2.e2e.applicable` 확인
+   - `false` → SKIP (`dod.e2e_pass = {"checked": true, "evidence": "N/A: not applicable"}`, 실패 아님)
+   - `true` → **필수 (MANDATORY)**, 아래 진행
+   - `null` (이전 버전 progress) → Phase 2에서 미설정. e2e-setup 스킬 로드하여 적용성 판단 후 진행
+
+#### E2E 게이트 실행
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .claude-full-auto-progress.json
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --strict --progress-file .claude-full-auto-progress.json
 ```
 
-1. 기존 E2E 테스트 점검: 누락 시나리오 확인 -> 추가
-2. E2E 실행
-3. 프레임워크 미감지 시: E2E 설정 + 테스트 작성 후 재실행
+- **PASS (exit 0)** → `dod.e2e_pass` 업데이트
+- **FAIL (exit 1)** → 실패한 테스트 수정 (에러 에스컬레이션 L0-L5 적용)
+  - Flakiness 대응: 1회 자동 재실행, 2회 연속 실패 시 에스컬레이션
+- **SKIP (exit 2, --strict 모드에서는 FAIL)** → 프레임워크 없음 = Phase 2에서 설정했어야 하는 에러 상태
+  - Last-resort: `Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md` → 설정 + 작성 + 실행
+  - 이후 e2e-gate 재실행
+
+#### 시나리오 커버리지 확인
+- `phases.phase_2.e2e.scenarios`에서 모든 시나리오의 `status == "completed"` 확인
+- pending 시나리오가 있으면: 작성 후 재실행
 
 ### Step 4-2: 보안 검토
 
@@ -175,6 +190,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --progress-file .c
 | 성능 | N+1 쿼리, 메모리 누수, 대량 데이터 처리 | CRITICAL/HIGH PERF finding 0개 |
 | 코드 품질 | 중복, 복잡도, 테스트 커버리지 | 주요 비즈니스 로직 테스트 존재 |
 | 문서화 | README, API 문서, 환경 변수 설명 | 필수 문서 존재 |
+| E2E 커버리지 | E2E 시나리오 vs SPEC.md 유저스토리 | high/medium 시나리오 전체 통과 (applicable=false 시 N/A) |
 
 각 차원의 결과를 `.claude-verification.json`에 기록:
 ```json
@@ -183,7 +199,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --progress-file .c
   "security": { "result": "pass", "evidence": "0 SEC CRITICAL/HIGH findings" },
   "performance": { "result": "pass", "evidence": "0 PERF CRITICAL/HIGH findings" },
   "codeQuality": { "result": "pass", "evidence": "85% test coverage on business logic" },
-  "documentation": { "result": "pass", "evidence": "README + API docs + .env.example" }
+  "documentation": { "result": "pass", "evidence": "README + API docs + .env.example" },
+  "e2eCoverage": { "result": "pass", "evidence": "5/5 E2E scenarios passed" }
 }
 ```
 

@@ -188,13 +188,13 @@ auto-complete-loop/
 | `record-error --file --type --msg` | 에러 반복 판별 + errorHistory 업데이트 |
 | `secret-scan` | 시크릿 유출 스캔 (HARD_FAIL) |
 | `artifact-check` | 빌드 아티팩트 검증 (SOFT_FAIL) |
-| `smoke-check [port] [timeout]` | 서버 기동 + 헬스체크 (SOFT_FAIL) |
+| `smoke-check [--strict] [port] [timeout]` | 서버 기동 + 헬스체크 + SPEC.md 엔드포인트 검증. `--strict` 시 soft_fail→FAIL 승격 |
 | `check-tools` | codex/gemini CLI 존재 확인 |
 | `find-debug-code [dir]` | console.log/print/debugger 탐색 |
 | `doc-consistency [dir]` | 문서 간 일관성 검사 |
 | `doc-code-check [dir]` | 문서↔코드 매칭 |
 | `e2e-gate` | E2E 테스트 프레임워크 감지 + 실행 |
-| `design-polish-gate` | WCAG 체크 + 스크린샷 캡처 (SOFT_FAIL) |
+| `design-polish-gate [--strict]` | WCAG 체크 + 스크린샷 캡처. `--strict` 시 WCAG 위반→FAIL 승격 |
 | `add-dod-key <key>` | DoD 키 동적 추가 (idempotent) |
 
 글로벌 옵션: `--progress-file <path>` (미지정 시 자동 탐지)

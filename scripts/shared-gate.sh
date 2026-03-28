@@ -12,13 +12,13 @@
 #   vuln-scan [--progress-file <path>]                  - 의존성 취약점 자동 검사 (언어별 감지)
 #   secret-scan                                        - 시크릿 유출 스캔 (HARD_FAIL)
 #   artifact-check                                     - 빌드 아티팩트 존재/크기 검증
-#   smoke-check [port] [timeout]                       - 서버 기동 + 헬스체크
+#   smoke-check [--strict] [port] [timeout]             - 서버 기동 + 헬스체크 + 엔드포인트 검증 (--strict: FAIL 승격)
 #   record-error --file <f> --type <t> --msg <m> [--level L0-L5] [--action "..."] - 에러 기록 + 에스컬레이션
 #   check-tools                                         - codex/gemini CLI 존재 확인
 #   find-debug-code [dir]                              - console.log/print/debugger 탐색
 #   doc-consistency [docs_dir]                         - 문서 간 일관성 검사
 #   doc-code-check [docs_dir]                          - 문서↔코드 매칭
-#   design-polish-gate                                 - WCAG 체크 + 스크린샷 캡처 (SOFT_FAIL)
+#   design-polish-gate [--strict]                       - WCAG 체크 + 스크린샷 캡처 (--strict: FAIL 승격)
 #   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
 #   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신
 
@@ -1540,8 +1540,21 @@ _cleanup_server() {
 # ─── smoke-check: 서버 기동 + 헬스체크 ───
 
 cmd_smoke_check() {
-  local port="${1:-3000}"
-  local timeout="${2:-15}"
+  local port="3000"
+  local timeout="15"
+  local strict=false
+
+  # --strict 플래그 파싱 (위치 무관)
+  local args=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--strict" ]]; then
+      strict=true
+    else
+      args+=("$arg")
+    fi
+  done
+  port="${args[0]:-$port}"
+  timeout="${args[1]:-$timeout}"
 
   # 입력 검증: port/timeout은 반드시 정수 + 범위 검증
   if ! [[ "$port" =~ ^[0-9]+$ ]]; then
@@ -1557,7 +1570,9 @@ cmd_smoke_check() {
     die "smoke-check: timeout must be >= 1, got '$timeout'"
   fi
 
-  echo "=== Smoke Check (port: $port, timeout: ${timeout}s) ==="
+  local strict_label=""
+  [[ "$strict" == "true" ]] && strict_label=" [STRICT]"
+  echo "=== Smoke Check (port: $port, timeout: ${timeout}s)${strict_label} ==="
   require_jq
 
   # 서버 시작 명령어 감지
@@ -1588,12 +1603,67 @@ cmd_smoke_check() {
     success=true
   fi
 
-  # 결과 기록
+  # ─── 엔드포인트 검증 (서버 기동 성공 시) ───
+  local endpoint_total=0 endpoint_pass=0 endpoint_fail=0 endpoint_results="[]"
+
+  if [[ "$success" == "true" ]]; then
+    # SPEC.md 또는 기획 문서에서 API 엔드포인트 추출
+    local spec_file=""
+    for candidate in "SPEC.md" "docs/SPEC.md" "spec.md"; do
+      if [[ -f "$candidate" ]]; then
+        spec_file="$candidate"
+        break
+      fi
+    done
+
+    if [[ -n "$spec_file" ]]; then
+      echo "[smoke-check] Verifying API endpoints from $spec_file..."
+
+      # SPEC.md에서 GET 엔드포인트만 추출 (POST/PUT/PATCH/DELETE는 부작용 위험으로 제외)
+      local endpoints
+      endpoints=$(grep -oE 'GET\s+/[a-zA-Z0-9/_:{}.-]+' "$spec_file" 2>/dev/null | head -20 || true)
+
+      if [[ -n "$endpoints" ]]; then
+        while IFS= read -r line; do
+          local method path
+          method=$(echo "$line" | awk '{print $1}')
+          path=$(echo "$line" | awk '{print $2}')
+
+          # 경로 파라미터 치환 ({id} → 1, {:id} → 1)
+          path=$(echo "$path" | sed -E 's/\{[^}]+\}/1/g; s/:([a-zA-Z_]+)/1/g')
+
+          endpoint_total=$((endpoint_total + 1))
+          local http_code
+          http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || echo "000")
+
+          if [[ "$http_code" =~ ^5[0-9]{2}$ ]] || [[ "$http_code" == "000" ]]; then
+            echo "  [FAIL] GET $path → HTTP $http_code"
+            endpoint_fail=$((endpoint_fail + 1))
+            endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "fail"}]')
+          else
+            echo "  [PASS] GET $path → HTTP $http_code"
+            endpoint_pass=$((endpoint_pass + 1))
+            endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
+          fi
+        done <<< "$endpoints"
+
+        echo "[smoke-check] Endpoints: $endpoint_pass/$endpoint_total passed ($endpoint_fail failed)"
+      else
+        echo "[smoke-check] WARNING: No GET endpoints found in $spec_file — endpoint verification skipped"
+        echo "[smoke-check] (mutating endpoints POST/PUT/PATCH/DELETE are excluded from smoke-check to avoid side effects)"
+      fi
+    fi
+  fi
+
+  # 결과 판정
   local ts result
   ts=$(timestamp)
-  if [[ "$success" == "true" ]]; then
+  if [[ "$success" == "true" ]] && [[ "$endpoint_fail" -eq 0 ]]; then
     result="pass"
     echo "[smoke-check] PASS"
+  elif [[ "$success" == "true" ]] && [[ "$endpoint_fail" -gt 0 ]]; then
+    result="soft_fail"
+    echo "[smoke-check] SOFT_FAIL ($endpoint_fail endpoint(s) returned 5xx)"
   else
     result="soft_fail"
     echo "[smoke-check] SOFT_FAIL (server did not respond within ${timeout}s)"
@@ -1601,20 +1671,37 @@ cmd_smoke_check() {
     tail -5 "$SERVER_LOG" 2>/dev/null || true
   fi
 
+  # --strict 모드: soft_fail → fail 승격
+  if [[ "$strict" == "true" ]] && [[ "$result" == "soft_fail" ]]; then
+    result="fail"
+    echo "[smoke-check] STRICT MODE: soft_fail upgraded to FAIL"
+  fi
+
   _cleanup_server
   trap - EXIT INT TERM
+
+  # 결과 기록 (엔드포인트 검증 결과 포함)
+  local endpoint_json
+  endpoint_json=$(jq -n \
+    --argjson total "$endpoint_total" \
+    --argjson pass "$endpoint_pass" \
+    --argjson fail "$endpoint_fail" \
+    --argjson details "$endpoint_results" \
+    '{"total": $total, "pass": $pass, "fail": $fail, "details": $details}')
 
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" \
       --arg ts "$ts" --arg cmd "$start_cmd" --argjson port "$port" --arg result "$result" \
-      '.smokeCheck = {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result}'
+      --argjson strict "$strict" --argjson endpoints "$endpoint_json" \
+      '.smokeCheck = {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result, "strict": $strict, "endpoints": $endpoints}'
   else
     jq -n --arg ts "$ts" --arg cmd "$start_cmd" --argjson port "$port" --arg result "$result" \
-      '{"smokeCheck": {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result}}' > "$VERIFICATION_FILE"
+      --argjson strict "$strict" --argjson endpoints "$endpoint_json" \
+      '{"smokeCheck": {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result, "strict": $strict, "endpoints": $endpoints}}' > "$VERIFICATION_FILE"
   fi
 
   echo "=== SMOKE CHECK: ${result^^} ==="
-  if [[ "$result" == "soft_fail" ]]; then
+  if [[ "$result" == "soft_fail" ]] || [[ "$result" == "fail" ]]; then
     return 1
   fi
   return 0
@@ -2209,7 +2296,22 @@ cmd_e2e_gate() {
 # ─── design-polish-gate: 디자인 폴리싱 WCAG 체크 + 스크린샷 캡처 ───
 
 cmd_design_polish_gate() {
-  echo "=== Design Polish Gate ==="
+  local strict=false
+
+  # --strict 플래그 파싱
+  local dp_args=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--strict" ]]; then
+      strict=true
+    else
+      dp_args+=("$arg")
+    fi
+  done
+  set -- "${dp_args[@]}"
+
+  local strict_label=""
+  [[ "$strict" == "true" ]] && strict_label=" [STRICT]"
+  echo "=== Design Polish Gate${strict_label} ==="
   require_jq
 
   # SKIP 분기 공통 기록 헬퍼 (verification.json + DoD 동시 업데이트)
@@ -2305,6 +2407,30 @@ cmd_design_polish_gate() {
   if ! _start_and_wait_server "$start_cmd" "$port" 15 "design-polish-gate"; then
     _cleanup_server
     trap - EXIT INT TERM
+    if [[ "$strict" == "true" ]]; then
+      echo "[design-polish-gate] STRICT MODE: server failed to start → FAIL"
+      local ts
+      ts=$(timestamp)
+      if [[ -f "$VERIFICATION_FILE" ]]; then
+        jq_inplace "$VERIFICATION_FILE" --arg ts "$ts" \
+          '.designPolish = {"timestamp": $ts, "result": "fail", "reason": "server failed to start (strict mode)"}'
+      else
+        jq -n --arg ts "$ts" \
+          '{"designPolish": {"timestamp": $ts, "result": "fail", "reason": "server failed to start (strict mode)"}}' > "$VERIFICATION_FILE"
+      fi
+      if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+        local has_dq
+        has_dq=$(jq '.dod | has("design_quality")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+        if [[ "$has_dq" == "true" ]]; then
+          jq_inplace "$PROGRESS_FILE" '
+            .dod.design_quality.checked = false
+            | .dod.design_quality.evidence = "FAIL: server failed to start (strict mode)"
+          '
+        fi
+      fi
+      echo "=== DESIGN POLISH GATE: FAIL ==="
+      return 1
+    fi
     echo "[design-polish-gate] SKIP (server failed to start)"
     _dp_record_skip "server failed to start"
     echo "=== DESIGN POLISH GATE: SKIP ==="
@@ -2358,6 +2484,12 @@ cmd_design_polish_gate() {
     result="pass"
   fi
 
+  # --strict 모드: soft_fail → fail 승격 (WCAG 위반 시 하드 게이트로 동작)
+  if [[ "$strict" == "true" ]] && [[ "$result" == "soft_fail" ]]; then
+    result="fail"
+    echo "[design-polish-gate] STRICT MODE: soft_fail upgraded to FAIL"
+  fi
+
   # health-score 리그레션 데이터 수집
   local hs_score=0 hs_diff=0 hs_status="unknown"
   if [[ -f ".design-polish/health-score.json" ]]; then
@@ -2398,9 +2530,9 @@ cmd_design_polish_gate() {
     local has_dq
     has_dq=$(jq '.dod | has("design_quality")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
     if [[ "$has_dq" == "true" ]]; then
-      # pass/skip/soft_fail은 모두 비차단 → checked=true (verification SKILL.md 정의 준수)
+      # pass/skip/soft_fail은 비차단 → checked=true, fail/hard_fail은 차단 → checked=false
       local dq_checked="true"
-      [[ "$result" == "hard_fail" ]] && dq_checked="false"
+      [[ "$result" == "hard_fail" || "$result" == "fail" ]] && dq_checked="false"
       jq_inplace "$PROGRESS_FILE" \
         --argjson checked "$dq_checked" --arg ev "design-polish-gate: $result ($wcag_summary)" \
         '.dod.design_quality.checked = $checked | .dod.design_quality.evidence = $ev'
@@ -2408,7 +2540,9 @@ cmd_design_polish_gate() {
   fi
 
   echo "=== DESIGN POLISH GATE: ${result^^} ==="
-  if [[ "$result" == "soft_fail" ]]; then
+  if [[ "$result" == "fail" ]]; then
+    return 1
+  elif [[ "$result" == "soft_fail" ]]; then
     return 1
   fi
   return 0

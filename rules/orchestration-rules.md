@@ -22,7 +22,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 `<promise>{PROMISE_TAG}</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
 1. `{PROGRESS_FILE}`의 모든 steps status가 `completed`
 2. `{PROGRESS_FILE}`의 `dod` 체크리스트가 모두 checked
-3. `.claude-verification.json`의 모든 검증 항목이 통과 (build/typeCheck/lint/test는 `exitCode: 0`, secretScan/artifactCheck/smokeCheck/designPolish는 `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`)
+3. `.claude-verification.json`의 모든 검증 항목이 통과:
+   - build/typeCheck/lint/test: `exitCode: 0`
+   - secretScan/artifactCheck/designPolish: `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`
+   - **smokeCheck**: `result: "pass"` 또는 `result: "skip"` (**`soft_fail`과 `fail`은 모두 불합격** — 서버가 기동되지 않으면 완주 불가)
+     - `skip`은 서버가 불필요한 프로젝트(라이브러리, CLI, serverless)에서만 허용
+     - `soft_fail`(서버 기동 실패) 및 `fail`(--strict 모드 하드 실패)은 반드시 해결 후 `pass`로 전환해야 함
 4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
 
 ### Iteration 단위 작업 규칙

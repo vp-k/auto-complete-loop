@@ -154,11 +154,11 @@ DoD 업데이트: `launch_ready.checked = true`, evidence에 "릴리즈 노트 +
 ### Step 4-5: 디자인 폴리싱
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh design-polish-gate --progress-file .claude-full-auto-progress.json
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh design-polish-gate --strict --progress-file .claude-full-auto-progress.json
 ```
 
 WCAG 체크 + 스크린샷 캡처 (design-polish 플러그인 미설치 시 SKIP).
-SOFT_FAIL: 개선 권장사항으로 처리 (차단하지 않음).
+`--strict` 모드: WCAG 위반 시 FAIL (하드 게이트). 플러그인 미설치 시에는 SKIP 유지.
 
 디자인 수정 + 품질 게이트 통과 후:
 ```bash
@@ -203,8 +203,13 @@ design-polish-gate 실행 후, Before/After 비교를 수행합니다.
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh artifact-check --progress-file .claude-full-auto-progress.json
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --progress-file .claude-full-auto-progress.json
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh smoke-check --strict --progress-file .claude-full-auto-progress.json
 ```
+
+Phase 4에서는 `--strict` 모드로 실행:
+- 서버 기동 실패(soft_fail) → **FAIL** (완주 차단)
+- SPEC.md 기반 엔드포인트 검증: 5xx 응답이 있으면 **FAIL**
+- 라이브러리/CLI 프로젝트(start 스크립트 없음)는 SKIP 유지
 
 ### Step 4-7: 최종 검증 (다차원 체크리스트)
 

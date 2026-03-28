@@ -2345,27 +2345,28 @@ cmd_design_polish_gate() {
   fi
 
   # Before/After 스크린샷 경로 수집
-  local has_before="false"
+  local has_before="false" has_after="false"
   [[ -f ".design-polish/screenshots/before-main.png" ]] && has_before="true"
+  [[ -f ".design-polish/screenshots/current-main.png" ]] && has_after="true"
 
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" \
       --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
       --argjson hs_score "$hs_score" --argjson hs_diff "$hs_diff" --arg hs_status "$hs_status" \
-      --argjson has_before "$has_before" \
+      --argjson has_before "$has_before" --argjson has_after "$has_after" \
       '.designPolish = {
         "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
         "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
-        "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": ".design-polish/screenshots/current-main.png"}
+        "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": (if $has_after then ".design-polish/screenshots/current-main.png" else null end)}
       }'
   else
     jq -n --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
       --argjson hs_score "$hs_score" --argjson hs_diff "$hs_diff" --arg hs_status "$hs_status" \
-      --argjson has_before "$has_before" \
+      --argjson has_before "$has_before" --argjson has_after "$has_after" \
       '{"designPolish": {
         "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
         "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
-        "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": ".design-polish/screenshots/current-main.png"}
+        "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": (if $has_after then ".design-polish/screenshots/current-main.png" else null end)}
       }}' > "$VERIFICATION_FILE"
   fi
 

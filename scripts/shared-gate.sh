@@ -13,7 +13,7 @@
 #   secret-scan                                        - 시크릿 유출 스캔 (HARD_FAIL)
 #   artifact-check                                     - 빌드 아티팩트 존재/크기 검증
 #   smoke-check [port] [timeout]                       - 서버 기동 + 헬스체크
-#   record-error --file <f> --type <t> --msg <m> [--level L0-L4] [--action "..."] - 에러 기록 + 에스컬레이션
+#   record-error --file <f> --type <t> --msg <m> [--level L0-L5] [--action "..."] - 에러 기록 + 에스컬레이션
 #   check-tools                                         - codex/gemini CLI 존재 확인
 #   find-debug-code [dir]                              - console.log/print/debugger 탐색
 #   doc-consistency [docs_dir]                         - 문서 간 일관성 검사
@@ -1428,6 +1428,77 @@ cmd_artifact_check() {
   return 0
 }
 
+# ─── 서버 시작 공통 헬퍼 ───
+
+# _detect_start_cmd: package.json에서 서버 시작 명령어를 감지
+# 출력: 감지된 명령어 (없으면 빈 문자열)
+_detect_start_cmd() {
+  if [[ -f "package.json" ]]; then
+    local pm="npm"
+    [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
+    [[ -f "yarn.lock" ]] && pm="yarn"
+    [[ -f "bun.lockb" ]] && pm="bun"
+
+    if jq -e '.scripts.start' package.json >/dev/null 2>&1; then
+      echo "$pm run start"
+    elif jq -e '.scripts.dev' package.json >/dev/null 2>&1; then
+      echo "$pm run dev"
+    elif jq -e '.scripts.preview' package.json >/dev/null 2>&1; then
+      echo "$pm run preview"
+    fi
+  fi
+}
+
+# _start_and_wait_server: 서버를 백그라운드로 시작하고 응답 대기
+# 인수: $1=start_cmd, $2=port, $3=timeout, $4=log_prefix
+# 출력: SERVER_PID, SERVER_LOG 변수 설정
+# 반환: 0=성공, 1=실패
+SERVER_PID=""
+SERVER_LOG=""
+_start_and_wait_server() {
+  local start_cmd="$1" port="$2" timeout="${3:-15}" log_prefix="${4:-server}"
+
+  SERVER_LOG=$(mktemp "/tmp/${log_prefix}-XXXXXX.log")
+  eval "$start_cmd" > "$SERVER_LOG" 2>&1 &
+  SERVER_PID=$!
+
+  trap '_cleanup_server; trap - EXIT INT TERM' EXIT INT TERM
+
+  local elapsed=0
+  while [[ $elapsed -lt $timeout ]]; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      echo "[${log_prefix}] Server process exited prematurely"
+      return 1
+    fi
+
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
+    if [[ "$http_code" != "000" ]] && [[ "$http_code" =~ ^[23] ]]; then
+      echo "[${log_prefix}] Got HTTP $http_code after ${elapsed}s"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# _cleanup_server: 서버 프로세스 및 로그 파일 정리
+_cleanup_server() {
+  if [[ -n "$SERVER_PID" ]]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    pkill -P "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+    SERVER_PID=""
+  fi
+  if [[ -n "$SERVER_LOG" ]] && [[ -f "$SERVER_LOG" ]]; then
+    rm -f "$SERVER_LOG"
+    SERVER_LOG=""
+  fi
+}
+
 # ─── smoke-check: 서버 기동 + 헬스체크 ───
 
 cmd_smoke_check() {
@@ -1452,21 +1523,8 @@ cmd_smoke_check() {
   require_jq
 
   # 서버 시작 명령어 감지
-  local start_cmd=""
-  if [[ -f "package.json" ]]; then
-    local pm="npm"
-    [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
-    [[ -f "yarn.lock" ]] && pm="yarn"
-    [[ -f "bun.lockb" ]] && pm="bun"
-
-    if jq -e '.scripts.start' package.json >/dev/null 2>&1; then
-      start_cmd="$pm run start"
-    elif jq -e '.scripts.dev' package.json >/dev/null 2>&1; then
-      start_cmd="$pm run dev"
-    elif jq -e '.scripts.preview' package.json >/dev/null 2>&1; then
-      start_cmd="$pm run preview"
-    fi
-  fi
+  local start_cmd
+  start_cmd=$(_detect_start_cmd)
 
   if [[ -z "$start_cmd" ]]; then
     echo "[smoke-check] SKIP (no start/dev script detected — library or serverless project)"
@@ -1486,47 +1544,10 @@ cmd_smoke_check() {
 
   echo "[smoke-check] Starting server: $start_cmd"
 
-  # 백그라운드로 서버 시작 (mktemp로 고유 로그 파일 생성)
-  local server_pid
-  local smoke_log
-  smoke_log=$(mktemp /tmp/smoke-check-XXXXXX.log)
-  eval "$start_cmd" > "$smoke_log" 2>&1 &
-  server_pid=$!
-
-  # 중단 시에도 서버 프로세스와 로그 파일 정리
-  trap 'kill "$server_pid" 2>/dev/null; pkill -P "$server_pid" 2>/dev/null; wait "$server_pid" 2>/dev/null; rm -f "$smoke_log"; trap - EXIT INT TERM' EXIT INT TERM
-
-  # 서버 응답 대기
-  local elapsed=0
+  # 서버 시작 + 응답 대기 (공통 헬퍼 사용)
   local success=false
-  while [[ $elapsed -lt $timeout ]]; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-
-    # 프로세스가 죽었는지 확인
-    if ! kill -0 "$server_pid" 2>/dev/null; then
-      echo "[smoke-check] Server process exited prematurely"
-      break
-    fi
-
-    # curl로 헬스체크
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
-    if [[ "$http_code" != "000" ]]; then
-      echo "[smoke-check] Got HTTP $http_code after ${elapsed}s"
-      if [[ "$http_code" =~ ^[23] ]]; then
-        success=true
-        break
-      fi
-    fi
-  done
-
-  # 서버 프로세스 정리
-  if kill -0 "$server_pid" 2>/dev/null; then
-    kill "$server_pid" 2>/dev/null || true
-    # 자식 프로세스도 정리
-    pkill -P "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
+  if _start_and_wait_server "$start_cmd" "$port" "$timeout" "smoke-check"; then
+    success=true
   fi
 
   # 결과 기록
@@ -1539,10 +1560,10 @@ cmd_smoke_check() {
     result="soft_fail"
     echo "[smoke-check] SOFT_FAIL (server did not respond within ${timeout}s)"
     echo "Server log (last 5 lines):"
-    tail -5 "$smoke_log" 2>/dev/null || true
+    tail -5 "$SERVER_LOG" 2>/dev/null || true
   fi
 
-  rm -f "$smoke_log"
+  _cleanup_server
   trap - EXIT INT TERM
 
   if [[ -f "$VERIFICATION_FILE" ]]; then
@@ -1571,7 +1592,7 @@ cmd_record_error() {
       --file)        err_file="${2:?--file requires a value}"; shift 2 ;;
       --type)        err_type="${2:?--type requires a value}"; shift 2 ;;
       --msg)         err_msg="${2:?--msg requires a value}"; shift 2 ;;
-      --level)       err_level="${2:?--level requires L0-L4}"; shift 2 ;;
+      --level)       err_level="${2:?--level requires L0-L5}"; shift 2 ;;
       --action)      err_action="${2:?--action requires a description}"; shift 2 ;;
       --result)      err_result="${2:?--result requires pass|fail}"; shift 2 ;;
       --reset-count) reset_count=true; shift ;;
@@ -1579,7 +1600,7 @@ cmd_record_error() {
     esac
   done
 
-  [[ -n "$err_file" ]] || die "Usage: record-error --file <f> --type <t> --msg <m> [--level L0-L4] [--action '...'] [--result pass|fail] [--reset-count]"
+  [[ -n "$err_file" ]] || die "Usage: record-error --file <f> --type <t> --msg <m> [--level L0-L5] [--action '...'] [--result pass|fail] [--reset-count]"
   [[ -n "$err_type" ]] || die "Usage: record-error --file <f> --type <t> --msg <m>"
   [[ -n "$err_msg" ]]  || die "Usage: record-error --file <f> --type <t> --msg <m>"
 
@@ -1588,12 +1609,12 @@ cmd_record_error() {
 
   # 에러 레벨 유효성 검사
   if [[ -n "$err_level" ]]; then
-    echo "L0 L1 L2 L3 L4" | grep -qw "$err_level" || die "Invalid level: $err_level. Valid: L0 L1 L2 L3 L4"
+    echo "L0 L1 L2 L3 L4 L5" | grep -qw "$err_level" || die "Invalid level: $err_level. Valid: L0 L1 L2 L3 L4 L5"
   fi
 
   # 에스컬레이션 레벨별 예산
   # L0=3, L1=3, L2=1, L3=3, L4=1
-  local -A level_budget=( ["L0"]=3 ["L1"]=3 ["L2"]=1 ["L3"]=3 ["L4"]=1 )
+  local -A level_budget=( ["L0"]=3 ["L1"]=3 ["L2"]=1 ["L3"]=3 ["L4"]=1 ["L5"]=0 )
 
   # 현재 errorHistory 읽기
   local current_err_type current_err_file current_count
@@ -1709,7 +1730,17 @@ cmd_record_error() {
   # exit 1: 현재 레벨 예산 소진 → 다음 레벨로 에스컬레이트
   # exit 2: L2 도달 → codex 분석 필요
   # exit 3: L5 도달 → 사용자 개입 필요
-  if [[ "$current_escalation" == "L4" ]] && [[ $current_count -ge ${level_budget[L4]} ]]; then
+  if [[ "$current_escalation" == "L5" ]]; then
+    # L5는 최종 단계 — 항상 사용자 개입 필요
+    echo "ACTION: L5 → 사용자 개입 필요"
+    exit 3
+  elif [[ "$current_escalation" == "L4" ]] && [[ $current_count -ge ${level_budget[L4]} ]]; then
+    # L5 상태를 progress 파일에 기록 (반복 간 추적 가능)
+    jq_inplace "$PROGRESS_FILE" '
+      .errorHistory.escalationLevel = "L5"
+      | .errorHistory.escalationBudget = 0
+      | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + ["L5"])
+    '
     echo "ACTION: L4 예산 소진 → L5 사용자 개입 필요"
     exit 3
   elif [[ "$current_escalation" == "L2" ]]; then
@@ -2212,30 +2243,17 @@ cmd_design_polish_gate() {
   rm -f .design-polish/accessibility/wcag-report*.json 2>/dev/null || true
   rm -f .design-polish/screenshots/current-*.png 2>/dev/null || true
 
-  # 서버 시작 (smoke-check 로직 재사용)
+  # 서버 시작 (공통 헬퍼 사용)
   local port="${1:-3000}"
-  # 입력 검증: port는 반드시 1-65535 범위의 정수
   if ! [[ "$port" =~ ^[0-9]+$ ]]; then
     die "design-polish-gate: port must be a positive integer, got '$port'"
   fi
   if [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
     die "design-polish-gate: port must be 1-65535, got '$port'"
   fi
-  local start_cmd=""
-  if [[ -f "package.json" ]]; then
-    local pm="npm"
-    [[ -f "pnpm-lock.yaml" ]] && pm="pnpm"
-    [[ -f "yarn.lock" ]] && pm="yarn"
-    [[ -f "bun.lockb" ]] && pm="bun"
 
-    if jq -e '.scripts.start' package.json >/dev/null 2>&1; then
-      start_cmd="$pm run start"
-    elif jq -e '.scripts.dev' package.json >/dev/null 2>&1; then
-      start_cmd="$pm run dev"
-    elif jq -e '.scripts.preview' package.json >/dev/null 2>&1; then
-      start_cmd="$pm run preview"
-    fi
-  fi
+  local start_cmd
+  start_cmd=$(_detect_start_cmd)
 
   if [[ -z "$start_cmd" ]]; then
     echo "[design-polish-gate] SKIP (no start/dev script — cannot capture screenshots)"
@@ -2245,43 +2263,13 @@ cmd_design_polish_gate() {
   fi
 
   echo "[design-polish-gate] Starting server: $start_cmd"
-  local server_pid
-  local dp_log
-  dp_log=$(mktemp /tmp/design-polish-XXXXXX.log)
-  eval "$start_cmd" > "$dp_log" 2>&1 &
-  server_pid=$!
 
-  # 중단 시에도 서버 프로세스와 로그 파일 정리
-  trap 'kill "$server_pid" 2>/dev/null; pkill -P "$server_pid" 2>/dev/null; wait "$server_pid" 2>/dev/null; rm -f "$dp_log"; trap - EXIT INT TERM' EXIT INT TERM
-
-  # 서버 응답 대기 (최대 15초)
-  local elapsed=0
-  local server_ready=false
-  while [[ $elapsed -lt 15 ]]; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-    if ! kill -0 "$server_pid" 2>/dev/null; then
-      echo "[design-polish-gate] Server process exited prematurely"
-      break
-    fi
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
-    if [[ "$http_code" != "000" ]] && [[ "$http_code" =~ ^[23] ]]; then
-      server_ready=true
-      break
-    fi
-  done
-
-  if [[ "$server_ready" != "true" ]]; then
-    # 서버 정리
-    kill "$server_pid" 2>/dev/null || true
-    pkill -P "$server_pid" 2>/dev/null || true
-    wait "$server_pid" 2>/dev/null || true
-    rm -f "$dp_log"
+  if ! _start_and_wait_server "$start_cmd" "$port" 15 "design-polish-gate"; then
+    _cleanup_server
+    trap - EXIT INT TERM
     echo "[design-polish-gate] SKIP (server failed to start)"
     _dp_record_skip "server failed to start"
     echo "=== DESIGN POLISH GATE: SKIP ==="
-    trap - EXIT INT TERM
     return 2
   fi
 
@@ -2292,11 +2280,8 @@ cmd_design_polish_gate() {
   echo "[design-polish-gate] Running capture: BASE_URL=http://localhost:$port node $dp_root/scripts/capture.cjs --wcag /"
   BASE_URL="http://localhost:$port" node "$dp_root/scripts/capture.cjs" --wcag / 2>&1 && capture_exit=0 || capture_exit=$?
 
-  # 서버 프로세스 정리 (trap도 해제)
-  kill "$server_pid" 2>/dev/null || true
-  pkill -P "$server_pid" 2>/dev/null || true
-  wait "$server_pid" 2>/dev/null || true
-  rm -f "$dp_log"
+  # 서버 프로세스 정리 (공통 헬퍼)
+  _cleanup_server
   trap - EXIT INT TERM
 
   # WCAG 리포트 요약
@@ -2593,9 +2578,9 @@ main() {
       echo "  secret-scan                                - Scan for hardcoded secrets (HARD_FAIL)"
       echo "  artifact-check                             - Check build artifact exists (SOFT_FAIL)"
       echo "  smoke-check [port] [timeout]               - Server start + healthcheck (SOFT_FAIL)"
-      echo "  record-error --file <f> --type <t> --msg <m> [--level L0-L4] [--action '...']"
+      echo "  record-error --file <f> --type <t> --msg <m> [--level L0-L5] [--action '...']"
       echo "                                             - Record error + escalation tracking"
-      echo "    --level L0-L4    Error level (L0=env, L1=build, L2=type, L3=runtime, L4=quality)"
+      echo "    --level L0-L5    Error level (L0=env, L1=build, L2=type, L3=runtime, L4=quality, L5=user)"
       echo "    --action '...'   Description of attempted fix"
       echo "    --result pass|fail  Result of the action"
       echo "    --reset-count    Reset attempt counter (on escalation level change)"

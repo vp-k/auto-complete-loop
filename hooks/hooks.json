@@ -1,13 +1,25 @@
 {
   "description": "Auto Complete Loop - 품질 보장 훅 시스템",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" session-start.sh",
+            "description": "Ralph Loop 세션 자동 복구"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/block-no-verify.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" block-no-verify.sh",
             "description": "--no-verify 플래그 차단 (pre-commit hook 보호)"
           }
         ]
@@ -17,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/doc-file-warning.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" doc-file-warning.sh",
             "description": "불필요 문서 파일 생성 차단"
           }
         ]
@@ -29,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/console-warn.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" console-warn.sh",
             "description": "편집/생성 파일 디버그 코드 경고"
           }
         ]
@@ -40,7 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-compact.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" pre-compact.sh",
             "description": "컴팩션 전 컨텍스트 요약 출력 (읽기 전용)"
           }
         ]
@@ -51,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/task-completed-gate.sh",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" task-completed-gate.sh",
             "description": "Agent Teams 태스크 완료 시 finding 형식 검증"
           }
         ]
@@ -62,7 +74,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" stop-hook.sh",
+            "description": "Ralph Loop 완료 검증 + 반복 제어"
           }
         ]
       }

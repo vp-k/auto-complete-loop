@@ -16,14 +16,11 @@ FILENAME=$(basename "$FILE_PATH")
 # 허용된 문서 파일 (프로젝트에서 의도적으로 사용하는 것들)
 ALLOWED_DOCS="DONE.md|SPEC.md|SCOPE_REDUCTIONS.md|CLAUDE.md|SKILL.md|MEMORY.md"
 
-# 경고 대상: 일반적인 문서 파일 패턴
+# 경고 대상: 일반적인 문서 파일 패턴 (ALLOWED_DOCS와 disjoint)
 case "$FILENAME" in
   README.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE.md|AUTHORS.md|HISTORY.md|TODO.md)
-    # 허용 목록에 없는 문서 파일
-    if ! echo "$FILENAME" | grep -qE "^($ALLOWED_DOCS)$"; then
-      echo "{\"decision\": \"block\", \"reason\": \"${FILENAME} 생성이 차단되었습니다. 명시적으로 요청된 경우에만 문서 파일을 생성하세요. 프로젝트에서 허용된 문서: ${ALLOWED_DOCS}\"}"
-      exit 0
-    fi
+    echo "{\"decision\": \"block\", \"reason\": \"${FILENAME} 생성이 차단되었습니다. 명시적으로 요청된 경우에만 문서 파일을 생성하세요. 프로젝트에서 허용된 문서: ${ALLOWED_DOCS}\"}"
+    exit 0
     ;;
 esac
 

@@ -57,6 +57,14 @@ if echo "$FILE_PATH" | grep -qE '\.go$'; then
   fi
 fi
 
+# Rust
+if echo "$FILE_PATH" | grep -qE '\.rs$'; then
+  FOUND=$(grep -n 'dbg!\|println!\|eprintln!' "$FILE_PATH" 2>/dev/null || true)
+  if [ -n "$FOUND" ]; then
+    WARNINGS="⚠️ 디버그 코드 발견 (${FILE_PATH}):\n${FOUND}"
+  fi
+fi
+
 if [ -n "$WARNINGS" ]; then
   echo -e "$WARNINGS"
   echo "→ 의도적인 로깅이 아니라면 커밋 전에 제거하세요."

@@ -27,6 +27,25 @@ argument-hint: <요구사항 (자연어)>
 
 - `$ARGUMENTS`: 자연어 요구사항 (예: "커뮤니티 사이트를 만들어줘")
 
+## Step 0: Agent Teams 사전 확인 (Phase 0 전에 반드시 실행)
+
+**이 단계는 Phase 0보다 먼저 실행해야 합니다.**
+
+1. `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 환경 변수 확인:
+   ```bash
+   echo "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-not_set}"
+   ```
+2. **설정되어 있지 않으면** (`not_set` 또는 빈 값):
+   - `~/.claude/settings.json`을 읽고, `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 키가 없으면 자동 추가:
+     ```bash
+     jq '. + {"env": ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})}' ~/.claude/settings.json > /tmp/claude-settings.tmp && mv /tmp/claude-settings.tmp ~/.claude/settings.json
+     ```
+   - 사용자에게 안내:
+     > Agent Teams 설정을 `~/.claude/settings.json`에 추가했습니다.
+     > 새 세션에서 `/full-auto-teams <요구사항>`을 다시 실행해주세요.
+   - **여기서 중단** (settings.json의 env는 새 세션에서 적용됨)
+3. **설정되어 있으면** (`1`) → Phase 0으로 진행
+
 ## 아키텍처: full-auto 확장 + Phase 3 팀 리뷰
 
 ```

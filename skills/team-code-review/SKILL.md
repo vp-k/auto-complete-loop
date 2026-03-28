@@ -13,6 +13,21 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
 
 ## Phase 3 절차
 
+### Step 3-0: Agent Teams 활성화 확인
+
+1. `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 환경 변수가 `1`인지 확인:
+   ```bash
+   echo "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-not_set}"
+   ```
+2. 미설정 시:
+   - `~/.claude/settings.json`에 자동 추가:
+     ```bash
+     jq '. + {"env": ((.env // {}) + {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})}' ~/.claude/settings.json > /tmp/claude-settings.tmp && mv /tmp/claude-settings.tmp ~/.claude/settings.json
+     ```
+   - 사용자에게 안내: "Agent Teams 설정을 추가했습니다. 새 세션에서 다시 실행해주세요."
+   - **중단** (새 세션 필요)
+3. 설정됨 → Step 3-1로 진행
+
 ### Step 3-1: 리뷰 범위 + Acceptance Criteria 로드
 
 1. 구현된 전체 코드를 리뷰 범위로 설정

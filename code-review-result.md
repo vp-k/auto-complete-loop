@@ -1,76 +1,67 @@
-# 코드 리뷰 결과: Anthropic Harness Design Blog 수용 변경
+# 코드 리뷰 결과: 하네스 엔지니어링 개선
 
 ## 요약
 
-> 총 8건 발견 (Critical: 0, High: 3, Medium: 4, Low: 1)
-> 검증 후 확인: 8건, 기각: 0건
-> 수정 완료: 7건, 보류: 1건 (CODE-MEDIUM-004 — 구조적 리팩토링 필요)
+> **Round 1**: 총 6건 발견 → 확인 3건 (수정 완료), 기각 3건
+> **Round 2**: 총 1건 발견 → 확인 1건 (수정 완료)
+> **최종**: 확인 4건 모두 수정 완료
 
 ## 리뷰 범위
 
-- **대상**: Step 1 (기존 full-auto 강화) + Step 2 (full-auto-teams 신규) 전체 변경
-- **파일 수**: 10개
-- **리뷰어**: Claude Code (직접 리뷰 — codex-cli 타임아웃으로 fallback)
+- **대상**: 하네스 엔지니어링 개선 전체 변경사항
+- **파일 수**: 9개 (수정 5 + 신규 4)
+- **청크 수**: 1개
+- **리뷰어**: codex-cli (독립 탐색) → Claude Code (검증)
 
-## Findings (확인됨 + 수정 완료)
+## Findings (확인됨 — 모두 수정 완료)
 
 ### High
 
-#### ERR-HIGH-001: CLAUDE_TASK_OUTPUT 환경변수 미검증
-- **파일**: `hooks/task-completed-gate.sh`
-- **설명**: TaskCompleted 훅에서 CLAUDE_TASK_OUTPUT 환경변수가 전달되지 않을 경우 모든 태스크 거부
-- **수정**: 환경변수 없으면 리드에게 검증 위임 (exit 0)
+#### ERR-HIGH-001: hooks.json 경로 미인용으로 공백 경로에서 훅 실패 가능
+- **파일**: `hooks/hooks.json`
+- **라인**: 전체 command 필드 (7개)
+- **발견자**: codex-cli
+- **설명**: `${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd` 경로가 인용 없이 사용되어 공백 포함 경로에서 쉘 토큰 분리로 실행 실패 가능. flutter-craft는 `\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\"` 형태로 인용 처리 중.
+- **수정**: 모든 command에 이스케이프된 따옴표로 경로 인용 처리 완료
 
-#### ERR-HIGH-002: set -e와 grep 조합 비정상 종료
-- **파일**: `hooks/task-completed-gate.sh`
-- **설명**: `set -euo pipefail`에서 grep 매칭 실패 시 스크립트 비정상 종료
-- **수정**: `set -e` 제거, `|| true` fallback 추가
+#### DATA-HIGH-002: session-start.sh JSON 출력 시 RALPH_INFO 미이스케이프
+- **파일**: `hooks/session-start.sh`
+- **라인**: 47-51, 73-80
+- **발견자**: codex-cli
+- **설명**: `RECOVER_OUTPUT`만 escape 처리하고 `RALPH_INFO`(PROMISE 값)와 `PROGRESS_FILE`은 원문 그대로 JSON에 삽입. 특수문자 포함 시 JSON 파손.
+- **수정**: `escape_for_json()` 수동 함수를 제거하고 `jq -n --arg` 방식으로 안전하게 JSON 생성하도록 전면 리팩토링
 
-#### DATA-HIGH-003: TaskCompleted 훅 전체 태스크 적용
-- **파일**: `hooks/hooks.json`, `hooks/task-completed-gate.sh`
-- **설명**: matcher 없이 모든 태스크에 적용되어 일반 태스크도 거부될 수 있음
-- **수정**: CLAUDE_TEAM_NAME 환경변수로 Agent Teams 컨텍스트 확인, 아니면 즉시 통과
-
-### Medium
-
-#### CODE-MEDIUM-004: full-auto.md 중복 참조 (보류)
-- **파일**: `commands/full-auto-teams.md`
-- **설명**: "full-auto.md와 동일" 5회 반복. 동기화 깨질 위험
-- **상태**: 보류 — 공유 규칙 파일 분리 리팩토링 필요 (별도 작업)
-
-#### CODE-MEDIUM-005: Step 번호 불일치
-- **파일**: `commands/full-auto-teams.md`
-- **설명**: "Step 3-1 ~ 3-6"이지만 실제 SKILL.md에는 3-7까지 존재
-- **수정**: "Step 3-1 ~ 3-7"로 수정
-
-#### ERR-MEDIUM-006: 앱 프로세스 종료 방법 미지정
-- **파일**: `skills/live-testing/SKILL.md`
-- **설명**: 백그라운드 dev server PID 미기록으로 좀비 프로세스 발생 가능
-- **수정**: `& APP_PID=$!` 패턴 + `kill $APP_PID` 종료 방법 명시
-
-#### CODE-MEDIUM-007: Flutter Web 감지 조건 모호
-- **파일**: `skills/live-testing/SKILL.md`
-- **설명**: "pubspec.yaml + web only" 조건이 부정확
-- **수정**: `web/` 폴더 존재 + 에뮬레이터 미사용 조건으로 개선
+#### ERR-HIGH-R2-001: L5 에스컬레이션이 exit 1로 잘못 반환 (Round 2)
+- **파일**: `scripts/shared-gate.sh`
+- **라인**: 1733-1751 (exit code 분기)
+- **발견자**: codex-cli (Round 2)
+- **설명**: L5의 budget=0이므로 `current_count >= current_budget` 조건이 항상 true → `exit 1`(다음 레벨 에스컬레이트)로 빠짐. L5는 최종 사용자 개입 단계이므로 `exit 3`이어야 함.
+- **수정**: L5 분기를 최우선으로 추가하여 `exit 3` 반환하도록 수정
 
 ### Low
 
-#### CODE-LOW-008: codex 프롬프트 ID 형식 미포함
-- **파일**: `skills/code-review/SKILL.md`
-- **설명**: codex 출력 형식에 Finding ID 규격이 없어 dismissedDetails 연계 불가
-- **수정**: `### {CATEGORY}-{SEVERITY}-{번호}: {제목}` 형식 + FINDING_COUNT 명시
+#### CODE-LOW-005: L5 도입 후 record-error usage 문구 불일치
+- **파일**: `scripts/shared-gate.sh`
+- **라인**: 16, 1595, 1603, 2577, 2579
+- **발견자**: codex-cli
+- **설명**: L5가 유효 레벨로 추가되었지만 usage/help 문구 4곳이 `L0-L4`로 남아있어 운영자 혼동 유발
+- **수정**: 모든 문구를 `L0-L5`로 통일, help에 `L5=user` 설명 추가
 
 ## 기각된 Findings
 
-없음
+| ID | 제목 | 발견자 | 기각 사유 |
+|----|------|--------|----------|
+| SEC-MEDIUM-003 | run-hook.cmd 인자 미인용 | codex-cli | Claude Code 하네스가 hook 호출 시 인자를 시스템이 제어. 사용자 입력이 인자로 전달되는 경로 없음. flutter-craft 동일 패턴 |
+| SEC-MEDIUM-004 | run-hook.cmd 스크립트명 검증 부재 | codex-cli | SCRIPT_NAME은 hooks.json에 하드코딩. 사용자 입력으로 제어 불가. flutter-craft 동일 패턴 |
+| PERF-LOW-006 | console-warn.sh 다중 서브프로세스 | codex-cli | 파일당 1회 실행, PostToolUse 훅은 저빈도 호출. 성능 영향 무시 수준 |
 
 ## 리뷰 통계
 
-| 카테고리 | 발견 | 확인 | 수정 | 보류 |
-|----------|------|------|------|------|
-| Security (SEC) | 0 | 0 | 0 | 0 |
-| Error Handling (ERR) | 3 | 3 | 3 | 0 |
-| Data Consistency (DATA) | 1 | 1 | 1 | 0 |
-| Performance (PERF) | 0 | 0 | 0 | 0 |
-| Code Consistency (CODE) | 4 | 4 | 3 | 1 |
-| **합계** | **8** | **8** | **7** | **1** |
+| 카테고리 | 발견 | 확인 | 기각 |
+|----------|------|------|------|
+| Security (SEC) | 2 | 0 | 2 |
+| Error Handling (ERR) | 2 | 2 | 0 |
+| Data Consistency (DATA) | 1 | 1 | 0 |
+| Performance (PERF) | 1 | 0 | 1 |
+| Code Consistency (CODE) | 1 | 1 | 0 |
+| **합계** | **7** | **4** | **3** |

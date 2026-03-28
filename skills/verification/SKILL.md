@@ -165,6 +165,40 @@ SOFT_FAIL: 개선 권장사항으로 처리 (차단하지 않음).
 git add -A && git commit -m "[auto] Phase 4 디자인 폴리싱 완료"
 ```
 
+### Step 4-5b: 시각적 리그레션 체크
+
+design-polish-gate 실행 후, Before/After 비교를 수행합니다.
+
+1. **Health Score 리그레션 확인**
+   `.design-polish/health-score.json`의 `regression` 필드를 읽고:
+   - `status == "regression"` && `diff < -10` → **경고 출력** (UI 품질 하락 가능성)
+   - `status == "improved"` → 개선 확인
+   - `status == "unknown"` → 첫 실행, 기준선 수립
+
+2. **Before/After 스크린샷 시각 비교** (존재하는 경우)
+   `.claude-verification.json`의 `designPolish.screenshots` 필드를 확인하여:
+   - `before` 경로가 존재하면 `Read(".design-polish/screenshots/before-main.png")` 실행
+   - `Read(".design-polish/screenshots/current-main.png")` 실행
+   - Claude 비전으로 두 이미지를 비교:
+     - 레이아웃 깨짐 여부
+     - 색상/폰트 의도치 않은 변경
+     - 요소 누락/추가 확인
+   - `before`가 없으면 (첫 실행) 시각 비교 건너뜀
+
+3. **결과 기록**
+   `.claude-verification.json`의 `qualityDimensions`에 추가:
+   ```json
+   "visualRegression": {
+     "result": "pass|warn|fail",
+     "healthScore": 85,
+     "scoreDiff": 5,
+     "evidence": "Before/After 비교 완료, 레이아웃 정상"
+   }
+   ```
+   - `warn`: 스코어 하락(-5 이상 -10 미만) 또는 경미한 시각적 차이
+   - `fail`: 스코어 하락(-10 이상) 또는 명백한 레이아웃 깨짐
+   - `pass`: 스코어 유지/개선 + 시각적 차이 없음
+
 ### Step 4-6: 아티팩트/스모크 체크
 
 ```bash

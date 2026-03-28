@@ -2203,6 +2203,11 @@ cmd_design_polish_gate() {
     return 2
   fi
 
+  # Before/After 비교를 위해 기존 스크린샷을 before-*로 보존
+  for f in .design-polish/screenshots/current-*.png; do
+    [[ -f "$f" ]] && cp "$f" "${f/current-/before-}"
+  done
+
   # Stale 아티팩트 정리 (이전 실행 결과가 판정을 왜곡하지 않도록)
   rm -f .design-polish/accessibility/wcag-report*.json 2>/dev/null || true
   rm -f .design-polish/screenshots/current-*.png 2>/dev/null || true
@@ -2330,13 +2335,38 @@ cmd_design_polish_gate() {
     result="pass"
   fi
 
+  # health-score 리그레션 데이터 수집
+  local hs_score=0 hs_diff=0 hs_status="unknown"
+  if [[ -f ".design-polish/health-score.json" ]]; then
+    hs_score=$(jq '.score // 0' .design-polish/health-score.json 2>/dev/null || echo "0")
+    hs_diff=$(jq '.regression.diff // 0' .design-polish/health-score.json 2>/dev/null || echo "0")
+    hs_status=$(jq -r '.regression.status // "unknown"' .design-polish/health-score.json 2>/dev/null || echo "unknown")
+    echo "[design-polish-gate] Health Score: $hs_score (diff: $hs_diff, status: $hs_status)"
+  fi
+
+  # Before/After 스크린샷 경로 수집
+  local has_before="false"
+  [[ -f ".design-polish/screenshots/before-main.png" ]] && has_before="true"
+
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" \
       --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
-      '.designPolish = {"timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary}'
+      --argjson hs_score "$hs_score" --argjson hs_diff "$hs_diff" --arg hs_status "$hs_status" \
+      --argjson has_before "$has_before" \
+      '.designPolish = {
+        "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
+        "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
+        "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": ".design-polish/screenshots/current-main.png"}
+      }'
   else
     jq -n --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
-      '{"designPolish": {"timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary}}' > "$VERIFICATION_FILE"
+      --argjson hs_score "$hs_score" --argjson hs_diff "$hs_diff" --arg hs_status "$hs_status" \
+      --argjson has_before "$has_before" \
+      '{"designPolish": {
+        "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
+        "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
+        "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": ".design-polish/screenshots/current-main.png"}
+      }}' > "$VERIFICATION_FILE"
   fi
 
   # DoD design_quality 갱신

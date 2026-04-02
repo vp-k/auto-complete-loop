@@ -6,19 +6,5 @@
     "name": "user01"
   },
   "repository": "https://github.com/vp-k/auto-complete-loop",
-  "commands": ["./commands"],
-  "skills": [
-    "./skills/pm-planning",
-    "./skills/doc-planning",
-    "./skills/implementation",
-    "./skills/code-review",
-    "./skills/verification",
-    "./skills/team-code-review",
-    "./skills/live-testing",
-    "./skills/e2e-setup",
-    "./skills/post-analysis/metrics-recommendation",
-    "./skills/post-analysis/retrospective",
-    "./skills/post-analysis/launch-analysis",
-    "./skills/post-analysis/competitive-frame"
-  ]
+  "commands": ["./commands"]
 }

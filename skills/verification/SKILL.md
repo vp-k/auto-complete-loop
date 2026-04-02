@@ -84,6 +84,19 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh test-quality --progress-file .
 - US-* ID 기반 커버리지 확인 (SPEC.md에 US-* 존재 시)
 - SOFT gate: 미달 시 WARN
 
+### Step 4-1.10: 페이지 렌더링 검증 (hasFrontend=true 시)
+
+프론트엔드가 있는 프로젝트에서 각 페이지가 실제로 렌더링되는지 확인합니다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-file .claude-full-auto-progress.json
+```
+
+- Playwright로 각 페이지 방문 → 빈 페이지, console.error, JS 에러, 404 탐지
+- hasFrontend=false이면 자동 SKIP
+- SOFT gate: 문제 페이지 수 보고, --strict 시 FAIL
+- 실패 시 해당 페이지 수정 후 재실행
+
 ### Step 4-2: 보안 검토
 
 1. **시크릿 스캔**

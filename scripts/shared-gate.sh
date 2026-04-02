@@ -4032,7 +4032,28 @@ cmd_functional_flow() {
       ;;
   esac
 
-  # verification.json 기록
+  # flows_executed == 0 판정을 먼저 수행 (verification/DoD 기록보다 선행)
+  if [[ $flows_executed -eq 0 ]]; then
+    local details
+    details=$(jq -n --arg pt "$project_type" '{"projectType":$pt,"flows":"none","result":"skip"}')
+    # SKIP 시 DoD는 checked=false로 기록
+    if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+      local has_dod
+      has_dod=$(jq 'has("dod")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+      if [[ "$has_dod" == "true" ]]; then
+        jq_inplace "$PROGRESS_FILE" '.dod.functional_flow_pass //= {"checked":false,"evidence":null} | .dod.functional_flow_pass.checked = false | .dod.functional_flow_pass.evidence = "skip: no smoke scripts"'
+      fi
+    fi
+    if [[ -f "$VERIFICATION_FILE" ]]; then
+      jq_inplace "$VERIFICATION_FILE" --arg pt "$project_type" '.functionalFlow = {"result": "skip", "projectType": $pt, "details": "no smoke scripts"}'
+    fi
+    echo ""
+    echo "[FLOW] SKIP: No smoke scripts found for project type '$project_type'"
+    append_gate_history "functional-flow" "skip" "$details"
+    return 2
+  fi
+
+  # verification.json + DoD 기록 (flows_executed > 0 확인 후)
   local result_str="pass"
   [[ "$all_pass" != "true" ]] && result_str="fail"
 
@@ -4042,7 +4063,6 @@ cmd_functional_flow() {
     '
   fi
 
-  # DoD 업데이트
   if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
     local has_dod
     has_dod=$(jq 'has("dod")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
@@ -4058,13 +4078,7 @@ cmd_functional_flow() {
   local details
   details=$(jq -n --arg pt "$project_type" --arg fr "$flow_results" --arg r "$result_str" '{"projectType":$pt,"flows":$fr,"result":$r}')
 
-  # flows_executed == 0 이면 아무 플로우도 실행 안 됨 (codex IMPL-HIGH-4 수정)
-  if [[ $flows_executed -eq 0 ]]; then
-    echo ""
-    echo "[FLOW] SKIP: No smoke scripts found for project type '$project_type'"
-    append_gate_history "functional-flow" "skip" "$details"
-    return 2
-  elif [[ "$all_pass" == "true" ]]; then
+  if [[ "$all_pass" == "true" ]]; then
     echo ""
     echo "[FLOW] ALL FLOWS PASSED ($flows_executed flow(s) executed)"
     append_gate_history "functional-flow" "pass" "$details"

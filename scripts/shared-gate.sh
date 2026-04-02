@@ -1773,11 +1773,9 @@ cmd_smoke_check() {
           path=$(echo "$path" | sed -E 's/\{[^}]+\}/1/g; s/:([a-zA-Z_]+)/1/g')
 
           endpoint_total=$((endpoint_total + 1))
-          local http_code
-          http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || echo "000")
 
-          # 단일 curl로 body + status code 동시 수집 (이중 호출 방지)
-          local resp_tmp
+          # 단일 curl로 body + status code 동시 수집
+          local http_code resp_tmp
           resp_tmp=$(mktemp)
           http_code=$(curl -s -w "%{http_code}" --max-time 5 -o "$resp_tmp" "http://localhost:${port}${path}" 2>/dev/null || echo "000")
 
@@ -3988,6 +3986,7 @@ cmd_functional_flow() {
         echo "[FLOW] Running Playwright UI smoke..."
         local output exit_code
         output=$(npx playwright test tests/ui-smoke.spec.* --reporter=list 2>&1) && exit_code=0 || exit_code=$?
+        flows_executed=$((flows_executed + 1))
         if [[ $exit_code -eq 0 ]]; then
           echo "[FLOW] UI Smoke: PASS"
           flow_results="UI Smoke: pass"
@@ -4011,6 +4010,7 @@ cmd_functional_flow() {
         echo "[FLOW] Running Playwright UI smoke..."
         local output exit_code
         output=$(npx playwright test tests/ui-smoke.spec.* --reporter=list 2>&1) && exit_code=0 || exit_code=$?
+        flows_executed=$((flows_executed + 1))
         if [[ $exit_code -eq 0 ]]; then
           echo "[FLOW] UI Smoke: PASS"
           flow_results="${flow_results}UI Smoke: pass; "

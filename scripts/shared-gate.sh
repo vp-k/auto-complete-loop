@@ -23,6 +23,9 @@
 #   external-service-check                             - SPEC.md 기반 외부 서비스 SDK/config 존재 확인 (HARD_FAIL)
 #   service-test-check                                 - 백엔드 서비스/라우트 통합 테스트 존재 확인 (HARD_FAIL)
 #   integration-smoke                                  - 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL)
+#   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
+#   test-quality                                        - 테스트 assertion 비율/skip 비율/US 커버리지 (SOFT gate)
+#   functional-flow                                     - 프로젝트 유형별 smoke 스크립트 실행 (api/frontend/fullstack/library)
 #   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
 #   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신
 
@@ -129,6 +132,70 @@ migrate_schema_v4() {
   echo "OK: $file migrated to schemaVersion 4"
 }
 
+migrate_schema_v5() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+
+  local current_ver
+  current_ver=$(jq '.schemaVersion // 1' "$file" 2>/dev/null || echo "1")
+  [[ "$current_ver" -ge 5 ]] && return 0
+
+  local is_full_auto
+  is_full_auto=$(jq 'if .steps then [.steps[].name] | any(. == "phase_0") else false end' "$file" 2>/dev/null || echo "false")
+  [[ "$is_full_auto" == "true" ]] || return 0
+
+  echo "Migrating $file to schemaVersion 5 (gateHistory + implementation quality gates)..."
+  jq_inplace "$file" '
+    .schemaVersion = 5
+    | .gateHistory //= []
+  '
+  echo "OK: $file migrated to schemaVersion 5"
+}
+
+# Gate 실행 이력을 progress 파일에 추가
+# Usage: append_gate_history <gate_name> <result> [details_json]
+append_gate_history() {
+  local gate="$1" result="$2" details="${3:-"{}"}"
+  if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
+    return 0
+  fi
+
+  # full-auto progress인지 확인
+  local has_steps
+  has_steps=$(jq 'has("steps")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  [[ "$has_steps" == "true" ]] || return 0
+
+  # gateHistory가 없으면 추가
+  local has_history
+  has_history=$(jq 'has("gateHistory")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  if [[ "$has_history" != "true" ]]; then
+    jq_inplace "$PROGRESS_FILE" '.gateHistory = []'
+  fi
+
+  local current_phase ts
+  current_phase=$(jq -r '.currentPhase // "unknown"' "$PROGRESS_FILE" 2>/dev/null || echo "unknown")
+  ts=$(timestamp)
+
+  jq_inplace "$PROGRESS_FILE" \
+    --arg g "$gate" --arg r "$result" --arg p "$current_phase" --arg t "$ts" --argjson d "$details" '
+    .gateHistory = ((.gateHistory + [{"gate":$g,"phase":$p,"result":$r,"ts":$t,"details":$d}])[-100:])
+  '
+
+  # 동일 gate + 동일 phase에서 3회 연속 fail 감지
+  local consecutive_fails
+  consecutive_fails=$(jq --arg g "$gate" --arg p "$current_phase" '
+    [.gateHistory | to_entries | reverse | .[] |
+     select(.value.gate == $g and .value.phase == $p)] |
+    [limit(3; .[])] |
+    if length == 3 and (map(.value.result) | all(. == "fail")) then true else false end
+  ' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+
+  if [[ "$consecutive_fails" == "true" ]]; then
+    echo "⚠ WARNING: $gate has failed 3 consecutive times in $current_phase"
+    echo "  Consider escalating or changing approach."
+  fi
+}
+
 # Progress 파일 자동 탐지
 detect_progress_file() {
   for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
@@ -232,11 +299,12 @@ cmd_init() {
     full-auto)
       cat > "$target_file" <<ENDJSON
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "project": $safe_project,
   "userRequirement": $safe_requirement,
   "status": "in_progress",
   "currentPhase": "phase_0",
+  "gateHistory": [],
   "steps": [
     {"name": "phase_0", "label": "PM Planning", "status": "in_progress"},
     {"name": "phase_1", "label": "Planning", "status": "pending"},
@@ -573,6 +641,7 @@ cmd_status() {
   migrate_schema_v2 "$PROGRESS_FILE"
   migrate_schema_v3 "$PROGRESS_FILE"
   migrate_schema_v4 "$PROGRESS_FILE"
+  migrate_schema_v5 "$PROGRESS_FILE"
 
   echo "=== Progress Status ($PROGRESS_FILE) ==="
 
@@ -676,6 +745,7 @@ cmd_update_step() {
   migrate_schema_v2 "$PROGRESS_FILE"
   migrate_schema_v3 "$PROGRESS_FILE"
   migrate_schema_v4 "$PROGRESS_FILE"
+  migrate_schema_v5 "$PROGRESS_FILE"
 
   # 유효한 상태 값 확인
   local valid_statuses="pending in_progress completed"
@@ -1008,6 +1078,14 @@ cmd_quality_gate() {
     jq_inplace "$VERIFICATION_FILE" --argjson hs "$health_score" '.healthScore = $hs'
   fi
 
+  # gateHistory 기록
+  local gh_result="pass"
+  [[ "$all_pass" != "true" ]] && gh_result="fail"
+  [[ "$any_ran" == "false" ]] && gh_result="skip"
+  local gh_details
+  gh_details=$(jq -n --argjson hs "$health_score" --arg gs "${gate_summary:-none}" '{"healthScore":$hs,"failedGates":$gs}')
+  append_gate_history "quality-gate" "$gh_result" "$gh_details"
+
   if [[ "$any_ran" == "false" ]]; then
     echo "=== WARNING: ALL GATES SKIPPED (no project type detected) ==="
     return 1
@@ -1198,16 +1276,20 @@ cmd_vuln_scan() {
 
   if [[ "$scan_ran" == "false" ]]; then
     echo "=== VULN SCAN: SKIP (no supported package manager detected) ==="
+    append_gate_history "vuln-scan" "skip" '{"reason":"no supported package manager"}'
     return 0
   elif [[ "$found_critical" -gt 0 ]]; then
     echo "=== VULN SCAN HARD_FAIL: $found_critical CRITICAL vulnerability(ies) ==="
     echo "ACTION: Fix critical vulnerabilities before proceeding."
+    append_gate_history "vuln-scan" "fail" "{\"critical\":$found_critical,\"high\":$found_high,\"total\":$total_vulns,\"result\":\"hard_fail\"}"
     exit 1
   elif [[ "$found_high" -gt 0 ]]; then
     echo "=== VULN SCAN SOFT_FAIL: $found_high HIGH vulnerability(ies) (warning) ==="
+    append_gate_history "vuln-scan" "fail" "{\"critical\":$found_critical,\"high\":$found_high,\"total\":$total_vulns,\"result\":\"soft_fail\"}"
     return 1
   else
     echo "=== VULN SCAN PASSED ==="
+    append_gate_history "vuln-scan" "pass" "{\"critical\":0,\"high\":0,\"total\":$total_vulns}"
     return 0
   fi
 }
@@ -1275,11 +1357,13 @@ cmd_secret_scan() {
       gl_count=$(echo "$gl_output" | jq 'length' 2>/dev/null || echo "0")
       _record_secret_scan "$gl_count" "fail" "gitleaks"
       echo "=== SECRET SCAN FAILED (gitleaks): $gl_count potential secret(s) found ==="
+      append_gate_history "secret-scan" "fail" "{\"found\":\"$gl_count\",\"tool\":\"gitleaks\"}"
       exit 1
     else
       _record_secret_scan 0 "pass" "gitleaks"
       echo "[secret-scan] PASS (gitleaks: no secrets detected)"
       echo "=== SECRET SCAN PASSED ==="
+      append_gate_history "secret-scan" "pass" '{"found":0,"tool":"gitleaks"}'
       return 0
     fi
   elif command -v trufflehog >/dev/null 2>&1; then
@@ -1291,15 +1375,18 @@ cmd_secret_scan() {
       # trufflehog 실행 자체가 실패 (크래시/권한 등) — fail-open 방지
       _record_secret_scan 0 "error" "trufflehog"
       echo "=== SECRET SCAN ERROR (trufflehog): tool execution failed (exit=$th_exit) ==="
+      append_gate_history "secret-scan" "fail" '{"found":"tool error","tool":"trufflehog"}'
       exit 1
     elif [[ -n "$th_output" ]] && [[ "$th_output" != "[]" ]]; then
       _record_secret_scan 1 "fail" "trufflehog"
       echo "=== SECRET SCAN FAILED (trufflehog): potential secrets found ==="
+      append_gate_history "secret-scan" "fail" '{"found":"secrets detected","tool":"trufflehog"}'
       exit 1
     else
       _record_secret_scan 0 "pass" "trufflehog"
       echo "[secret-scan] PASS (trufflehog: no secrets detected)"
       echo "=== SECRET SCAN PASSED ==="
+      append_gate_history "secret-scan" "pass" '{"found":0,"tool":"trufflehog"}'
       return 0
     fi
   fi
@@ -1377,10 +1464,12 @@ $masked_matches
     echo "$details"
     echo "=== SECRET SCAN FAILED: $found potential secret(s) found ==="
     echo "ACTION: Remove secrets and use environment variables instead."
+    append_gate_history "secret-scan" "fail" "{\"found\":$found}"
     exit 1
   else
     echo "[secret-scan] PASS (no secrets detected)"
     echo "=== SECRET SCAN PASSED ==="
+    append_gate_history "secret-scan" "pass" '{"found":0}'
     return 0
   fi
 }
@@ -1579,6 +1668,51 @@ cmd_smoke_check() {
   echo "=== Smoke Check (port: $port, timeout: ${timeout}s)${strict_label} ==="
   require_jq
 
+  # ─── smoke 스크립트 우선 실행 (tests/api-smoke.sh 등 존재 시) ───
+  local smoke_script=""
+  for sf in tests/api-smoke.sh tests/smoke-test.sh tests/ui-smoke.sh tests/lib-smoke.sh; do
+    if [[ -f "$sf" ]]; then
+      smoke_script="$sf"
+      break
+    fi
+  done
+
+  if [[ -n "$smoke_script" ]]; then
+    echo "[smoke-check] Found smoke script: $smoke_script — running it"
+    [[ ! -x "$smoke_script" ]] && chmod +x "$smoke_script" 2>/dev/null || true
+    local smoke_output smoke_exit
+    smoke_output=$(bash "$smoke_script" 2>&1) && smoke_exit=0 || smoke_exit=$?
+    echo "$smoke_output"
+
+    local ts
+    ts=$(timestamp)
+    if [[ $smoke_exit -eq 0 ]]; then
+      echo "[smoke-check] Smoke script PASS"
+      if [[ -f "$VERIFICATION_FILE" ]]; then
+        jq_inplace "$VERIFICATION_FILE" --arg ts "$ts" --arg sf "$smoke_script" \
+          '.smokeCheck = {"timestamp": $ts, "result": "pass", "method": "smoke-script", "script": $sf}'
+      fi
+      append_gate_history "smoke-check" "pass" "{\"method\":\"smoke-script\",\"script\":\"$smoke_script\"}"
+      echo "=== SMOKE CHECK: PASS (via $smoke_script) ==="
+      return 0
+    else
+      echo "[smoke-check] Smoke script FAIL (exit $smoke_exit)"
+      if [[ -f "$VERIFICATION_FILE" ]]; then
+        jq_inplace "$VERIFICATION_FILE" --arg ts "$ts" --arg sf "$smoke_script" --argjson ec "$smoke_exit" \
+          '.smokeCheck = {"timestamp": $ts, "result": "fail", "method": "smoke-script", "script": $sf, "exitCode": $ec}'
+      fi
+      append_gate_history "smoke-check" "fail" "{\"method\":\"smoke-script\",\"script\":\"$smoke_script\",\"exitCode\":$smoke_exit}"
+      if [[ "$strict" == "true" ]]; then
+        echo "=== SMOKE CHECK: FAIL (strict mode) ==="
+        return 1
+      else
+        echo "=== SMOKE CHECK: SOFT_FAIL (falling through to server check) ==="
+      fi
+    fi
+  fi
+
+  # ─── 기존 서버 기동 + 헬스체크 (smoke 스크립트 없거나 실패 시 fallback) ───
+
   # 서버 시작 명령어 감지
   local start_cmd
   start_cmd=$(_detect_start_cmd)
@@ -1596,6 +1730,7 @@ cmd_smoke_check() {
         '{"smokeCheck": {"timestamp": $ts, "result": "skip", "reason": "no start script"}}' > "$VERIFICATION_FILE"
     fi
     echo "=== SMOKE CHECK: SKIP ==="
+    append_gate_history "smoke-check" "skip" '{"reason":"no start script"}'
     return 0
   fi
 
@@ -1707,8 +1842,10 @@ cmd_smoke_check() {
 
   echo "=== SMOKE CHECK: ${result^^} ==="
   if [[ "$result" == "soft_fail" ]] || [[ "$result" == "fail" ]]; then
+    append_gate_history "smoke-check" "fail" "{\"result\":\"$result\",\"port\":$port,\"endpoint_fail\":$endpoint_fail}"
     return 1
   fi
+  append_gate_history "smoke-check" "pass" "{\"port\":$port,\"endpoint_pass\":$endpoint_pass,\"endpoint_total\":$endpoint_total}"
   return 0
 }
 
@@ -2236,9 +2373,11 @@ cmd_e2e_gate() {
 
     if [[ "$strict_mode" == "true" ]]; then
       echo "=== E2E GATE FAILED (strict: no framework) ==="
+      append_gate_history "e2e-gate" "fail" '{"reason":"no framework","strict":true}'
       return 1
     else
       echo "=== E2E SKIPPED (no framework) ==="
+      append_gate_history "e2e-gate" "skip" '{"reason":"no framework"}'
       return 2
     fi
   fi
@@ -2291,9 +2430,11 @@ cmd_e2e_gate() {
 
   if [[ $exit_code -eq 0 ]]; then
     echo "=== E2E GATE PASSED ==="
+    append_gate_history "e2e-gate" "pass" "{\"framework\":\"$e2e_framework\",\"exitCode\":0}"
     return 0
   else
     echo "=== E2E GATE FAILED ==="
+    append_gate_history "e2e-gate" "fail" "{\"framework\":\"$e2e_framework\",\"exitCode\":$exit_code}"
     return 1
   fi
 }
@@ -2566,6 +2707,7 @@ cmd_placeholder_check() {
 
   if [[ ${#search_dirs[@]} -eq 0 ]]; then
     echo "[placeholder-check] SKIP (no source directories found)"
+    append_gate_history "placeholder-check" "skip" '{"reason":"no source directories"}'
     return 0
   fi
 
@@ -2627,8 +2769,10 @@ cmd_placeholder_check() {
 
   echo "=== PLACEHOLDER CHECK: ${result^^} ==="
   if [[ "$result" == "fail" ]]; then
+    append_gate_history "placeholder-check" "fail" "{\"count\":$count}"
     return 1
   fi
+  append_gate_history "placeholder-check" "pass" '{"count":0}'
   return 0
 }
 
@@ -2945,6 +3089,7 @@ cmd_recover() {
   migrate_schema_v2 "$PROGRESS_FILE"
   migrate_schema_v3 "$PROGRESS_FILE"
   migrate_schema_v4 "$PROGRESS_FILE"
+  migrate_schema_v5 "$PROGRESS_FILE"
 
   echo "=== Recovery Info ==="
   echo "Progress: $PROGRESS_FILE"
@@ -3074,6 +3219,575 @@ cmd_handoff_update() {
   jq '.handoff' "$PROGRESS_FILE"
 }
 
+# ─── implementation-depth: stub/빈 함수 탐지 (SOFT gate) ───
+
+cmd_implementation_depth() {
+  echo "=== Implementation Depth Check ==="
+
+  local threshold=5
+  local scan_dir=""
+
+  # 인수 파싱
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --threshold)
+        threshold="${2:?--threshold requires a number}"
+        if ! [[ "$threshold" =~ ^[0-9]+$ ]]; then
+          die "implementation-depth: --threshold must be a non-negative integer, got '$threshold'"
+        fi
+        shift 2 ;;
+      --dir)
+        scan_dir="${2:?--dir requires a path}"
+        if [[ "$scan_dir" == /* ]]; then
+          die "implementation-depth: --dir must be a relative path, got '$scan_dir'"
+        fi
+        if [[ "$scan_dir" == *..* ]]; then
+          die "implementation-depth: --dir must not contain '..', got '$scan_dir'"
+        fi
+        shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  # 프로젝트 언어 감지
+  local lang="unknown"
+  if [[ -f "package.json" ]] || [[ -f "tsconfig.json" ]]; then
+    lang="js"
+  elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]]; then
+    lang="python"
+  elif [[ -f "go.mod" ]]; then
+    lang="go"
+  elif [[ -f "Cargo.toml" ]]; then
+    lang="rust"
+  elif [[ -f "pubspec.yaml" ]]; then
+    lang="dart"
+  fi
+
+  # 소스 디렉토리 탐지
+  local src_dirs=()
+  if [[ -n "$scan_dir" ]]; then
+    src_dirs=("$scan_dir")
+  else
+    for d in src app lib server pages components client routes controllers services; do
+      [[ -d "$d" ]] && src_dirs+=("$d")
+    done
+  fi
+
+  if [[ ${#src_dirs[@]} -eq 0 ]]; then
+    echo "[IMPL-DEPTH] SKIP: No source directories found"
+    append_gate_history "implementation-depth" "skip" '{"reason":"no source dirs"}'
+    return 2
+  fi
+
+  local src_count=0 test_count=0
+  local src_findings="" test_findings=""
+
+  # 테스트 디렉토리/파일 패턴
+  local test_exclude_pattern='(test|spec|__test__|__tests__|\.test\.|\.spec\.|_test\.)'
+
+  case "$lang" in
+    js)
+      # JS/TS: 빈 함수 body (한 줄 함수 제외 — 화살표 함수의 한줄 리턴은 정상)
+      # 빈 블록: { } 또는 {\n}
+      local empty_fns
+      empty_fns=$(grep -rnE '(function\s+\w+|=>)\s*\{\s*\}' "${src_dirs[@]}" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' 2>/dev/null | grep -vE "$test_exclude_pattern" || true)
+      if [[ -n "$empty_fns" ]]; then
+        local count
+        count=$(echo "$empty_fns" | wc -l)
+        src_count=$((src_count + count))
+        src_findings="${src_findings}${empty_fns}\n"
+      fi
+
+      # stub 함수: body가 return 리터럴 하나뿐 (함수 전체가 { return X } 패턴)
+      # res.json() / res.send() 에 리터럴만 전달하는 패턴
+      local stub_responses
+      stub_responses=$(grep -rnE 'res\.(json|send)\(\s*(\{\s*\}|\[\s*\])\s*\)' "${src_dirs[@]}" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' 2>/dev/null | grep -vE "$test_exclude_pattern" || true)
+      if [[ -n "$stub_responses" ]]; then
+        local count
+        count=$(echo "$stub_responses" | wc -l)
+        src_count=$((src_count + count))
+        src_findings="${src_findings}${stub_responses}\n"
+      fi
+
+      # 빈 인터페이스/타입 (TypeScript)
+      local empty_types
+      empty_types=$(grep -rnE '(interface|type)\s+\w+\s*(\{[\s]*\}|=\s*\{\s*\})' "${src_dirs[@]}" --include='*.ts' --include='*.tsx' 2>/dev/null | grep -vE "$test_exclude_pattern" || true)
+      if [[ -n "$empty_types" ]]; then
+        local count
+        count=$(echo "$empty_types" | wc -l)
+        src_count=$((src_count + count))
+        src_findings="${src_findings}${empty_types}\n"
+      fi
+
+      # 테스트: skip된 테스트
+      local skipped_tests
+      skipped_tests=$(grep -rnE '(test|it|describe)\.(skip|todo)\(' "${src_dirs[@]}" test/ __tests__/ tests/ 2>/dev/null --include='*.test.*' --include='*.spec.*' --include='*_test.*' || true)
+      if [[ -n "$skipped_tests" ]]; then
+        local count
+        count=$(echo "$skipped_tests" | wc -l)
+        test_count=$((test_count + count))
+        test_findings="${test_findings}${skipped_tests}\n"
+      fi
+
+      # 테스트: assertion 없는 테스트 블록 (test/it 호출이 있는 파일에서 expect/assert가 없는 것)
+      local test_files_no_assert
+      test_files_no_assert=""
+      for tf in $(find "${src_dirs[@]}" test/ __tests__/ tests/ -name '*.test.*' -o -name '*.spec.*' 2>/dev/null); do
+        if grep -qE '(test|it)\(' "$tf" 2>/dev/null && ! grep -qE '(expect|assert|should|toBe|toEqual|toHave|toContain|toThrow|toMatch)' "$tf" 2>/dev/null; then
+          test_count=$((test_count + 1))
+          test_files_no_assert="${test_files_no_assert}${tf}: no assertions found\n"
+        fi
+      done
+      test_findings="${test_findings}${test_files_no_assert}"
+      ;;
+
+    python)
+      # Python: pass-only 함수
+      local pass_fns
+      pass_fns=$(grep -rnB1 '^\s*pass\s*$' "${src_dirs[@]}" --include='*.py' 2>/dev/null | grep -E 'def\s' | grep -vE "$test_exclude_pattern" || true)
+      if [[ -n "$pass_fns" ]]; then
+        local count
+        count=$(echo "$pass_fns" | wc -l)
+        src_count=$((src_count + count))
+        src_findings="${src_findings}${pass_fns}\n"
+      fi
+
+      # Python: skip된 테스트
+      local py_skipped
+      py_skipped=$(grep -rnE '@pytest\.mark\.skip|@unittest\.skip' "${src_dirs[@]}" test/ tests/ 2>/dev/null --include='*.py' || true)
+      if [[ -n "$py_skipped" ]]; then
+        local count
+        count=$(echo "$py_skipped" | wc -l)
+        test_count=$((test_count + count))
+        test_findings="${test_findings}${py_skipped}\n"
+      fi
+      ;;
+
+    go)
+      # Go: 빈 함수 body
+      local go_empty
+      go_empty=$(grep -rnE 'func\s.*\{\s*\}' "${src_dirs[@]}" --include='*.go' 2>/dev/null | grep -vE '_test\.go' || true)
+      if [[ -n "$go_empty" ]]; then
+        local count
+        count=$(echo "$go_empty" | wc -l)
+        src_count=$((src_count + count))
+        src_findings="${src_findings}${go_empty}\n"
+      fi
+
+      # Go: skip된 테스트
+      local go_skipped
+      go_skipped=$(grep -rnE 't\.Skip\(' "${src_dirs[@]}" --include='*_test.go' 2>/dev/null || true)
+      if [[ -n "$go_skipped" ]]; then
+        local count
+        count=$(echo "$go_skipped" | wc -l)
+        test_count=$((test_count + count))
+        test_findings="${test_findings}${go_skipped}\n"
+      fi
+      ;;
+
+    *)
+      echo "[IMPL-DEPTH] WARN: Unsupported language ($lang), running generic checks only"
+      # Generic: 빈 블록 패턴
+      local generic_empty
+      generic_empty=$(grep -rnE '\{\s*\}' "${src_dirs[@]}" 2>/dev/null | grep -vE '(node_modules|\.git|dist|build|\.lock|\.json)' | grep -vE "$test_exclude_pattern" | head -20 || true)
+      if [[ -n "$generic_empty" ]]; then
+        local count
+        count=$(echo "$generic_empty" | wc -l)
+        src_count=$((src_count + count))
+        src_findings="${src_findings}${generic_empty}\n"
+      fi
+      ;;
+  esac
+
+  local total_count=$((src_count + test_count))
+
+  # 결과 출력
+  if [[ $src_count -gt 0 ]]; then
+    echo "[IMPL-DEPTH] Source file stubs: $src_count findings"
+    echo -e "$src_findings" | head -20
+  fi
+  if [[ $test_count -gt 0 ]]; then
+    echo "[IMPL-DEPTH] Test file issues: $test_count findings"
+    echo -e "$test_findings" | head -20
+  fi
+
+  # verification.json 기록
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --argjson sc "$src_count" --argjson tc "$test_count" --argjson th "$threshold" '
+      .implementationDepth = {"srcStubs": $sc, "testIssues": $tc, "threshold": $th, "result": (if ($sc + $tc) >= $th then "fail" elif ($sc + $tc) > 0 then "warn" else "pass" end)}
+    '
+  fi
+
+  # DoD 업데이트
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    local has_dod
+    has_dod=$(jq 'has("dod")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    if [[ "$has_dod" == "true" ]]; then
+      local result_str="pass"
+      [[ $total_count -ge $threshold ]] && result_str="fail"
+      jq_inplace "$PROGRESS_FILE" --arg r "$result_str" --argjson sc "$src_count" --argjson tc "$test_count" '
+        .dod.impl_depth_pass //= {"checked":false,"evidence":null}
+        | .dod.impl_depth_pass.checked = ($r == "pass")
+        | .dod.impl_depth_pass.evidence = "src stubs: \($sc), test issues: \($tc)"
+      '
+    fi
+  fi
+
+  # 판정
+  local details
+  details=$(jq -n --argjson sc "$src_count" --argjson tc "$test_count" --argjson th "$threshold" --arg l "$lang" '{"srcStubs":$sc,"testIssues":$tc,"threshold":$th,"lang":$l}')
+
+  if [[ $total_count -ge $threshold ]]; then
+    echo ""
+    echo "[IMPL-DEPTH] FAIL: $total_count findings >= threshold $threshold"
+    append_gate_history "implementation-depth" "fail" "$details"
+    return 1
+  elif [[ $total_count -gt 0 ]]; then
+    echo ""
+    echo "[IMPL-DEPTH] WARN: $total_count findings (threshold: $threshold)"
+    append_gate_history "implementation-depth" "warn" "$details"
+    return 0
+  else
+    echo ""
+    echo "[IMPL-DEPTH] PASS: No stub implementations detected"
+    append_gate_history "implementation-depth" "pass" "$details"
+    return 0
+  fi
+}
+
+# ─── test-quality: 테스트 품질 검증 (SOFT gate) ───
+
+cmd_test_quality() {
+  echo "=== Test Quality Check ==="
+
+  # 테스트 디렉토리 탐지
+  local test_dirs=()
+  for d in test tests __tests__ spec src; do
+    [[ -d "$d" ]] && test_dirs+=("$d")
+  done
+
+  if [[ ${#test_dirs[@]} -eq 0 ]]; then
+    echo "[TEST-QUALITY] SKIP: No test directories found"
+    append_gate_history "test-quality" "skip" '{"reason":"no test dirs"}'
+    return 2
+  fi
+
+  # 언어 감지
+  local lang="unknown"
+  if [[ -f "package.json" ]] || [[ -f "tsconfig.json" ]]; then
+    lang="js"
+  elif [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]]; then
+    lang="python"
+  elif [[ -f "go.mod" ]]; then
+    lang="go"
+  fi
+
+  local total_tests=0 assertion_tests=0 skipped_tests=0
+
+  case "$lang" in
+    js)
+      # 테스트 파일 수집
+      local test_files
+      test_files=$(find "${test_dirs[@]}" -type f \( -name '*.test.*' -o -name '*.spec.*' -o -name '*_test.*' \) 2>/dev/null || true)
+
+      while IFS= read -r tf; do
+        [[ -z "$tf" ]] && continue
+        # test/it 호출 수
+        local tc
+        tc=$(grep -cE '^\s*(test|it)\s*\(' "$tf" 2>/dev/null || echo "0")
+        total_tests=$((total_tests + tc))
+
+        # assertion 줄 수 기반 비율 (파일 단위가 아닌 assertion 밀도)
+        local ac
+        ac=$(grep -cE '(expect|assert|should|toBe|toEqual|toHave|toContain|toThrow|toMatch)' "$tf" 2>/dev/null || echo "0")
+        # assertion 줄이 테스트 수 이상이면 전량 커버, 아니면 비례 배분
+        if [[ $ac -ge $tc ]] && [[ $tc -gt 0 ]]; then
+          assertion_tests=$((assertion_tests + tc))
+        else
+          assertion_tests=$((assertion_tests + ac))
+        fi
+
+        # skip 수
+        local sc
+        sc=$(grep -cE '(test|it|describe)\.(skip|todo)\(' "$tf" 2>/dev/null || echo "0")
+        skipped_tests=$((skipped_tests + sc))
+      done <<< "$test_files"
+      ;;
+
+    python)
+      local test_files
+      test_files=$(find "${test_dirs[@]}" -type f -name 'test_*.py' -o -name '*_test.py' 2>/dev/null || true)
+
+      while IFS= read -r tf; do
+        [[ -z "$tf" ]] && continue
+        local tc
+        tc=$(grep -cE '^\s*def test_|^\s*async def test_' "$tf" 2>/dev/null || echo "0")
+        total_tests=$((total_tests + tc))
+
+        local ac
+        ac=$(grep -cE '(assert |self\.assert|pytest\.raises)' "$tf" 2>/dev/null || echo "0")
+        if [[ $ac -ge $tc ]] && [[ $tc -gt 0 ]]; then
+          assertion_tests=$((assertion_tests + tc))
+        else
+          assertion_tests=$((assertion_tests + ac))
+        fi
+
+        local sc
+        sc=$(grep -cE '@pytest\.mark\.skip|@unittest\.skip' "$tf" 2>/dev/null || echo "0")
+        skipped_tests=$((skipped_tests + sc))
+      done <<< "$test_files"
+      ;;
+
+    go)
+      local test_files
+      test_files=$(find "${test_dirs[@]}" -type f -name '*_test.go' 2>/dev/null || true)
+
+      while IFS= read -r tf; do
+        [[ -z "$tf" ]] && continue
+        local tc
+        tc=$(grep -cE '^func Test' "$tf" 2>/dev/null || echo "0")
+        total_tests=$((total_tests + tc))
+
+        local ac
+        ac=$(grep -cE '(t\.(Error|Fatal|Fail|Assert)|assert\.|require\.)' "$tf" 2>/dev/null || echo "0")
+        if [[ $ac -ge $tc ]] && [[ $tc -gt 0 ]]; then
+          assertion_tests=$((assertion_tests + tc))
+        else
+          assertion_tests=$((assertion_tests + ac))
+        fi
+
+        local sc
+        sc=$(grep -cE 't\.Skip\(' "$tf" 2>/dev/null || echo "0")
+        skipped_tests=$((skipped_tests + sc))
+      done <<< "$test_files"
+      ;;
+
+    *)
+      echo "[TEST-QUALITY] WARN: Unsupported language ($lang), skipping detailed analysis"
+      append_gate_history "test-quality" "skip" '{"reason":"unsupported language"}'
+      return 2
+      ;;
+  esac
+
+  if [[ $total_tests -eq 0 ]]; then
+    echo "[TEST-QUALITY] WARN: No test functions found"
+    append_gate_history "test-quality" "warn" '{"totalTests":0}'
+    return 0
+  fi
+
+  # 비율 계산
+  local assertion_ratio=0 skip_ratio=0
+  assertion_ratio=$(( (assertion_tests * 100) / total_tests ))
+  skip_ratio=$(( (skipped_tests * 100) / total_tests ))
+
+  echo "[TEST-QUALITY] Total tests: $total_tests"
+  echo "[TEST-QUALITY] Tests with assertions: $assertion_tests ($assertion_ratio%)"
+  echo "[TEST-QUALITY] Skipped tests: $skipped_tests ($skip_ratio%)"
+
+  # US-* 커버리지 (SPEC 존재 시)
+  local us_total=0 us_covered=0 us_ratio=0
+  local spec_file=""
+  [[ -f "SPEC.md" ]] && spec_file="SPEC.md"
+  [[ -f "docs/api-spec.md" ]] && spec_file="docs/api-spec.md"
+
+  if [[ -n "$spec_file" ]]; then
+    local us_ids
+    us_ids=$(grep -oE 'US-[A-Z]-[0-9]+' "$spec_file" 2>/dev/null | sort -u || true)
+    if [[ -n "$us_ids" ]]; then
+      us_total=$(echo "$us_ids" | wc -l)
+      while IFS= read -r us; do
+        if grep -rl "$us" "${test_dirs[@]}" >/dev/null 2>&1; then
+          us_covered=$((us_covered + 1))
+        fi
+      done <<< "$us_ids"
+      [[ $us_total -gt 0 ]] && us_ratio=$(( (us_covered * 100) / us_total ))
+      echo "[TEST-QUALITY] US coverage: $us_covered / $us_total ($us_ratio%)"
+    fi
+  fi
+
+  # verification.json 기록
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" \
+      --argjson tt "$total_tests" --argjson at "$assertion_tests" --argjson ar "$assertion_ratio" \
+      --argjson st "$skipped_tests" --argjson sr "$skip_ratio" \
+      --argjson ust "$us_total" --argjson usc "$us_covered" --argjson usr "$us_ratio" '
+      .testQuality = {
+        "totalTests": $tt, "assertionTests": $at, "assertionRatio": $ar,
+        "skippedTests": $st, "skipRatio": $sr,
+        "usTotal": $ust, "usCovered": $usc, "usRatio": $usr
+      }
+    '
+  fi
+
+  # 판정 (SOFT gate)
+  local issues=0
+  [[ $assertion_ratio -lt 70 ]] && { echo "[TEST-QUALITY] WARN: Assertion ratio $assertion_ratio% < 70%"; issues=$((issues + 1)); }
+  [[ $skip_ratio -gt 20 ]] && { echo "[TEST-QUALITY] WARN: Skip ratio $skip_ratio% > 20%"; issues=$((issues + 1)); }
+
+  local details
+  details=$(jq -n --argjson tt "$total_tests" --argjson ar "$assertion_ratio" --argjson sr "$skip_ratio" --argjson usr "$us_ratio" \
+    '{"totalTests":$tt,"assertionRatio":$ar,"skipRatio":$sr,"usRatio":$usr}')
+
+  if [[ $issues -gt 0 ]]; then
+    echo ""
+    echo "[TEST-QUALITY] WARN: $issues quality issues found"
+    append_gate_history "test-quality" "warn" "$details"
+    return 0
+  else
+    echo ""
+    echo "[TEST-QUALITY] PASS: Test quality acceptable"
+    append_gate_history "test-quality" "pass" "$details"
+    return 0
+  fi
+}
+
+# ─── functional-flow: 핵심 플로우 검증 (프로젝트 유형별) ───
+
+cmd_functional_flow() {
+  echo "=== Functional Flow Check ==="
+
+  # 프로젝트 유형 판단
+  local project_type="unknown"
+  local has_frontend="false" has_backend="false"
+
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  fi
+
+  # 자동 감지 (progress 파일 없는 경우)
+  if [[ "$has_frontend" == "false" ]] && [[ "$has_backend" == "false" ]]; then
+    [[ -d "pages" ]] || [[ -d "app" ]] || [[ -d "components" ]] || [[ -d "client" ]] && has_frontend="true"
+    [[ -d "server" ]] || [[ -d "routes" ]] || [[ -d "controllers" ]] || [[ -d "api" ]] && has_backend="true"
+    # scripts.start 또는 scripts.dev가 있으면 실행 가능한 서버 (backend)
+    [[ -f "package.json" ]] && jq -e '.scripts.start // .scripts.dev' package.json >/dev/null 2>&1 && has_backend="true"
+  fi
+
+  if [[ "$has_frontend" == "true" ]] && [[ "$has_backend" == "true" ]]; then
+    project_type="fullstack"
+  elif [[ "$has_backend" == "true" ]]; then
+    project_type="api"
+  elif [[ "$has_frontend" == "true" ]]; then
+    project_type="frontend"
+  elif [[ -f "package.json" ]] && jq -e '.bin' package.json >/dev/null 2>&1; then
+    project_type="cli"
+  elif [[ -f "package.json" ]] && jq -e '.exports // .main' package.json >/dev/null 2>&1; then
+    project_type="library"
+  fi
+
+  echo "[FLOW] Detected project type: $project_type"
+
+  local all_pass=true
+  local flow_results=""
+
+  # API smoke 스크립트 실행
+  run_smoke_script() {
+    local script="$1" label="$2"
+    if [[ ! -f "$script" ]]; then
+      echo "[FLOW] SKIP: $script not found"
+      return 2
+    fi
+    if [[ ! -x "$script" ]]; then
+      chmod +x "$script" 2>/dev/null || true
+    fi
+
+    echo "[FLOW] Running $label: $script"
+    local output exit_code
+    output=$(bash "$script" 2>&1) && exit_code=0 || exit_code=$?
+
+    if [[ $exit_code -eq 0 ]]; then
+      echo "[FLOW] $label: PASS"
+      flow_results="${flow_results}${label}: pass; "
+    else
+      echo "[FLOW] $label: FAIL (exit $exit_code)"
+      echo "$output" | tail -10
+      all_pass=false
+      flow_results="${flow_results}${label}: fail; "
+    fi
+    return $exit_code
+  }
+
+  case "$project_type" in
+    api|backend)
+      run_smoke_script "tests/api-smoke.sh" "API Smoke" || true
+      ;;
+    frontend)
+      if [[ -f "tests/ui-smoke.sh" ]]; then
+        run_smoke_script "tests/ui-smoke.sh" "UI Smoke" || true
+      elif [[ -f "tests/ui-smoke.spec.ts" ]] || [[ -f "tests/ui-smoke.spec.js" ]]; then
+        echo "[FLOW] Running Playwright UI smoke..."
+        local output exit_code
+        output=$(npx playwright test tests/ui-smoke.spec.* --reporter=list 2>&1) && exit_code=0 || exit_code=$?
+        if [[ $exit_code -eq 0 ]]; then
+          echo "[FLOW] UI Smoke: PASS"
+          flow_results="UI Smoke: pass"
+        else
+          echo "[FLOW] UI Smoke: FAIL"
+          echo "$output" | tail -10
+          all_pass=false
+          flow_results="UI Smoke: fail"
+        fi
+      else
+        echo "[FLOW] SKIP: No UI smoke script found"
+        append_gate_history "functional-flow" "skip" '{"reason":"no ui smoke script","type":"frontend"}'
+        return 2
+      fi
+      ;;
+    fullstack)
+      run_smoke_script "tests/api-smoke.sh" "API Smoke" || true
+      if [[ -f "tests/ui-smoke.sh" ]]; then
+        run_smoke_script "tests/ui-smoke.sh" "UI Smoke" || true
+      fi
+      ;;
+    library|cli)
+      run_smoke_script "tests/lib-smoke.sh" "Lib Smoke" || true
+      ;;
+    *)
+      echo "[FLOW] SKIP: Unknown project type, no smoke scripts to run"
+      append_gate_history "functional-flow" "skip" '{"reason":"unknown project type"}'
+      return 2
+      ;;
+  esac
+
+  # verification.json 기록
+  local result_str="pass"
+  [[ "$all_pass" != "true" ]] && result_str="fail"
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --arg r "$result_str" --arg fr "$flow_results" --arg pt "$project_type" '
+      .functionalFlow = {"result": $r, "projectType": $pt, "details": $fr}
+    '
+  fi
+
+  # DoD 업데이트
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    local has_dod
+    has_dod=$(jq 'has("dod")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    if [[ "$has_dod" == "true" ]]; then
+      jq_inplace "$PROGRESS_FILE" --arg r "$result_str" --arg fr "$flow_results" '
+        .dod.functional_flow_pass //= {"checked":false,"evidence":null}
+        | .dod.functional_flow_pass.checked = ($r == "pass")
+        | .dod.functional_flow_pass.evidence = $fr
+      '
+    fi
+  fi
+
+  local details
+  details=$(jq -n --arg pt "$project_type" --arg fr "$flow_results" --arg r "$result_str" '{"projectType":$pt,"flows":$fr,"result":$r}')
+
+  if [[ "$all_pass" == "true" ]]; then
+    echo ""
+    echo "[FLOW] ALL FLOWS PASSED"
+    append_gate_history "functional-flow" "pass" "$details"
+    return 0
+  else
+    echo ""
+    echo "[FLOW] SOME FLOWS FAILED: $flow_results"
+    append_gate_history "functional-flow" "fail" "$details"
+    return 1
+  fi
+}
+
 # ─── add-dod-key: DoD 키 동적 추가 (idempotent) ───
 
 cmd_add_dod_key() {
@@ -3126,6 +3840,9 @@ main() {
     external-service-check) cmd_external_service_check "$@" ;;
     service-test-check) cmd_service_test_check "$@" ;;
     integration-smoke)  cmd_integration_smoke "$@" ;;
+    implementation-depth) cmd_implementation_depth "$@" ;;
+    test-quality)      cmd_test_quality "$@" ;;
+    functional-flow)   cmd_functional_flow "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
@@ -3156,6 +3873,9 @@ main() {
       echo "  doc-code-check [docs_dir]                  - Check doc-code matching"
       echo "  e2e-gate                                   - Run E2E tests (auto-detect framework)"
       echo "  design-polish-gate                         - WCAG check + screenshot capture (SOFT_FAIL)"
+      echo "  implementation-depth [--threshold N] [--dir D] - Detect stub/empty implementations (SOFT)"
+      echo "  test-quality                               - Check test assertion ratio, skip ratio, US coverage (SOFT)"
+      echo "  functional-flow                            - Run project-type-specific smoke scripts (api/frontend/fullstack)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
       echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"

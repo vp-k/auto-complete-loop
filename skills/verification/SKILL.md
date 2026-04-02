@@ -49,6 +49,41 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --strict --progress-f
 - `phases.phase_2.e2e.scenarios`에서 모든 시나리오의 `status == "completed"` 확인
 - pending 시나리오가 있으면: 작성 후 재실행
 
+### Step 4-1.7: 구현 깊이 검증
+
+stub/빈 함수/placeholder 응답을 탐지합니다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh implementation-depth --progress-file .claude-full-auto-progress.json
+```
+
+- SOFT gate: 5건 미만이면 WARN (진행 가능), 5건 이상이면 FAIL (수정 필요)
+- 수정 후 재실행하여 임계값 미만 확인
+
+### Step 4-1.8: 기능 플로우 검증
+
+프로젝트 유형별 smoke 스크립트를 실행하여 핵심 플로우가 실제로 작동하는지 확인합니다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh functional-flow --progress-file .claude-full-auto-progress.json
+```
+
+- tests/api-smoke.sh (백엔드) / tests/ui-smoke.sh (프론트엔드) / tests/lib-smoke.sh (라이브러리) 실행
+- 스크립트가 없으면 SKIP
+- 실패 시 수정 후 재실행
+
+### Step 4-1.9: 테스트 품질 검증
+
+테스트의 실질적 품질을 확인합니다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh test-quality --progress-file .claude-full-auto-progress.json
+```
+
+- assertion 비율 ≥ 70%, skip 비율 ≤ 20%
+- US-* ID 기반 커버리지 확인 (SPEC.md에 US-* 존재 시)
+- SOFT gate: 미달 시 WARN
+
 ### Step 4-2: 보안 검토
 
 1. **시크릿 스캔**
@@ -251,6 +286,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh integration-smoke --progress-f
 | 코드 품질 | 중복, 복잡도, 테스트 커버리지 | 주요 비즈니스 로직 테스트 존재 |
 | 문서화 | README, API 문서, 환경 변수 설명 | 필수 문서 존재 |
 | E2E 커버리지 | E2E 시나리오 vs SPEC.md 유저스토리 | high/medium 시나리오 전체 통과 (applicable=false 시 N/A) |
+
+**US-* 기반 기능 완성도 자동 검증** (SPEC.md에 US-* ID 존재 시):
+- SPEC.md에서 US-F-*, US-B-* ID 추출
+- 각 ID가 소스 코드에 구현되었는지 확인 (해당 라우트/컴포넌트 존재)
+- 각 ID가 테스트에서 커버되는지 확인
+- 미구현 US 목록 출력
 
 #### 레이어 커버리지 검증 (하드 게이트)
 

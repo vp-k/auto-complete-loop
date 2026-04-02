@@ -193,7 +193,60 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
 
 스크립트가 발견한 구조적 불일치를 Claude가 수정합니다.
 
-### Step 1-6: Phase 1 완료
+### Step 1-6: 스펙 깊이 검증
+
+Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다:
+
+- **API 엔드포인트**: SPEC.md에 각 엔드포인트의 Request/Response 상세가 기술되어 있는지 확인 (단순 목록이 아닌 필드/타입/예시 수준)
+- **User Story ID**: 모든 User Story에 `US-F-*` (프론트엔드) 또는 `US-B-*` (백엔드) 형식의 ID가 부여되었는지 확인
+- **상세 부족 시 경고**: 검증 실패 항목은 경고를 출력하고, Claude가 1회 자동 보완 시도
+
+### Step 1-7: 검증 스크립트 생성 (Phase 1 산출물)
+
+Phase 1 완료 시 SPEC.md의 핵심 플로우를 기반으로 실행 가능한 검증 스크립트를 생성합니다:
+
+- **hasBackend=true**: `tests/api-smoke.sh` 생성
+  - SPEC.md의 핵심 플로우를 curl 명령으로 변환
+  - 각 단계에서 응답의 필수 필드를 jq로 검증
+  - exit 0 = 모든 플로우 통과, exit 1 = 실패
+  - 서버 URL은 인수로 받음: `$BASE_URL` (기본값: http://localhost:3000)
+
+- **hasFrontend=true**: `tests/ui-smoke.sh` 또는 `tests/ui-smoke.spec.ts` 생성
+  - 핵심 1-2개 유저 플로우를 Playwright 또는 간단한 curl로 검증
+
+- **library/CLI**: `tests/lib-smoke.sh` 생성
+  - 주요 export/CLI 명령 호출 + 예상 출력 확인
+
+US-* ID 필수화 규칙:
+- SPEC.md의 모든 User Story에 US-F-001, US-B-001 형식 ID를 반드시 부여
+- 이 ID가 테스트 커버리지 측정의 기준이 됨
+
+### Step 1-8: Phase 1 완료 검증
+
+모든 문서 토론 완료 및 검증 스크립트 생성 후, Phase 전이 전 최종 검증을 수행합니다:
+
+```bash
+# 스펙 깊이 검증
+api_detail=$(grep -c 'Request\|Response\|필드\|Field\|Body' SPEC.md 2>/dev/null || echo 0)
+if [[ $api_detail -lt 3 ]]; then
+  echo "WARN: SPEC.md에 API 상세 부족"
+fi
+
+# 검증 스크립트 존재 체크
+if [[ ! -f tests/api-smoke.sh ]] && [[ ! -f tests/ui-smoke.sh ]] && [[ ! -f tests/lib-smoke.sh ]]; then
+  echo "FAIL: 검증 스크립트(tests/*-smoke.sh) 미생성"
+fi
+
+# US-* ID 존재 체크
+us_count=$(grep -coE 'US-[A-Z]-[0-9]+' SPEC.md 2>/dev/null || echo 0)
+if [[ $us_count -eq 0 ]]; then
+  echo "WARN: SPEC.md에 US-* ID 없음"
+fi
+```
+
+WARN은 경고만 출력하고 진행, FAIL은 해당 단계를 재수행합니다.
+
+### Step 1-9: Phase 1 완료
 
 모든 문서 `completed` 시:
 1. DoD 업데이트: `all_docs_complete.checked = true`

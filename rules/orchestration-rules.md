@@ -33,7 +33,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
      - `external-service-check`: SPEC.md 명시 외부 서비스의 SDK/config 존재
      - `service-test-check`: `hasBackend=true` 시 서비스/라우트 테스트 파일 존재
      - `integration-smoke`: `hasFrontend+hasBackend` 시 연동 검증 (API URL, CORS, 서버 기동) 통과
-4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+4. 구현 품질 게이트 확인:
+   - `implementation-depth`: 소스 stub 5건 미만 (SOFT — 5건 이상이면 수정 권장)
+   - `functional-flow`: smoke 스크립트 통과 (존재 시, SKIP 허용)
+   - `test-quality`: assertion 비율 ≥ 70%, skip 비율 ≤ 20% (SOFT)
+5. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
 
 ### Iteration 단위 작업 규칙
 - 한 iteration에서 **한 Phase의 일부 작업**만 처리
@@ -55,7 +59,26 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file {PROGRE
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_N completed --progress-file {PROGRESS_FILE}
 # 품질 게이트/시크릿/아티팩트/스모크/E2E/에러기록/문서일관성/문서코드체크/디자인폴리싱
 # → shared-gate.sh의 각 서브커맨드 사용
+
+# 구현 품질 게이트 (Phase 2 문서 완료 후 + Phase 4에서 실행)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh implementation-depth --progress-file {PROGRESS_FILE}
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh test-quality --progress-file {PROGRESS_FILE}
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh functional-flow --progress-file {PROGRESS_FILE}
 ```
+
+## 구현 품질 게이트 실행 시점
+
+| 게이트 | Phase 2 (문서별) | Phase 4 |
+|--------|-----------------|---------|
+| `implementation-depth` | 각 문서 구현 완료 후 | Step 4-1.7 |
+| `functional-flow` | — (smoke 스크립트 없을 수 있음) | Step 4-1.8 |
+| `test-quality` | — | Step 4-1.9 |
+
+**Phase 2 규칙**: 문서 구현 완료 후 `implementation-depth` 실행. 5건 이상이면 즉시 수정 후 재실행 (다음 문서로 넘어가지 않음).
+
+**Phase 2 smoke 검증**: `tests/api-smoke.sh` 존재 시, 해당 문서의 API 엔드포인트를 서버 시작 후 curl로 검증. 응답이 빈 객체/빈 배열이면 수정 필요.
+
+**Phase 4 규칙**: Step 4-1 (quality-gate) 직후 Step 4-1.7/4-1.8/4-1.9 순서로 실행. SOFT gate이므로 WARN은 진행 가능, FAIL은 수정 필요.
 
 ## 복구 감지 (0단계 전 실행)
 

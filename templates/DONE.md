@@ -38,6 +38,11 @@
 - [ ] `integration-smoke` PASS — 프론트↔백 연동 검증 통과 (hasFrontend+hasBackend 시)
 - [ ] `smoke-check --strict` PASS — 서버 기동 + 엔드포인트 검증 (hasBackend=true 시)
 
+### 구현 품질 DoD (소프트 게이트 — 임계값 기반)
+- [ ] `implementation-depth` PASS — stub/빈 함수 5건 미만
+- [ ] `test-quality` PASS — assertion 비율 ≥ 70%, skip 비율 ≤ 20%
+- [ ] `functional-flow` PASS — 핵심 플로우 smoke 스크립트 통과 (tests/*-smoke.sh)
+
 ### 외부 서비스 연동 DoD (해당 시)
 - [ ] 외부 서비스(결제/소셜 로그인/이메일 등)는 테스트 모드로 실제 연동 (placeholder 금지)
 - [ ] 테스트 모드 불가 시: 사유 명시 + 실제 API 응답 스키마 기반 스텁 구현

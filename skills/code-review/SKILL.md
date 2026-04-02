@@ -47,6 +47,12 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
       - 셀렉터 안정성 (data-testid > semantic > text)
       - mock/seed 데이터가 실제 스키마에서 파생되었는가
       - 외부 서비스만 모킹 (자체 백엔드는 실제 사용)
+   7. IMPL (구현 완성도): SPEC.md를 읽고 각 API 엔드포인트/페이지에 대해 검증
+      - IMPL-STUB: 빈 함수 body, placeholder 응답 (res.json({}), return null이 유일 로직인 핸들러)
+      - IMPL-SCHEMA: SPEC.md API 스키마와 불일치하는 요청/응답 구조 (필드 누락, 타입 불일치)
+      - IMPL-MISSING: SPEC에 정의됐지만 코드에 미구현된 엔드포인트/페이지/컴포넌트
+      - IMPL-HARDCODE: 하드코딩된 mock 데이터가 프로덕션 코드에 존재 (테스트 파일 제외)
+      - IMPL-FLOW: 핵심 플로우(회원가입→로그인→프로필 등)의 연결이 실제로 작동하지 않음
 
    ### 리뷰 대상 파일
    [파일 경로 목록 — 직접 읽고 검토]
@@ -59,8 +65,12 @@ Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
 
    ### 심각도 판정 기준 (Few-shot 참고)
    **CRITICAL 예시**: `db.query("SELECT * FROM users WHERE id = " + userId)` → SEC-INJ (SQL injection)
+   **CRITICAL 예시**: SPEC에 정의된 `/auth/register` 엔드포인트가 코드에 없음 → IMPL-MISSING
    **HIGH 예시**: `catch(e) {}` 빈 catch 블록 → ERR (에러 무시)
+   **HIGH 예시**: `app.get('/users', (req, res) => res.json({}))` 빈 응답 반환 → IMPL-STUB
+   **HIGH 예시**: SPEC에 `{id, name, email}` 응답인데 코드는 `{success: true}`만 반환 → IMPL-SCHEMA
    **MEDIUM 예시**: API 응답에서 페이지네이션 없이 전체 목록 반환 → PERF (대량 데이터)
+   **MEDIUM 예시**: `const users = [{name: "John"}]` 하드코딩 mock 데이터 → IMPL-HARDCODE
    **LOW 예시**: 함수명 `getData`가 구체적이지 않음 → CODE (네이밍)
 
    ### 출력 형식
@@ -136,7 +146,7 @@ progress 파일에 라운드 결과 기록:
 
 ### Step 3-3: 리뷰 완료 조건
 
-- Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복)
+- Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복). 특히 IMPL-MISSING-CRITICAL, IMPL-STUB-HIGH는 반드시 수정 필요.
 - 품질 게이트 통과
 - E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
   ```bash

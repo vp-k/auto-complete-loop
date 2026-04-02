@@ -42,6 +42,7 @@
 - [ ] `implementation-depth` PASS — stub/빈 함수 5건 미만
 - [ ] `test-quality` PASS — assertion 비율 ≥ 70%, skip 비율 ≤ 20%
 - [ ] `functional-flow` PASS — 핵심 플로우 smoke 스크립트 통과 (tests/*-smoke.sh)
+- [ ] `page-render-check` PASS — 프론트엔드 페이지 렌더링 정상 (hasFrontend=true 시, 빈 페이지/console.error/404 없음)
 
 ### 외부 서비스 연동 DoD (해당 시)
 - [ ] 외부 서비스(결제/소셜 로그인/이메일 등)는 테스트 모드로 실제 연동 (placeholder 금지)

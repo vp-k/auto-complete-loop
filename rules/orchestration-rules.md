@@ -64,6 +64,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_N completed
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh implementation-depth --progress-file {PROGRESS_FILE}
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh test-quality --progress-file {PROGRESS_FILE}
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh functional-flow --progress-file {PROGRESS_FILE}
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-file {PROGRESS_FILE}
 ```
 
 ## 구현 품질 게이트 실행 시점
@@ -73,6 +74,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh functional-flow --progress-fil
 | `implementation-depth` | 각 문서 구현 완료 후 | Step 4-1.7 |
 | `functional-flow` | — (smoke 스크립트 없을 수 있음) | Step 4-1.8 |
 | `test-quality` | — | Step 4-1.9 |
+| `page-render-check` | — | Step 4-5 (hasFrontend=true 시) |
 
 **Phase 2 규칙**: 문서 구현 완료 후 `implementation-depth` 실행. 5건 이상이면 즉시 수정 후 재실행 (다음 문서로 넘어가지 않음).
 

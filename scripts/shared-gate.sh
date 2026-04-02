@@ -1776,24 +1776,27 @@ cmd_smoke_check() {
           local http_code
           http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || echo "000")
 
-          # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL (라우트 미구현 또는 서버 에러)
+          # 단일 curl로 body + status code 동시 수집 (이중 호출 방지)
+          local resp_tmp
+          resp_tmp=$(mktemp)
+          http_code=$(curl -s -w "%{http_code}" --max-time 5 -o "$resp_tmp" "http://localhost:${port}${path}" 2>/dev/null || echo "000")
+
+          # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL
           if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|401|403)$ ]]; then
             # 응답 body 필드 검증 (2xx 응답만 — 빈 객체/빈 배열 탐지)
             local body_check="ok"
             if [[ "$http_code" =~ ^2 ]]; then
-              local resp_body
-              resp_body=$(curl -s --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || echo "")
               local resp_type resp_len
-              resp_type=$(echo "$resp_body" | jq -r 'type' 2>/dev/null || echo "unknown")
+              resp_type=$(jq -r 'type' "$resp_tmp" 2>/dev/null || echo "unknown")
               if [[ "$resp_type" == "object" ]]; then
-                resp_len=$(echo "$resp_body" | jq 'keys | length' 2>/dev/null || echo "0")
+                resp_len=$(jq 'keys | length' "$resp_tmp" 2>/dev/null || echo "0")
                 [[ "$resp_len" == "0" ]] && body_check="empty_object"
               elif [[ "$resp_type" == "array" ]]; then
-                # 빈 배열은 데이터 없을 수 있으므로 WARN만 (FAIL 아님)
-                resp_len=$(echo "$resp_body" | jq 'length' 2>/dev/null || echo "0")
+                resp_len=$(jq 'length' "$resp_tmp" 2>/dev/null || echo "0")
                 [[ "$resp_len" == "0" ]] && body_check="empty_array"
               fi
             fi
+            rm -f "$resp_tmp"
 
             if [[ "$body_check" == "empty_object" ]]; then
               echo "  [WARN] GET $path → HTTP $http_code but response is empty object {}"
@@ -1809,13 +1812,20 @@ cmd_smoke_check() {
               endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
             fi
           else
+            rm -f "$resp_tmp"
             echo "  [FAIL] GET $path → HTTP $http_code"
             endpoint_fail=$((endpoint_fail + 1))
             endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "fail"}]')
           fi
         done <<< "$endpoints"
 
-        echo "[smoke-check] Endpoints: $endpoint_pass/$endpoint_total passed ($endpoint_fail failed)"
+        # empty_object/empty_array 경고 수 집계
+        local endpoint_warn
+        endpoint_warn=$(echo "$endpoint_results" | jq '[.[] | select(.result == "warn")] | length' 2>/dev/null || echo "0")
+        echo "[smoke-check] Endpoints: $endpoint_pass/$endpoint_total passed ($endpoint_fail failed, $endpoint_warn warnings)"
+        if [[ "$endpoint_warn" -gt 0 ]] && [[ "$endpoint_warn" -eq "$endpoint_pass" ]] && [[ "$endpoint_fail" -eq 0 ]]; then
+          echo "[smoke-check] WARNING: ALL endpoints returned empty responses — likely stub implementation"
+        fi
       else
         echo "[smoke-check] WARNING: No GET endpoints found in $spec_file — endpoint verification skipped"
         echo "[smoke-check] (mutating endpoints POST/PUT/PATCH/DELETE are excluded from smoke-check to avoid side effects)"
@@ -3680,7 +3690,15 @@ cmd_page_render_check() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --strict) strict=true; shift ;;
-      --port) port="${2:?--port requires a number}"; shift 2 ;;
+      --port)
+        port="${2:?--port requires a number}"
+        if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+          die "page-render-check: --port must be a positive integer, got '$port'"
+        fi
+        if [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+          die "page-render-check: --port must be 1-65535, got '$port'"
+        fi
+        shift 2 ;;
       *) shift ;;
     esac
   done
@@ -3819,17 +3837,28 @@ const routes = (process.env.PAGE_ROUTES || '/').split('\n').filter(r => r.trim()
 })();
 PLAYWRIGHT_SCRIPT
 
-  # 실행
-  local page_routes_str
-  page_routes_str=$(echo "$page_routes" | tr '\n' '\n')
+  # 시그널 시 임시 파일 정리 보장
+  trap "rm -f '$tmp_script'; _cleanup_server; trap - EXIT INT TERM" EXIT INT TERM
 
+  # 실행
   echo "[page-render] Checking pages: $(echo "$page_routes" | tr '\n' ' ')"
   local output exit_code
-  output=$(PAGE_ROUTES="$page_routes_str" BASE_URL="http://localhost:${port}" node "$tmp_script" 2>&1) && exit_code=0 || exit_code=$?
+  output=$(PAGE_ROUTES="$page_routes" BASE_URL="http://localhost:${port}" node "$tmp_script" 2>&1) && exit_code=0 || exit_code=$?
   echo "$output"
 
   rm -f "$tmp_script"
   _cleanup_server
+  trap - EXIT INT TERM
+
+  # 실행 실패 시 fail-closed (codex ERR-HIGH-3: SKIP 오분류 방지)
+  if [[ $exit_code -ne 0 ]]; then
+    # JSON 결과가 출력되었는지 확인 — 없으면 게이트 자체 실패
+    if ! echo "$output" | grep -q '^{'; then
+      echo "[page-render] FAIL: Playwright/Node execution failed (exit $exit_code, no result JSON)"
+      append_gate_history "page-render-check" "fail" "{\"reason\":\"execution_failed\",\"exitCode\":$exit_code}"
+      return 1
+    fi
+  fi
 
   # 결과 파싱
   local total_pages=0 pass_pages=0 fail_pages=0
@@ -3844,7 +3873,8 @@ PLAYWRIGHT_SCRIPT
   # verification.json 기록
   local result_str="pass"
   [[ $fail_pages -gt 0 ]] && result_str="fail"
-  [[ $total_pages -eq 0 ]] && result_str="skip"
+  [[ $total_pages -eq 0 && $exit_code -eq 0 ]] && result_str="skip"
+  [[ $total_pages -eq 0 && $exit_code -ne 0 ]] && result_str="fail"
 
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" --arg r "$result_str" --argjson tp "$total_pages" --argjson pp "$pass_pages" --argjson fp "$fail_pages" '
@@ -3917,6 +3947,7 @@ cmd_functional_flow() {
 
   local all_pass=true
   local flow_results=""
+  local flows_executed=0
 
   # API smoke 스크립트 실행
   run_smoke_script() {
@@ -3933,6 +3964,7 @@ cmd_functional_flow() {
     local output exit_code
     output=$(bash "$script" 2>&1) && exit_code=0 || exit_code=$?
 
+    flows_executed=$((flows_executed + 1))
     if [[ $exit_code -eq 0 ]]; then
       echo "[FLOW] $label: PASS"
       flow_results="${flow_results}${label}: pass; "
@@ -4026,9 +4058,15 @@ cmd_functional_flow() {
   local details
   details=$(jq -n --arg pt "$project_type" --arg fr "$flow_results" --arg r "$result_str" '{"projectType":$pt,"flows":$fr,"result":$r}')
 
-  if [[ "$all_pass" == "true" ]]; then
+  # flows_executed == 0 이면 아무 플로우도 실행 안 됨 (codex IMPL-HIGH-4 수정)
+  if [[ $flows_executed -eq 0 ]]; then
     echo ""
-    echo "[FLOW] ALL FLOWS PASSED"
+    echo "[FLOW] SKIP: No smoke scripts found for project type '$project_type'"
+    append_gate_history "functional-flow" "skip" "$details"
+    return 2
+  elif [[ "$all_pass" == "true" ]]; then
+    echo ""
+    echo "[FLOW] ALL FLOWS PASSED ($flows_executed flow(s) executed)"
     append_gate_history "functional-flow" "pass" "$details"
     return 0
   else

@@ -25,6 +25,7 @@
 #   integration-smoke                                  - 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL)
 #   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
 #   test-quality                                        - 테스트 assertion 비율/skip 비율/US 커버리지 (SOFT gate)
+#   page-render-check [--port N] [--strict]             - 프론트엔드 페이지 렌더링 검증 (빈 페이지/console.error/404 탐지)
 #   functional-flow                                     - 프로젝트 유형별 smoke 스크립트 실행 (api/frontend/fullstack/library)
 #   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
 #   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신
@@ -1777,9 +1778,36 @@ cmd_smoke_check() {
 
           # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL (라우트 미구현 또는 서버 에러)
           if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|401|403)$ ]]; then
-            echo "  [PASS] GET $path → HTTP $http_code"
-            endpoint_pass=$((endpoint_pass + 1))
-            endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
+            # 응답 body 필드 검증 (2xx 응답만 — 빈 객체/빈 배열 탐지)
+            local body_check="ok"
+            if [[ "$http_code" =~ ^2 ]]; then
+              local resp_body
+              resp_body=$(curl -s --max-time 5 "http://localhost:${port}${path}" 2>/dev/null || echo "")
+              local resp_type resp_len
+              resp_type=$(echo "$resp_body" | jq -r 'type' 2>/dev/null || echo "unknown")
+              if [[ "$resp_type" == "object" ]]; then
+                resp_len=$(echo "$resp_body" | jq 'keys | length' 2>/dev/null || echo "0")
+                [[ "$resp_len" == "0" ]] && body_check="empty_object"
+              elif [[ "$resp_type" == "array" ]]; then
+                # 빈 배열은 데이터 없을 수 있으므로 WARN만 (FAIL 아님)
+                resp_len=$(echo "$resp_body" | jq 'length' 2>/dev/null || echo "0")
+                [[ "$resp_len" == "0" ]] && body_check="empty_array"
+              fi
+            fi
+
+            if [[ "$body_check" == "empty_object" ]]; then
+              echo "  [WARN] GET $path → HTTP $http_code but response is empty object {}"
+              endpoint_pass=$((endpoint_pass + 1))
+              endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "warn", "detail": "empty_object"}]')
+            elif [[ "$body_check" == "empty_array" ]]; then
+              echo "  [WARN] GET $path → HTTP $http_code response is empty array [] (may be no data)"
+              endpoint_pass=$((endpoint_pass + 1))
+              endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "warn", "detail": "empty_array"}]')
+            else
+              echo "  [PASS] GET $path → HTTP $http_code"
+              endpoint_pass=$((endpoint_pass + 1))
+              endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
+            fi
           else
             echo "  [FAIL] GET $path → HTTP $http_code"
             endpoint_fail=$((endpoint_fail + 1))
@@ -3641,6 +3669,216 @@ cmd_test_quality() {
   fi
 }
 
+# ─── page-render-check: 프론트엔드 페이지 렌더링 검증 (Playwright 기반) ───
+
+cmd_page_render_check() {
+  echo "=== Page Render Check ==="
+
+  local port="3000"
+  local strict=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --strict) strict=true; shift ;;
+      --port) port="${2:?--port requires a number}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  # 프론트엔드 프로젝트 확인
+  local has_frontend="false"
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  fi
+  if [[ "$has_frontend" == "false" ]]; then
+    # 자동 감지
+    for d in pages app components client src/pages src/app; do
+      [[ -d "$d" ]] && has_frontend="true" && break
+    done
+  fi
+
+  if [[ "$has_frontend" != "true" ]]; then
+    echo "[page-render] SKIP: Not a frontend project"
+    append_gate_history "page-render-check" "skip" '{"reason":"not frontend"}'
+    return 2
+  fi
+
+  # Playwright 설치 확인
+  if ! command -v npx >/dev/null 2>&1; then
+    echo "[page-render] SKIP: npx not available"
+    append_gate_history "page-render-check" "skip" '{"reason":"npx not available"}'
+    return 2
+  fi
+
+  # 페이지 경로 추출 (SPEC 또는 progress에서)
+  local page_routes="/"
+  local spec_file=""
+  [[ -f "SPEC.md" ]] && spec_file="SPEC.md"
+  [[ -f "docs/api-spec.md" ]] && spec_file="docs/api-spec.md"
+
+  if [[ -n "$spec_file" ]]; then
+    local extracted
+    extracted=$(grep -oE '(경로|path|route)[:\s]*/[a-zA-Z0-9/_-]+' "$spec_file" 2>/dev/null | grep -oE '/[a-zA-Z0-9/_-]+' | sort -u | head -10 || true)
+    if [[ -n "$extracted" ]]; then
+      page_routes="$extracted"
+    fi
+  fi
+
+  # 서버 시작
+  local start_cmd
+  start_cmd=$(_detect_start_cmd)
+  if [[ -z "$start_cmd" ]]; then
+    echo "[page-render] SKIP: No start command detected"
+    append_gate_history "page-render-check" "skip" '{"reason":"no start command"}'
+    return 2
+  fi
+
+  echo "[page-render] Starting server: $start_cmd"
+  if ! _start_and_wait_server "$start_cmd" "$port" 15 "page-render"; then
+    echo "[page-render] FAIL: Server did not start"
+    _cleanup_server
+    append_gate_history "page-render-check" "fail" '{"reason":"server start failed"}'
+    return 1
+  fi
+
+  # Playwright 렌더링 검증 스크립트 생성 (임시)
+  local tmp_script
+  tmp_script=$(mktemp --suffix=.mjs)
+  cat > "$tmp_script" << 'PLAYWRIGHT_SCRIPT'
+import { chromium } from 'playwright';
+
+const BASE = process.env.BASE_URL || 'http://localhost:3000';
+const routes = (process.env.PAGE_ROUTES || '/').split('\n').filter(r => r.trim());
+
+(async () => {
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (e) {
+    console.log('[page-render] Playwright chromium not installed, attempting install...');
+    const { execSync } = await import('child_process');
+    execSync('npx playwright install chromium', { stdio: 'inherit' });
+    browser = await chromium.launch({ headless: true });
+  }
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  const errors = [];
+  const consoleErrors = [];
+
+  page.on('pageerror', err => errors.push(err.message));
+  page.on('console', msg => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  let totalPages = 0, passPages = 0, failPages = 0;
+  const results = [];
+
+  for (const route of routes) {
+    totalPages++;
+    errors.length = 0;
+    consoleErrors.length = 0;
+
+    try {
+      const resp = await page.goto(`${BASE}${route}`, { waitUntil: 'networkidle', timeout: 10000 });
+      const status = resp?.status() || 0;
+      const bodyText = await page.evaluate(() => document.body?.innerText?.trim() || '');
+      const bodyLen = bodyText.length;
+
+      const issues = [];
+      if (status >= 400) issues.push(`HTTP ${status}`);
+      if (bodyLen === 0) issues.push('empty page (no text content)');
+      if (errors.length > 0) issues.push(`${errors.length} JS error(s)`);
+      if (consoleErrors.length > 0) issues.push(`${consoleErrors.length} console.error(s)`);
+
+      if (issues.length === 0) {
+        console.log(`  [PASS] ${route} — HTTP ${status}, ${bodyLen} chars`);
+        passPages++;
+        results.push({ route, status, result: 'pass' });
+      } else {
+        console.log(`  [FAIL] ${route} — ${issues.join(', ')}`);
+        failPages++;
+        results.push({ route, status, result: 'fail', issues });
+        if (errors.length > 0) errors.forEach(e => console.log(`    JS Error: ${e}`));
+        if (consoleErrors.length > 0) consoleErrors.forEach(e => console.log(`    Console Error: ${e}`));
+      }
+    } catch (e) {
+      console.log(`  [FAIL] ${route} — ${e.message}`);
+      failPages++;
+      results.push({ route, status: 0, result: 'fail', issues: [e.message] });
+    }
+  }
+
+  await browser.close();
+
+  console.log(`\n[page-render] Results: ${passPages}/${totalPages} passed, ${failPages} failed`);
+  console.log(JSON.stringify({ total: totalPages, pass: passPages, fail: failPages, results }));
+
+  process.exit(failPages > 0 ? 1 : 0);
+})();
+PLAYWRIGHT_SCRIPT
+
+  # 실행
+  local page_routes_str
+  page_routes_str=$(echo "$page_routes" | tr '\n' '\n')
+
+  echo "[page-render] Checking pages: $(echo "$page_routes" | tr '\n' ' ')"
+  local output exit_code
+  output=$(PAGE_ROUTES="$page_routes_str" BASE_URL="http://localhost:${port}" node "$tmp_script" 2>&1) && exit_code=0 || exit_code=$?
+  echo "$output"
+
+  rm -f "$tmp_script"
+  _cleanup_server
+
+  # 결과 파싱
+  local total_pages=0 pass_pages=0 fail_pages=0
+  local json_line
+  json_line=$(echo "$output" | grep '^{' | tail -1 || true)
+  if [[ -n "$json_line" ]]; then
+    total_pages=$(echo "$json_line" | jq '.total // 0' 2>/dev/null || echo "0")
+    pass_pages=$(echo "$json_line" | jq '.pass // 0' 2>/dev/null || echo "0")
+    fail_pages=$(echo "$json_line" | jq '.fail // 0' 2>/dev/null || echo "0")
+  fi
+
+  # verification.json 기록
+  local result_str="pass"
+  [[ $fail_pages -gt 0 ]] && result_str="fail"
+  [[ $total_pages -eq 0 ]] && result_str="skip"
+
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --arg r "$result_str" --argjson tp "$total_pages" --argjson pp "$pass_pages" --argjson fp "$fail_pages" '
+      .pageRender = {"result": $r, "totalPages": $tp, "passPages": $pp, "failPages": $fp}
+    '
+  fi
+
+  # 판정
+  local details
+  details=$(jq -n --argjson tp "$total_pages" --argjson pp "$pass_pages" --argjson fp "$fail_pages" --arg r "$result_str" \
+    '{"totalPages":$tp,"passPages":$pp,"failPages":$fp,"result":$r}')
+
+  if [[ $fail_pages -gt 0 ]]; then
+    echo ""
+    echo "[page-render] FAIL: $fail_pages/$total_pages pages have issues"
+    append_gate_history "page-render-check" "fail" "$details"
+    if [[ "$strict" == "true" ]]; then
+      return 1
+    else
+      return 0  # SOFT gate: WARN
+    fi
+  elif [[ $total_pages -eq 0 ]]; then
+    echo ""
+    echo "[page-render] SKIP: No pages to check"
+    append_gate_history "page-render-check" "skip" "$details"
+    return 2
+  else
+    echo ""
+    echo "[page-render] PASS: All $total_pages pages render correctly"
+    append_gate_history "page-render-check" "pass" "$details"
+    return 0
+  fi
+}
+
 # ─── functional-flow: 핵심 플로우 검증 (프로젝트 유형별) ───
 
 cmd_functional_flow() {
@@ -3737,6 +3975,19 @@ cmd_functional_flow() {
       run_smoke_script "tests/api-smoke.sh" "API Smoke" || true
       if [[ -f "tests/ui-smoke.sh" ]]; then
         run_smoke_script "tests/ui-smoke.sh" "UI Smoke" || true
+      elif [[ -f "tests/ui-smoke.spec.ts" ]] || [[ -f "tests/ui-smoke.spec.js" ]]; then
+        echo "[FLOW] Running Playwright UI smoke..."
+        local output exit_code
+        output=$(npx playwright test tests/ui-smoke.spec.* --reporter=list 2>&1) && exit_code=0 || exit_code=$?
+        if [[ $exit_code -eq 0 ]]; then
+          echo "[FLOW] UI Smoke: PASS"
+          flow_results="${flow_results}UI Smoke: pass; "
+        else
+          echo "[FLOW] UI Smoke: FAIL"
+          echo "$output" | tail -10
+          all_pass=false
+          flow_results="${flow_results}UI Smoke: fail; "
+        fi
       fi
       ;;
     library|cli)
@@ -3842,6 +4093,7 @@ main() {
     integration-smoke)  cmd_integration_smoke "$@" ;;
     implementation-depth) cmd_implementation_depth "$@" ;;
     test-quality)      cmd_test_quality "$@" ;;
+    page-render-check) cmd_page_render_check "$@" ;;
     functional-flow)   cmd_functional_flow "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
@@ -3875,6 +4127,7 @@ main() {
       echo "  design-polish-gate                         - WCAG check + screenshot capture (SOFT_FAIL)"
       echo "  implementation-depth [--threshold N] [--dir D] - Detect stub/empty implementations (SOFT)"
       echo "  test-quality                               - Check test assertion ratio, skip ratio, US coverage (SOFT)"
+      echo "  page-render-check [--port N] [--strict]    - Playwright page render check (blank/errors/404)"
       echo "  functional-flow                            - Run project-type-specific smoke scripts (api/frontend/fullstack)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"

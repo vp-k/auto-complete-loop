@@ -21,7 +21,7 @@ Phase 0 완료 시:
 
 ```
 Phase 1 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/doc-planning/SKILL.md
-Phase 1 스킬의 Step 1-0 ~ 1-6 수행
+Phase 1 스킬의 Step 1-0 ~ 1-9 수행 (Step 1-6: 스펙 깊이 검증, Step 1-7: 검증 스크립트 생성, Step 1-8: 완료 검증)
 Phase 1 완료 시:
   *** Pre-mortem 전이 가드 (Phase 2 진입 전 필수 — phase_1 completed 마킹보다 선행) ***
   1. progress 파일에서 phases.phase_0.outputs.premortem.tigers 조회
@@ -44,6 +44,17 @@ Phase 1 완료 시:
   3. projectScope.hasBackend=true인 경우:
      - SPEC.md에 "User Stories — Backend" **AND** "API Contract" 섹션 모두 존재 확인
      - 하나라도 없으면 → "백엔드 기획 문서 누락" 경고 → Phase 2 전이 차단
+  4. 통과 시 아래로 진행
+
+  *** 검증 스크립트 게이트 (Phase 2 진입 전 필수 — 스코프 완전성 가드 통과 후) ***
+  1. 검증 스크립트 존재 확인:
+     - hasBackend=true → tests/api-smoke.sh 존재 확인
+     - hasFrontend=true → tests/ui-smoke.sh 또는 tests/ui-smoke.spec.ts 또는 tests/ui-smoke.spec.js 존재 확인
+     - library/CLI → tests/lib-smoke.sh 존재 확인
+  2. 하나도 없으면 → "검증 스크립트 미생성 — Step 1-7 수행 필요" → Phase 2 전이 차단
+     - Phase 1에서 smoke 스크립트 생성 후 재시도
+  3. SPEC.md (또는 docs/api-spec.md)에 US-F-*/US-B-* ID 존재 확인:
+     - 0건이면 → WARN (차단하지 않지만 경고: "US-* ID 없음, test-quality 커버리지 측정 불가")
   4. 통과 시 아래로 진행
 
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_1 completed --progress-file {PROGRESS_FILE}

@@ -233,8 +233,8 @@ if [[ $api_detail -lt 3 ]]; then
 fi
 
 # 검증 스크립트 존재 체크
-if [[ ! -f tests/api-smoke.sh ]] && [[ ! -f tests/ui-smoke.sh ]] && [[ ! -f tests/lib-smoke.sh ]]; then
-  echo "FAIL: 검증 스크립트(tests/*-smoke.sh) 미생성"
+if [[ ! -f tests/api-smoke.sh ]] && [[ ! -f tests/ui-smoke.sh ]] && [[ ! -f tests/ui-smoke.spec.ts ]] && [[ ! -f tests/ui-smoke.spec.js ]] && [[ ! -f tests/lib-smoke.sh ]]; then
+  echo "FAIL: 검증 스크립트(tests/*-smoke.sh 또는 tests/ui-smoke.spec.ts) 미생성"
 fi
 
 # US-* ID 존재 체크

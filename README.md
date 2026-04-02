@@ -2,150 +2,212 @@
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job.
 
-AI 코딩 완주 프레임워크. Ralph Loop 내장 + DoD/SPEC/TDD/Fresh Context Verification으로 AI가 끝까지 완성하도록 강제합니다.
-
 ## Installation
 
 ```bash
 claude plugins install /path/to/auto-complete-loop
 ```
 
-After installation, remove any conflicting files in `~/.claude/commands/` with the same names.
+## Quick Start
 
-## Commands
+```bash
+# Build a full project from one sentence (solo - no codex/gemini needed)
+/full-auto-solo Make a community site with auth, posts, and comments
 
-### `/full-auto <requirement>` (Core)
-End-to-end project automation. One-line requirement to planning, implementation, code review, and verification.
+# Build with codex code review (requires codex-cli)
+/full-auto Make a todo app with categories and due dates
 
-- **Phase 0: PM Planning** — Problem/Persona/JTBD/Priority/Assumptions/Pre-mortem/Success Criteria + user approval
-- **Phase 1: Planning** — codex discussion to complete planning docs
-- **Phase 2: Implementation** — TDD-based code implementation
-- **Phase 3: Code Review** — codex code review (3 rounds, IMPL category for SPEC compliance)
-- **Phase 4: Verification** — Release verification + polish + Launch Readiness
+# Review existing code (solo)
+/code-review-loop-solo --rounds 3 src/
 
-### `/full-auto-teams <requirement>`
-End-to-end automation with Agent Teams. 3-way parallel code review + Live Testing.
+# Review with codex
+/code-review-loop --rounds 3 src/
+```
 
-### `/implement-docs-auto <definition> <doclist>`
-Implement planning docs (fully automated). Claude implements directly, codex handles review/debugging only.
+## 3 Modes: Choose Your Setup
 
-### `/plan-docs-auto <definition> <doclist>`
-Planning doc refinement (2-way auto-discussion). codex-cli and Claude Code debate to optimal result.
+Every major command comes in **3 modes**. Pick the one that matches your environment:
 
-### `/plan-docs-auto-gemini <definition> <doclist>`
-Planning doc refinement (3-way). codex-cli, Gemini, and Claude Code debate to optimal result.
+| Mode | External AI | Best For |
+|------|------------|----------|
+| **Solo** | None | No setup needed. Claude switches roles for multi-perspective analysis |
+| **2-Way** | codex-cli | Stronger review - codex provides independent perspective |
+| **3-Way** | codex-cli + gemini-cli | Strongest - 3 independent AI perspectives |
 
-### `/polish-for-release [definition] [doclist]`
-Pre-release polish (2-way auto-discussion). codex-cli and Claude Code prepare release readiness.
+### Command Matrix
 
-### `/code-review-loop [--rounds N | --goal "condition"] <scope>`
-Iterative code review. codex-cli reviews all categories (SEC/ERR/DATA/PERF/CODE/IMPL) independently.
+| Feature | Solo | 2-Way (codex) | 3-Way (codex+gemini) |
+|---------|------|--------------|---------------------|
+| **Full project** | `/full-auto-solo` | `/full-auto` | `/full-auto-teams` |
+| **Code review** | `/code-review-loop-solo` | `/code-review-loop` | `/code-review-loop-gemini` |
+| **Planning docs** | `/plan-docs-auto-solo` | `/plan-docs-auto` | `/plan-docs-auto-gemini` |
+| **Release polish** | `/polish-for-release-solo` | `/polish-for-release` | `/polish-for-release-gemini` |
 
-### `/code-review-loop-gemini [--rounds N | --goal "condition"] <scope>`
-3-way independent review (codex-cli + gemini-cli).
+### How Solo Mode Works
 
-### `/check-docs [docs_dir]`
-Doc consistency check. Verify doc-to-doc and doc-to-code alignment with scripts + AI auto-fix.
+Claude plays multiple roles by **explicitly switching perspectives** per pass:
 
-### `/add-e2e [docs_dir]`
-Add E2E tests to existing projects. Auto-generate scenarios from docs or code analysis.
+**Code Review (3-pass sequential)**:
+```
+Pass 1 [Security + Error Expert]   SEC, ERR only
+Pass 2 [Data + Performance Expert] DATA, PERF only
+Pass 3 [SPEC Compliance Expert]    IMPL, CODE only
+```
+Each pass reads the code fresh with a single focused lens. Prevents perspective contamination.
 
-### `/interview-prep <overview.md path>`
-User interview preparation. Auto-generate persona-based interview scripts using The Mom Test principles.
+**Planning Docs (self-debate)**:
+```
+[Writer]  Drafts the document
+[Critic]  "How would this fail in production?"
+[Writer]  Addresses critique
+[Critic]  Repeats until no Critical/High issues remain
+```
 
-### `/interview-summary <transcript>`
-Interview transcript analysis. Extract patterns and derive requirements from user interview records.
+**Release Polish (dual-role)**:
+```
+[Executor] Analyzes and fixes
+[Verifier] "Did this fix introduce new problems?"
+```
 
-### `/post-analysis [--only metrics|retro|launch|competitive]`
-Post-project analysis. Run Metrics/Retrospective/Launch/Competitive analysis sequentially.
+## Use Cases
+
+### "I have an idea, make it real"
+```bash
+/full-auto-solo Build a recipe sharing app with user profiles, recipe CRUD, and search
+```
+Runs 5 phases: PM Planning, Doc Planning, Implementation, Code Review, Verification.
+
+### "Review my existing codebase"
+```bash
+# Quick 3-round review
+/code-review-loop-solo --rounds 3 src/
+
+# Until zero critical/high issues
+/code-review-loop --goal "CRITICAL/HIGH 0" src/auth/
+
+# Interactive mode
+/code-review-loop --interactive src/
+```
+
+### "I have planning docs, implement them"
+```bash
+/implement-docs-auto overview.md README.md
+```
+
+### "Refine my planning docs before coding"
+```bash
+/plan-docs-auto-solo overview.md README.md
+```
+
+### "Polish before release"
+```bash
+/polish-for-release-solo
+```
+
+### "Add E2E tests to existing project"
+```bash
+/add-e2e docs/
+```
+
+### "Prepare for user interviews"
+```bash
+/interview-prep docs/overview.md
+```
+
+### "Analyze completed project"
+```bash
+/post-analysis
+/post-analysis --only metrics
+```
+
+## All Commands
+
+### Project Lifecycle
+| Command | Description |
+|---------|-------------|
+| `/full-auto <req>` | End-to-end automation (codex review) |
+| `/full-auto-teams <req>` | End-to-end with Agent Teams 3-way review + Live Testing |
+| `/full-auto-solo <req>` | End-to-end with Claude multi-perspective (no external AI) |
+| `/implement-docs-auto <def> <docs>` | Implement planning docs to code |
+
+### Code Review
+| Command | Description |
+|---------|-------------|
+| `/code-review-loop [opts] <scope>` | Iterative review with codex |
+| `/code-review-loop-gemini [opts] <scope>` | 3-way: codex + gemini |
+| `/code-review-loop-solo [opts] <scope>` | Claude 3-pass multi-perspective |
+
+Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
+
+### Planning
+| Command | Description |
+|---------|-------------|
+| `/plan-docs-auto <def> <docs>` | Doc refinement with codex debate |
+| `/plan-docs-auto-gemini <def> <docs>` | 3-way: codex + gemini + Claude |
+| `/plan-docs-auto-solo <def> <docs>` | Claude self-debate (writer vs. critic) |
+
+### Release
+| Command | Description |
+|---------|-------------|
+| `/polish-for-release [def] [docs]` | Pre-release polish with codex |
+| `/polish-for-release-gemini [def] [docs]` | 3-way advisory |
+| `/polish-for-release-solo [def] [docs]` | Claude dual-role (executor + verifier) |
+
+### Utilities
+| Command | Description |
+|---------|-------------|
+| `/check-docs [dir]` | Doc consistency check |
+| `/add-e2e [dir]` | Add E2E tests from docs or code analysis |
+| `/interview-prep <path>` | Generate interview scripts (The Mom Test) |
+| `/interview-summary <file>` | Extract patterns from interview transcripts |
+| `/post-analysis [--only X]` | Metrics / Retrospective / Launch / Competitive |
 
 ## Architecture
 
-### Orchestrator + Phase Skill Separation
+### Full-Auto Pipeline (5 Phases)
 
 ```
-commands/full-auto.md        (Orchestrator — owns Ralph Loop, phase transitions, progress JSON, promise tags)
-    └── Loads each phase skill via Read
-
-skills/pm-planning/SKILL.md      Phase 0 — PM Planning
-skills/doc-planning/SKILL.md     Phase 1 — Doc Planning
-skills/implementation/SKILL.md   Phase 2 — Implementation
-skills/code-review/SKILL.md      Phase 3 — Code Review
-skills/verification/SKILL.md     Phase 4 — Verification + Launch Readiness
+Phase 0: PM Planning      User approval (only interaction point)
+    |  API list, data models, key flows, page list
+    v
+Phase 1: Doc Planning     Document refinement + smoke script generation
+    |  SPEC.md, tests/api-smoke.sh
+    |  Hard gate: smoke scripts must exist
+    v
+Phase 2: Implementation   TDD coding + per-document depth check
+    |  implementation-depth after each document
+    v
+Phase 3: Code Review      Multi-perspective (codex / solo 3-pass)
+    |  IMPL: STUB/SCHEMA/MISSING/HARDCODE/FLOW
+    v
+Phase 4: Verification     All quality gates + Launch Readiness
 ```
 
-Standalone commands (`plan-docs-auto`, `implement-docs-auto`, `code-review-loop`) are maintained for independent use.
+### Quality Gates (14)
 
-### Quality Gates
+| Gate | Type | Catches |
+|------|------|---------|
+| `quality-gate` | HARD | Build/typecheck/lint/test failures |
+| `implementation-depth` | SOFT | Stub functions, empty bodies |
+| `test-quality` | SOFT | Empty/skipped tests, low assertion coverage |
+| `functional-flow` | SOFT | Smoke script failures |
+| `page-render-check` | SOFT | Blank pages, console errors, 404s |
+| `smoke-check` | SOFT/HARD | Server startup failures, empty responses |
+| `e2e-gate` | SOFT/HARD | E2E test failures |
+| `secret-scan` | HARD | Leaked credentials |
+| `vuln-scan` | HARD | Dependency vulnerabilities |
+| `placeholder-check` | HARD | TODO/FIXME left in code |
+| `external-service-check` | HARD | Missing SDK/config for declared services |
+| `service-test-check` | HARD | No backend tests |
+| `integration-smoke` | HARD | Frontend cannot reach backend |
+| `design-polish-gate` | SOFT | WCAG accessibility violations |
 
-| Gate | Type | Description |
-|------|------|-------------|
-| `quality-gate` | HARD | Build/typecheck/lint/test (exit 0/1) |
-| `implementation-depth` | SOFT | Detect stub/empty function bodies (threshold: 5) |
-| `test-quality` | SOFT | Assertion ratio >= 70%, skip ratio <= 20%, US-* coverage |
-| `functional-flow` | SOFT | Project-type-specific smoke script execution |
-| `page-render-check` | SOFT | Playwright-based page render check (blank/console.error/404) |
-| `secret-scan` | HARD | Credential detection |
-| `smoke-check` | SOFT/HARD | Server startup + endpoint + response body validation |
-| `e2e-gate` | SOFT/HARD | E2E framework detection + execution |
-| `placeholder-check` | HARD | TODO/FIXME/placeholder detection |
-| `design-polish-gate` | SOFT | WCAG accessibility + screenshot capture |
-| `external-service-check` | HARD | SPEC-declared external service SDK/config verification |
-| `service-test-check` | HARD | Backend route/service test file existence |
-| `integration-smoke` | HARD | Frontend-backend integration (API URL, CORS, server) |
-| `vuln-scan` | HARD | Dependency vulnerability scan |
+### Core Mechanisms
 
-### IMPL Code Review Category (Phase 3)
-codex reviews code against SPEC.md with these sub-categories:
-- **IMPL-STUB**: Empty function bodies, placeholder responses
-- **IMPL-SCHEMA**: Response structure mismatch with SPEC
-- **IMPL-MISSING**: Endpoints/pages defined in SPEC but not implemented
-- **IMPL-HARDCODE**: Hardcoded mock data in production code
-- **IMPL-FLOW**: Core user flows not actually connected
+**Ralph Loop**: Stop Hook blocks session exit until all conditions met. Prevents false completion.
 
-### Phase 1 → Phase 2 Transition Guards
-- **Pre-mortem hard gate**: Blocking Tigers with empty mitigation block Phase 2 entry
-- **Scope completeness gate**: projectScope.hasFrontend/hasBackend must have corresponding SPEC sections
-- **Smoke script gate**: `tests/api-smoke.sh` or `tests/ui-smoke.spec.ts` must exist (Phase 1 output)
+**Gate History**: Every gate execution recorded. 3 consecutive same-gate failures trigger warning.
 
-## Core Mechanisms
+**Error Escalation (L0-L5)**: Immediate fix, different method, codex analysis, different approach, scope reduction, user intervention.
 
-### Ralph Loop
-- Stop Hook physically blocks session termination
-- completion-promise + verification file prevents false completion
-- Iteration-based work splitting prevents context exhaustion
-
-### 5 Principles
-1. **DoD (Definition of Done)**: DONE.md template for clear completion criteria
-2. **SPEC**: SPEC.md template for clear implementation criteria
-3. **Ticket splitting**: Documents split into independently verifiable tickets
-4. **Fresh Context Verification**: Separate AI verifies in fresh context
-5. **Handoff**: Context (why/how) transferred between iterations
-
-## shared-gate.sh Subcommands
-
-| Subcommand | Description |
-|------------|-------------|
-| `init --template <type>` | Initialize progress JSON |
-| `init-ralph <promise> <file> [max]` | Create Ralph Loop file |
-| `status` | Show current status (auto-migrates schema) |
-| `update-step <step> <status>` | Transition step state |
-| `quality-gate` | Run build/type/lint/test + record to verification.json |
-| `implementation-depth` | Detect stub/empty implementations (SOFT, language-aware) |
-| `test-quality` | Check assertion ratio, skip ratio, US-* coverage |
-| `functional-flow` | Run project-type-specific smoke scripts |
-| `page-render-check` | Playwright page render check (blank/errors/404) |
-| `secret-scan` | Secret leak scan (HARD_FAIL) |
-| `vuln-scan` | Dependency vulnerability scan |
-| `smoke-check [--strict]` | Server startup + healthcheck + response body validation |
-| `e2e-gate` | E2E test framework detection + execution |
-| `design-polish-gate [--strict]` | WCAG check + screenshot capture |
-| `placeholder-check` | TODO/FIXME detection (HARD_FAIL) |
-| `external-service-check` | SPEC external service SDK/config (HARD_FAIL) |
-| `service-test-check` | Backend test existence (HARD_FAIL) |
-| `integration-smoke` | Frontend-backend integration (HARD_FAIL) |
-| `record-error` | Error recording + L0-L5 escalation |
-| `recover` | Recovery info (handoff + next steps) |
-| `handoff-update` | Atomic handoff field update |
-
-Global option: `--progress-file <path>` (auto-detected if omitted)
+**IMPL Code Review**: Reviews code against SPEC.md (STUB/SCHEMA/MISSING/HARDCODE/FLOW).

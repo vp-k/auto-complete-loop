@@ -3516,7 +3516,7 @@ cmd_test_quality() {
 
     python)
       local test_files
-      test_files=$(find "${test_dirs[@]}" -type f -name 'test_*.py' -o -name '*_test.py' 2>/dev/null || true)
+      test_files=$(find "${test_dirs[@]}" -type f \( -name 'test_*.py' -o -name '*_test.py' \) 2>/dev/null || true)
 
       while IFS= read -r tf; do
         [[ -z "$tf" ]] && continue

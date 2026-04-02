@@ -1,6 +1,6 @@
 # Post-Analysis: Metrics Recommendation
 
-소스 코드를 분석하여 측정해야 할 KPI와 Analytics 이벤트를 추천합니다.
+Analyzes source code to recommend KPIs and analytics events to track.
 
 ## 입력
 

@@ -1,5 +1,5 @@
 ---
-description: "코드 리뷰 반복 수행 (2자: codex). codex-cli가 SEC/ERR/DATA/PERF/CODE 전 관점에서 독립 리뷰"
+description: "Iterative code review (2-way: codex). codex-cli reviews all categories (SEC/ERR/DATA/PERF/CODE) independently"
 argument-hint: "[--rounds N | --goal \"조건\"] <scope>"
 ---
 

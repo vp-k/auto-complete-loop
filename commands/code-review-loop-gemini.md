@@ -1,5 +1,5 @@
 ---
-description: "코드 리뷰 반복 수행 (3자: codex + gemini). codex-cli(SEC/ERR/DATA) + gemini-cli(PERF/CODE) 독립 리뷰"
+description: "Iterative code review (3-way: codex + gemini). codex-cli(SEC/ERR/DATA) + gemini-cli(PERF/CODE) independent review"
 argument-hint: "[--rounds N | --goal \"조건\"] <scope>"
 ---
 

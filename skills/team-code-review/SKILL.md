@@ -1,8 +1,8 @@
-# Phase 3: Team Code Review (Agent Teams 기반)
+# Phase 3: Team Code Review (Agent Teams)
 
-이 스킬은 full-auto-teams 오케스트레이터에서 Phase 3 진입 시 Read로 로드됩니다.
-Agent Teams를 활용하여 3자 병렬 리뷰 + Live App Testing을 수행합니다.
-Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
+Loaded by the full-auto-teams orchestrator at Phase 3 entry via Read.
+Uses Agent Teams for 3-way parallel review + Live App Testing.
+No Ralph/progress/promise code — managed by the orchestrator.
 
 ## 전제 조건
 

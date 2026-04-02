@@ -1,6 +1,6 @@
 # Post-Analysis: Competitive Frame
 
-소스 코드와 기획 문서를 기반으로 경쟁 분석 프레임을 생성합니다.
+Generates a competitive analysis frame based on source code and planning docs.
 우리 앱의 기능은 코드에서 자동 추출하고, 경쟁사 정보는 `[조사 필요]`로 표시합니다.
 
 ## 입력

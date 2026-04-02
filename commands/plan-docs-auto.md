@@ -1,5 +1,5 @@
 ---
-description: 기획 문서 완성 (2자 자동 토론형). codex-cli와 Claude Code가 자동 토론하여 최적의 결과 도출
+description: "Planning doc refinement (2-way auto-discussion). codex-cli and Claude Code debate to optimal result"
 argument-hint: <definition(overview.md)> <doclist(README.md)>
 ---
 

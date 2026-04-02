@@ -1,7 +1,7 @@
-# Phase 3: Code Review (순수 리뷰 로직)
+# Phase 3: Code Review
 
-이 스킬은 full-auto 오케스트레이터에서 Phase 3 진입 시 Read로 로드됩니다.
-Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
+Loaded by the full-auto orchestrator at Phase 3 entry via Read.
+No Ralph/progress/promise code — managed by the orchestrator.
 
 ## 전제 조건
 

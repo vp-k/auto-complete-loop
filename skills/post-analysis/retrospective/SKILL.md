@@ -1,6 +1,6 @@
 # Post-Analysis: Retrospective
 
-Progress JSON과 Git Log를 데이터 기반으로 분석하여 회고 보고서를 생성합니다.
+Generates a data-driven retrospective report from progress JSON and git log.
 
 ## 입력
 

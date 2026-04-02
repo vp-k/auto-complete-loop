@@ -1,5 +1,5 @@
 ---
-description: "완성된 프로젝트 분석. Metrics/Retrospective/Launch/Competitive 4가지를 순차 실행"
+description: "Post-project analysis. Run Metrics/Retrospective/Launch/Competitive analysis sequentially"
 argument-hint: [--only metrics|retro|launch|competitive]
 ---
 

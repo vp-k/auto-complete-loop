@@ -1,5 +1,5 @@
 ---
-description: "인터뷰 기록 분석. 사용자가 제공한 인터뷰 기록에서 패턴 추출 및 요구사항 도출"
+description: "Interview transcript analysis. Extract patterns and derive requirements from user interview records"
 argument-hint: <인터뷰 기록 파일 경로 또는 텍스트>
 ---
 

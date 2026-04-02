@@ -1,6 +1,6 @@
 # Post-Analysis: Launch Analysis
 
-기획 문서와 코드를 기반으로 런치 전략 초안을 생성합니다.
+Generates a launch strategy draft based on planning docs and code.
 AI가 코드/문서에서 추출 가능한 부분은 자동 작성하고, 외부 조사가 필요한 부분은 `[조사 필요]`로 표시합니다.
 
 ## 입력

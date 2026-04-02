@@ -1,5 +1,5 @@
 ---
-description: 기획 문서 구현 (완전 자동화). Claude가 직접 구현하고 codex-cli는 리뷰/오류해결만. 프로젝트 생성부터 완료까지 사용자 개입 최소화
+description: "Implement planning docs (fully automated). Claude implements directly, codex handles review/debugging only"
 argument-hint: <definition(overview.md)> <doclist(README.md)>
 ---
 

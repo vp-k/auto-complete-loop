@@ -1,7 +1,7 @@
-# Phase 4: Verification + Launch Readiness (순수 검증 로직)
+# Phase 4: Verification + Launch Readiness
 
-이 스킬은 full-auto 오케스트레이터에서 Phase 4 진입 시 Read로 로드됩니다.
-Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
+Loaded by the full-auto orchestrator at Phase 4 entry via Read.
+No Ralph/progress/promise code — managed by the orchestrator.
 
 ## 전제 조건
 

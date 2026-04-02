@@ -1,5 +1,5 @@
 ---
-description: "기획→구현→팀 리뷰→검수 올인원. Agent Teams로 3자 병렬 코드 리뷰 + Live Testing"
+description: "End-to-end project automation with Agent Teams. 3-way parallel code review + Live Testing"
 argument-hint: <요구사항 (자연어)>
 ---
 

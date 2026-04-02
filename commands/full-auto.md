@@ -1,5 +1,5 @@
 ---
-description: "기획→구현→검수 올인원. 한 줄 요구사항으로 기획 문서→코드 구현→코드 리뷰→최종 검증까지 자동 완주"
+description: "End-to-end project automation. One-line requirement to planning → implementation → code review → verification"
 argument-hint: <요구사항 (자연어)>
 ---
 

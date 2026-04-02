@@ -1,7 +1,7 @@
-# Phase 0: PM Planning (순수 로직)
+# Phase 0: PM Planning
 
-이 스킬은 full-auto 오케스트레이터에서 Phase 0 진입 시 Read로 로드됩니다.
-Ralph/progress/promise 코드 없음 — 오케스트레이터가 관리.
+Loaded by the full-auto orchestrator at Phase 0 entry via Read.
+No Ralph/progress/promise code — managed by the orchestrator.
 
 ## 전제 조건
 

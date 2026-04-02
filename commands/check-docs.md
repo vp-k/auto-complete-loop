@@ -1,5 +1,5 @@
 ---
-description: "문서 정합성 검증. doc↔doc 일관성 + doc↔code 매칭을 스크립트+AI로 검증하고 자동 수정"
+description: "Doc consistency check. Verify doc↔doc and doc↔code alignment with scripts + AI auto-fix"
 argument-hint: "[docs_dir (기본: docs/)]"
 ---
 

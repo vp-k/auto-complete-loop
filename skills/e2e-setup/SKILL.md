@@ -1,7 +1,7 @@
-# E2E Setup (공유 스킬 — 순수 로직)
+# E2E Setup
 
-이 스킬은 full-auto Phase 2 또는 add-e2e 오케스트레이터에서 Read로 로드됩니다.
-Ralph/progress/promise 코드 없음 — 호출자가 관리.
+Loaded by full-auto Phase 2 or add-e2e orchestrator via Read.
+No Ralph/progress/promise code — managed by the caller.
 
 ## 1. 프로젝트 분석
 

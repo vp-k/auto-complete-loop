@@ -1,5 +1,5 @@
 ---
-description: "기존 프로젝트에 E2E 테스트 추가. 문서 기반 또는 코드 분석으로 핵심 시나리오 도출 후 자동 작성/실행"
+description: "Add E2E tests to existing projects. Auto-generate scenarios from docs or code analysis"
 argument-hint: "[docs_dir]"
 ---
 

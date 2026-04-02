@@ -1,5 +1,5 @@
 ---
-description: "사용자 인터뷰 준비. 페르소나 기반 인터뷰 스크립트를 The Mom Test 원칙으로 자동 생성"
+description: "User interview preparation. Auto-generate persona-based interview scripts using The Mom Test principles"
 argument-hint: <docs/overview.md 경로 또는 프로젝트 설명>
 ---
 

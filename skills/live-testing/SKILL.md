@@ -1,7 +1,7 @@
-# Live App Testing (적응형)
+# Live App Testing (Adaptive)
 
-실제 앱을 실행하고 사용자 관점에서 user flow를 검증합니다.
-코드 리뷰(static analysis)로는 발견할 수 없는 런타임 버그를 찾습니다.
+Runs the actual app and validates user flows from the user perspective.
+Finds runtime bugs that code review (static analysis) cannot detect.
 
 ## 핵심 원칙
 

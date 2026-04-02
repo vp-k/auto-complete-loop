@@ -1,5 +1,5 @@
 ---
-description: 프로덕션 릴리즈 전 폴리싱 (2자 자동 토론형). codex-cli와 Claude Code가 자동 토론하여 릴리즈 준비 완료
+description: "Pre-release polish (2-way auto-discussion). codex-cli and Claude Code prepare release readiness"
 argument-hint: [definition(overview.md)] [doclist(README.md)]
 ---
 

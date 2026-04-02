@@ -1,5 +1,5 @@
 ---
-description: 기획 문서 완성 (3자 자동 토론형). codex-cli, Gemini, Claude Code가 자동 토론하여 최적의 결과 도출
+description: "Planning doc refinement (3-way auto-discussion). codex-cli, Gemini, and Claude Code debate to optimal result"
 argument-hint: <definition(overview.md)> <doclist(README.md)>
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: verification-auditor
+model: sonnet
 description: |
   Use this agent for Phase 4 verification. Independently validates that all quality gates pass, DoD items have evidence, and the project is ready for release. Does not modify code — only audits and reports.
 ---
@@ -35,7 +36,30 @@ For each DoD item in the progress file:
 - [ ] E2E test files exist at referenced paths
 - [ ] E2E tests actually run and pass
 
-### 6. Release Readiness
+### 6. Regression Test Coverage
+- [ ] Modified code paths have corresponding test cases
+- [ ] Test Plan (from Test Strategist) P0/P1 cases are all implemented
+- [ ] Each failure path scenario in Test Plan has at least one test
+- [ ] No critical paths left untested after code changes
+
+### 7. Environment & Dependency Audit
+- [ ] `.env.example` matches all `process.env.*` / `os.environ` references in code
+- [ ] No missing env vars in example that are required in code
+- [ ] `npm audit` / `pip audit` / equivalent reports no HIGH+ vulnerabilities
+- [ ] No deprecated dependencies in production code
+
+### 8. Migration Verification (if applicable)
+- [ ] Schema changes detected → migration scripts exist
+- [ ] Migration is reversible (down migration defined)
+- [ ] Migration tested against seed data
+
+### 9. Accessibility Baseline (if hasFrontend=true)
+- [ ] WCAG 2.1 AA color contrast requirements met
+- [ ] All interactive elements keyboard accessible
+- [ ] Semantic HTML used (no div-as-button patterns)
+- [ ] Form inputs have associated labels
+
+### 10. Release Readiness
 - [ ] README is up to date
 - [ ] No TODO/FIXME/HACK comments in critical paths
 - [ ] Environment variables documented (.env.example)

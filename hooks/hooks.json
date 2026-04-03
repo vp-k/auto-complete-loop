@@ -31,6 +31,21 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" doc-file-warning.sh",
             "description": "불필요 문서 파일 생성 차단"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" protect-files-guard.sh",
+            "description": "진행 상태 파일 경고 + 기획 문서/CLAUDE.md 보호 (통합 가드)"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" protect-files-guard.sh",
+            "description": "진행 상태 파일 경고 + 기획 문서/CLAUDE.md 보호 (통합 가드)"
           }
         ]
       }

@@ -201,9 +201,18 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
 
 스크립트가 발견한 구조적 불일치를 Claude가 수정합니다.
 
-### Step 1-6: 스펙 깊이 검증
+### Step 1-6: 스펙 깊이 검증 + Architect Agent
 
-Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다:
+Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다.
+
+**Architect Agent**를 병렬로 호출하여 아키텍처 리뷰를 수행합니다:
+- Agent tool로 `architect` 에이전트 호출
+- 기술 스택 적합성, 의존성 분석, API 설계 일관성, 데이터 모델, NFR 커버리지 검증
+- overview.md + SPEC.md 경로를 프롬프트에 포함
+- 결과: Architecture Review Report (ARCHITECTURE_SCORE 포함)
+- ARCHITECTURE_SCORE < 5 또는 블로커 존재 시 Phase 2 진행 전 반드시 해결
+
+Claude가 직접 수행하는 검증:
 
 - **API 엔드포인트**: SPEC.md에 각 엔드포인트의 Request/Response 상세가 기술되어 있는지 확인 (단순 목록이 아닌 필드/타입/예시 수준)
 - **User Story ID**: 모든 User Story에 `US-F-*` (프론트엔드) 또는 `US-B-*` (백엔드) 형식의 ID가 부여되었는지 확인
@@ -229,7 +238,18 @@ US-* ID 필수화 규칙:
 - SPEC.md의 모든 User Story에 US-F-001, US-B-001 형식 ID를 반드시 부여
 - 이 ID가 테스트 커버리지 측정의 기준이 됨
 
-### Step 1-8: Phase 1 완료 검증
+### Step 1-8: Test Strategist Agent
+
+Phase 1 완료 직전, **Test Strategist Agent**를 호출하여 테스트 전략을 수립합니다:
+
+- Agent tool로 `test-strategist` 에이전트 호출
+- overview.md + SPEC.md + Architecture Review Report를 입력으로 제공
+- 결과: Test Plan (테스트 피라미드 배분, 기능별 에지케이스, 실패 경로, 테스트 데이터 설계)
+- Test Plan은 `docs/test-plan.md`에 저장
+- Phase 2 구현자가 이 Test Plan을 따라 테스트 작성
+- Phase 4 verification-auditor가 Test Plan 대비 커버리지 교차 검증
+
+### Step 1-9: Phase 1 완료 검증
 
 모든 문서 토론 완료 및 검증 스크립트 생성 후, Phase 전이 전 최종 검증을 수행합니다:
 
@@ -254,7 +274,7 @@ fi
 
 WARN은 경고만 출력하고 진행, FAIL은 해당 단계를 재수행합니다.
 
-### Step 1-9: Phase 1 완료
+### Step 1-10: Phase 1 완료
 
 모든 문서 `completed` 시:
 1. DoD 업데이트: `all_docs_complete.checked = true`

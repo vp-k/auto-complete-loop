@@ -1,5 +1,6 @@
 ---
 name: code-reviewer
+model: sonnet
 description: |
   Use this agent for independent code review during Phase 3. Reviews code across 5 categories (SEC/ERR/DATA/PERF/CODE) with severity-based finding format. Designed for Agent Teams parallel review.
 ---
@@ -14,13 +15,17 @@ Review the code across these 5 categories:
 - SEC-INJ: SQL/NoSQL/Command injection
 - SEC-XSS: Cross-site scripting, unescaped output
 - SEC-AUTH: Authentication/authorization bypass
+- SEC-ACCESS: Horizontal/vertical privilege escalation (IDOR, role bypass)
 - SEC-TOCTOU: Time-of-check to time-of-use race
-- SEC-LLM: LLM output passed directly to DB/shell/eval
+- SEC-LLM: LLM output passed to DB/shell/eval without validation, prompt injection via user input, missing token/cost limits
 - SEC-CRYPTO: Weak hashing (MD5/SHA1), hardcoded salt
 - SEC-TYPE: Type coercion (JS `==` vs `===`)
 - SEC-RACE: Concurrency race conditions
 - SEC-TIME: Token expiry, session timing issues
 - SEC-SECRET: Secret/API key exposure, hardcoded credentials
+- SEC-SSRF: Server-Side Request Forgery (user-controlled URLs in server requests)
+- SEC-DESER: Unsafe deserialization of untrusted data
+- SEC-SSTI: Server-Side Template Injection
 
 ### ERR (Error Handling)
 - Missing error handling on I/O, network, DB operations
@@ -45,6 +50,10 @@ Review the code across these 5 categories:
 - Logic errors (off-by-one, incorrect conditions)
 - Missing test coverage for critical paths
 - Duplicated logic that will diverge
+- CODE-GOD: God Object/Function (500+ lines in single function/class)
+- CODE-SHOTGUN: Shotgun Surgery (single change requires 10+ file modifications)
+- CODE-ENVY: Feature Envy (method uses another class's data more than its own)
+- CODE-PRIMITIVE: Primitive Obsession (using primitives instead of domain types)
 
 ## Finding Format
 

@@ -64,7 +64,7 @@ No Ralph/progress/promise code — managed by the orchestrator.
 - "이 정도면 괜찮다"는 판단을 경계하라.
 
 ## 전문 리뷰 관점
-1. SEC (보안): SEC-INJ, SEC-XSS, SEC-AUTH, SEC-TOCTOU, SEC-LLM, SEC-CRYPTO, SEC-TYPE, SEC-RACE, SEC-TIME, SEC-SECRET
+1. SEC (보안): SEC-INJ, SEC-XSS, SEC-AUTH, SEC-ACCESS, SEC-TOCTOU, SEC-LLM, SEC-CRYPTO, SEC-TYPE, SEC-RACE, SEC-TIME, SEC-SECRET, SEC-SSRF, SEC-DESER, SEC-SSTI
 2. ERR (에러 처리): try-catch 누락, 에러 응답 불일치, 에지 케이스 미처리
 3. DATA (데이터 무결성): 트랜잭션 누락, 스키마 불일치, race condition
 
@@ -152,9 +152,41 @@ sec-reviewer나 quality-reviewer가 "코드상 문제없음"이라 판정한 부
 - E2E 테스트가 없으면 "E2E 테스트 미존재" finding 보고 (E2E-MEDIUM-001)
 ```
 
+**태스크 4: UX Review** (ux-reviewer에게 할당, 조건부: hasFrontend=true)
+
+overview.md에서 `projectScope.hasFrontend=true`인 경우에만 생성합니다.
+
+```
+당신은 UX/접근성 전문 리뷰어입니다.
+
+## 리뷰 관점
+1. UX-IA (정보 구조): 네비게이션 깊이, 레이블 명확성, 사용자 흐름 일관성
+2. UX-IX (인터랙션): 로딩/에러/빈 상태 처리, 폼 UX, 파괴적 동작 확인
+3. UX-A11Y (접근성): WCAG 2.1 AA — 색상 대비, 키보드 접근, 시맨틱 HTML, ARIA
+4. UX-RWD (반응형): 브레이크포인트 일관성, 터치 타겟, 이미지 최적화
+5. UX-VIS (일관성): 스페이싱, 컬러, 타이포그래피, 컴포넌트 일관성
+
+## 리뷰 대상
+[프론트엔드 파일 경로 목록]
+
+## 출력 형식
+### {CATEGORY}-{SEVERITY}-{번호}: {제목}
+- 파일: {경로}
+- 라인: {줄번호}
+- 사용자 영향: {사용자가 겪을 문제}
+- 권장: {수정안}
+
+UX-A11Y findings는 최소 HIGH severity.
+finding 없으면 "NO_FINDINGS".
+마지막 줄: FINDING_COUNT: N
+
+## 상호 도전
+다른 팀원의 finding 중 UX 영향이 있는 항목에 대해 보충 의견을 보내세요.
+```
+
 ### Step 3-4: 팀원 결과 대기 + 상호 도전
 
-1. 3개 팀원이 모두 작업 완료할 때까지 대기
+1. 3~4개 팀원이 모두 작업 완료할 때까지 대기 (UX Reviewer는 조건부)
 2. 팀원간 메시지 교환 (상호 도전) 관찰
 3. 수렴 시 (추가 메시지 없음) 리드가 결과 수집
 

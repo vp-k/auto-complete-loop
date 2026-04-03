@@ -16,6 +16,17 @@ No Ralph/progress/promise code — managed by the orchestrator.
 2. progress 파일에서 `phases.phase_2.completedFiles` 확인
 3. progress 파일에서 `phases.phase_2.documents[].acceptanceCriteria` 로드 (있으면 codex 프롬프트에 포함)
 4. 리뷰 우선순위: 보안 관련 > 비즈니스 로직 > UI/UX > 유틸리티
+5. **UX Reviewer 조건 확인**: overview.md에서 `projectScope.hasFrontend`를 확인하여 true이면 Step 3-2에서 UX Reviewer Agent를 codex 리뷰와 병렬로 호출
+
+### Step 3-1.5: UX Reviewer Agent (조건부)
+
+`projectScope.hasFrontend=true`일 때만 실행:
+
+- Agent tool로 `ux-reviewer` 에이전트를 **codex 리뷰(Step 3-2)와 병렬로** 호출
+- 프론트엔드 코드 파일 목록과 overview.md 경로를 프롬프트에 포함
+- 결과: UX Review Report (정보 구조, 인터랙션, 접근성, 반응형, 일관성 + UX_SCORE)
+- UX findings는 codex findings와 동일한 형식 (UX-A11Y-HIGH-001 등)으로 통합 관리
+- CRITICAL/HIGH UX findings는 코드 리뷰 findings와 동일하게 즉시 수정 대상
 
 ### Step 3-2: codex-cli 리뷰 라운드
 

@@ -272,7 +272,18 @@ jq '.phases.phase_0.outputs.nsm = "..." | .phases.phase_0.outputs.successCriteri
 
 ---
 
-### Step 0-7: Codex 검토 (강화)
+### Step 0-7: Codex + PM Agent 병렬 검토
+
+**PM Planner Agent**와 **Codex 검토**를 병렬로 실행합니다:
+
+#### 7-A. PM Planner Agent (병렬 실행)
+
+Agent tool로 `pm-planner` 에이전트를 호출합니다:
+- 페르소나/JTBD 품질, MoSCoW→ICE→Kano 일관성, User Story INVEST 기준, Non-Goals 모순 검증
+- overview.md 경로를 프롬프트에 포함
+- 결과: PM Review Report (REVIEW_SCORE 포함)
+
+#### 7-B. Codex 검토 (병렬 실행)
 
 codex-cli에게 다음 관점에서 전체 기획을 검토 요청:
 

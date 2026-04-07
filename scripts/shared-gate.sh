@@ -3136,7 +3136,9 @@ cmd_recover() {
   echo "Status: $status"
 
   if [[ "$status" == "completed" ]]; then
-    echo "All phases completed. No recovery needed."
+    echo "All phases completed. No recovery needed. Cleaning up progress file."
+    rm -f "$PROGRESS_FILE"
+    rm -f ".claude-verification.json"
     return 0
   fi
 

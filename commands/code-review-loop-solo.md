@@ -46,7 +46,7 @@ argument-hint: "[--rounds N | --goal \"조건\"] <scope>"
 
 `.claude-review-loop-progress.json` 파일이 이미 존재하면:
 - `status`가 `in_progress`면 → `currentRound`와 `handoff`를 읽고 이어서 진행
-- `status`가 `completed`면 → "이미 완료된 리뷰입니다" 안내 후 종료
+- `status`가 `completed`면 → `.claude-review-loop-progress.json` 파일 삭제 후 "이미 완료된 리뷰입니다" 안내 후 종료
 - 존재하지 않으면 → 새로 시작
 
 ### 0-3. `.claude-review-loop-progress.json` 초기화

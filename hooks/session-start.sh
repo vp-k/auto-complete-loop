@@ -35,6 +35,14 @@ if ! command -v jq &>/dev/null; then
   exit 0
 fi
 
+# completed 상태 progress 파일 정리
+PROGRESS_STATUS=$(jq -r '.status // "unknown"' "$PROGRESS_FILE" 2>/dev/null || echo "unknown")
+if [[ "$PROGRESS_STATUS" == "completed" ]]; then
+  rm -f "$PROGRESS_FILE"
+  rm -f ".claude-verification.json"
+  exit 0
+fi
+
 # recover 실행하여 컨텍스트 수집
 RECOVER_OUTPUT=$(bash "$SHARED_GATE" recover --progress-file "$PROGRESS_FILE" 2>/dev/null || true)
 

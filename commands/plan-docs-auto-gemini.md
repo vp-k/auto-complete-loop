@@ -115,7 +115,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "ALL_DOCS_REVIEWED"
    - "예" -> `.claude-plan-progress.json` 생성 후 첫 `pending` 문서부터 재개
    - "아니오" -> 새로 시작 (1단계부터)
 5. 모든 문서가 `completed`면:
-   - "모든 문서가 이미 작성되어 있습니다" 안내 후 종료
+   - `.claude-plan-progress.json` 파일 삭제 후 "모든 문서가 이미 작성되어 있습니다" 안내 후 종료
 
 ### DoD 로드
 

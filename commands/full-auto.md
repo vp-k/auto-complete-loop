@@ -20,6 +20,10 @@ argument-hint: <요구사항 (자연어)>
 ## 인수
 
 - `$ARGUMENTS`: 자연어 요구사항 (예: "커뮤니티 사이트를 만들어줘")
+- `--start-phase N` (선택): Phase N부터 시작 (0-4). 이미 기획 문서가 있는 프로젝트에서 Phase 0-1 스킵용.
+  - 예: `/full-auto --start-phase 2 커뮤니티 사이트` → Phase 2(구현)부터 시작
+  - 스킵된 Phase의 DoD는 자동으로 `{checked: true, evidence: "skipped by user (--start-phase N)"}` 처리
+  - `--start-phase 2` 사용 시 docs/ 폴더에 기획 문서가 존재해야 함 (없으면 경고 후 Phase 0부터 시작)
 
 ## 아키텍처: 오케스트레이터 + Phase 스킬
 
@@ -51,6 +55,22 @@ Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
     ↓
 <promise>FULL_AUTO_COMPLETE</promise>
 ```
+
+## --start-phase 처리
+
+`$ARGUMENTS`에서 `--start-phase N`을 감지하면:
+
+1. `$ARGUMENTS`에서 `--start-phase N` 부분을 제거하여 순수 요구사항만 추출
+2. N 값 검증 (0-4 정수)
+3. docs/ 폴더 존재 확인 (N >= 2일 때):
+   - docs/ 존재 + 기획 문서 1개 이상 → 정상 진행
+   - docs/ 미존재 또는 빈 폴더 → "기획 문서가 없습니다. Phase 0부터 시작합니다." 경고 후 N=0으로 폴백
+4. init 후 Phase 스킵 실행:
+   ```
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init "<프로젝트명>" "<요구사항>" --progress-file {PROGRESS_FILE}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh skip-phases <N> --progress-file {PROGRESS_FILE}
+   ```
+5. Phase N의 스킬을 Read하여 해당 Phase부터 시작
 
 ## 공통 규칙 로드
 

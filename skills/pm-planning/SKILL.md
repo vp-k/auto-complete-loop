@@ -13,6 +13,12 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
 ### Step 0-0: 프로젝트 규모 1차 판별
 
+**프로젝트 설정 파일 초기화** (1회성):
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-config
+```
+`.claude-auto-config.json`이 없으면 기본값으로 생성. 이미 있으면 스킵.
+
 사용자 요구사항을 분석하여 규모를 추정합니다.
 
 **기준** (`rules/project-size-rules.md` 참조):
@@ -488,7 +494,10 @@ overview.md + README.md를 사용자에게 제시하고 승인 요청.
 
 **주의**: Progress init은 오케스트레이터에서 이미 완료. 여기서는 outputs 기록만.
 
-1. Phase 0 outputs를 progress 파일에 기록 (assumptions, nsm, successCriteria, premortem, projectSize, stakeholders)
+1. Phase 0 outputs를 progress 파일에 기록 (assumptions, nsm, successCriteria, premortem, projectSize, stakeholders, implementationOrder)
+   - `implementationOrder`: 기획 문서의 구현 순서 배열 (의존성 기반). 예: `["auth.md", "user-profile.md", "dashboard.md"]`
+   - 순서 결정 기준: 데이터 모델 의존성 (DB → API → UI), 인증 우선, 공통 모듈 우선
+   - 빈 배열이면 Phase 2에서 문서 목록 순서대로 구현
 2. DoD 업데이트:
    ```bash
    jq '.dod.pm_approved.checked = true | .dod.pm_approved.evidence = "사용자 승인 완료"

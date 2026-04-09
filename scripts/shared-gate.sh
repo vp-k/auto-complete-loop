@@ -33,6 +33,30 @@
 set -euo pipefail
 
 VERIFICATION_FILE=".claude-verification.json"
+CONFIG_FILE=".claude-auto-config.json"
+
+# ─── 설정 파일 로드 ───
+
+# .claude-auto-config.json에서 값을 읽는다. 파일 없으면 기본값 반환.
+# Usage: config_get <jq_path> <default_value>
+config_get() {
+  local path="$1" default="$2"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # 설정 파일 JSON 유효성 사전 검증
+    if ! jq empty "$CONFIG_FILE" 2>/dev/null; then
+      echo "WARNING: $CONFIG_FILE is not valid JSON — using default for $path" >&2
+      echo "$default"
+      return 0
+    fi
+    local val
+    val=$(jq -r "$path // empty" "$CONFIG_FILE" 2>/dev/null || true)
+    if [[ -n "$val" ]]; then
+      echo "$val"
+      return 0
+    fi
+  fi
+  echo "$default"
+}
 
 # ─── 유틸리티 ───
 
@@ -153,6 +177,26 @@ migrate_schema_v5() {
   echo "OK: $file migrated to schemaVersion 5"
 }
 
+migrate_schema_v6() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+
+  local current_ver
+  current_ver=$(jq '.schemaVersion // 1' "$file" 2>/dev/null || echo "1")
+  [[ "$current_ver" -ge 6 ]] && return 0
+
+  local is_full_auto
+  is_full_auto=$(jq 'if .steps then [.steps[].name] | any(. == "phase_0") else false end' "$file" 2>/dev/null || echo "false")
+  [[ "$is_full_auto" == "true" ]] || return 0
+
+  echo "Migrating $file to schemaVersion 6 (implementationOrder + config support)..."
+  jq_inplace "$file" '
+    .schemaVersion = 6
+    | .phases.phase_0.outputs.implementationOrder //= []
+  '
+  echo "OK: $file migrated to schemaVersion 6"
+}
+
 # Gate 실행 이력을 progress 파일에 추가
 # Usage: append_gate_history <gate_name> <result> [details_json]
 append_gate_history() {
@@ -192,8 +236,18 @@ append_gate_history() {
   ' "$PROGRESS_FILE" 2>/dev/null || echo "false")
 
   if [[ "$consecutive_fails" == "true" ]]; then
-    echo "⚠ WARNING: $gate has failed 3 consecutive times in $current_phase"
-    echo "  Consider escalating or changing approach."
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║  ⚠ CIRCULAR FAILURE DETECTED                               ║"
+    echo "║  Gate: $gate"
+    echo "║  Phase: $current_phase — 3 consecutive failures"
+    echo "║                                                            ║"
+    echo "║  ACTION REQUIRED:                                          ║"
+    echo "║  1. Stop retrying the same approach                        ║"
+    echo "║  2. Escalate to L3 (different approach)                    ║"
+    echo "║  3. If L3 also fails, use 'checkpoint suggest-rollback'    ║"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    echo ""
   fi
 }
 
@@ -300,7 +354,7 @@ cmd_init() {
     full-auto)
       cat > "$target_file" <<ENDJSON
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "project": $safe_project,
   "userRequirement": $safe_requirement,
   "status": "in_progress",
@@ -314,7 +368,7 @@ cmd_init() {
     {"name": "phase_4", "label": "Verification", "status": "pending"}
   ],
   "phases": {
-    "phase_0": { "outputs": { "definitionDoc": null, "readmePath": null, "techStack": null, "rounds": [], "assumptions": [], "nsm": null, "successCriteria": [], "premortem": {"tigers":[],"paperTigers":[],"elephants":[]}, "projectSize": null, "projectScope": null, "stakeholders": null } },
+    "phase_0": { "outputs": { "definitionDoc": null, "readmePath": null, "techStack": null, "rounds": [], "assumptions": [], "nsm": null, "successCriteria": [], "premortem": {"tigers":[],"paperTigers":[],"elephants":[]}, "projectSize": null, "projectScope": null, "stakeholders": null, "implementationOrder": [] } },
     "phase_1": { "documents": [], "currentDocument": null },
     "phase_2": { "documents": [], "currentDocument": null, "completedFiles": [], "context": {}, "documentSummaries": {}, "scopeReductions": [], "e2e": {"applicable": null, "projectType": null, "dataStrategy": null, "e2eFramework": null, "fallbackReason": null, "scenarios": []} },
     "phase_3": { "currentRound": 0, "roundResults": [], "findingHistory": [] },
@@ -643,6 +697,7 @@ cmd_status() {
   migrate_schema_v3 "$PROGRESS_FILE"
   migrate_schema_v4 "$PROGRESS_FILE"
   migrate_schema_v5 "$PROGRESS_FILE"
+  migrate_schema_v6 "$PROGRESS_FILE"
 
   echo "=== Progress Status ($PROGRESS_FILE) ==="
 
@@ -747,6 +802,7 @@ cmd_update_step() {
   migrate_schema_v3 "$PROGRESS_FILE"
   migrate_schema_v4 "$PROGRESS_FILE"
   migrate_schema_v5 "$PROGRESS_FILE"
+  migrate_schema_v6 "$PROGRESS_FILE"
 
   # 유효한 상태 값 확인
   local valid_statuses="pending in_progress completed"
@@ -1635,17 +1691,25 @@ _cleanup_server() {
 
 cmd_smoke_check() {
   local port="3000"
-  local timeout="15"
+  local timeout
+  timeout=$(config_get '.smoke.timeout' '15')
+  local max_retries
+  max_retries=$(config_get '.smoke.maxRetries' '1')
+  local backoff
+  backoff=$(config_get '.smoke.backoffSeconds' '5')
   local strict=false
 
-  # --strict 플래그 파싱 (위치 무관)
+  # 플래그 파싱 (위치 무관)
   local args=()
-  for arg in "$@"; do
-    if [[ "$arg" == "--strict" ]]; then
-      strict=true
-    else
-      args+=("$arg")
-    fi
+  local i=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --strict) strict=true; shift ;;
+      --max-retries) max_retries="${2:?--max-retries requires a number}"; shift 2 ;;
+      --backoff) backoff="${2:?--backoff requires seconds}"; shift 2 ;;
+      --timeout) timeout="${2:?--timeout requires seconds}"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
   done
   port="${args[0]:-$port}"
   timeout="${args[1]:-$timeout}"
@@ -1664,9 +1728,17 @@ cmd_smoke_check() {
     die "smoke-check: timeout must be >= 1, got '$timeout'"
   fi
 
+  # 입력 검증: max_retries/backoff
+  if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+    die "smoke-check: max_retries must be a non-negative integer, got '$max_retries'"
+  fi
+  if ! [[ "$backoff" =~ ^[0-9]+$ ]]; then
+    die "smoke-check: backoff must be a non-negative integer, got '$backoff'"
+  fi
+
   local strict_label=""
   [[ "$strict" == "true" ]] && strict_label=" [STRICT]"
-  echo "=== Smoke Check (port: $port, timeout: ${timeout}s)${strict_label} ==="
+  echo "=== Smoke Check (port: $port, timeout: ${timeout}s, retries: $max_retries, backoff: ${backoff}s)${strict_label} ==="
   require_jq
 
   # ─── smoke 스크립트 우선 실행 (tests/api-smoke.sh 등 존재 시) ───
@@ -1679,30 +1751,46 @@ cmd_smoke_check() {
   done
 
   if [[ -n "$smoke_script" ]]; then
-    echo "[smoke-check] Found smoke script: $smoke_script — running it"
+    echo "[smoke-check] Found smoke script: $smoke_script — running with retries"
     [[ ! -x "$smoke_script" ]] && chmod +x "$smoke_script" 2>/dev/null || true
-    local smoke_output smoke_exit
-    smoke_output=$(bash "$smoke_script" 2>&1) && smoke_exit=0 || smoke_exit=$?
+
+    local smoke_output smoke_exit attempts_made=0
+    local attempt=1
+    while [[ $attempt -le $((max_retries + 1)) ]]; do
+      if [[ $attempt -gt 1 ]]; then
+        echo "[smoke-check] Retry $((attempt - 1))/$max_retries (backoff: ${backoff}s)..."
+        sleep "$backoff"
+      fi
+
+      attempts_made=$attempt
+      smoke_output=$(bash "$smoke_script" 2>&1) && smoke_exit=0 || smoke_exit=$?
+
+      if [[ $smoke_exit -eq 0 ]]; then
+        break
+      fi
+      attempt=$((attempt + 1))
+    done
+
     echo "$smoke_output"
 
     local ts
     ts=$(timestamp)
     if [[ $smoke_exit -eq 0 ]]; then
-      echo "[smoke-check] Smoke script PASS"
+      echo "[smoke-check] Smoke script PASS (attempt $attempts_made)"
       if [[ -f "$VERIFICATION_FILE" ]]; then
         jq_inplace "$VERIFICATION_FILE" --arg ts "$ts" --arg sf "$smoke_script" \
           '.smokeCheck = {"timestamp": $ts, "result": "pass", "method": "smoke-script", "script": $sf}'
       fi
-      append_gate_history "smoke-check" "pass" "{\"method\":\"smoke-script\",\"script\":\"$smoke_script\"}"
+      append_gate_history "smoke-check" "pass" "{\"method\":\"smoke-script\",\"script\":\"$smoke_script\",\"attempts\":$attempts_made}"
       echo "=== SMOKE CHECK: PASS (via $smoke_script) ==="
       return 0
     else
-      echo "[smoke-check] Smoke script FAIL (exit $smoke_exit)"
+      echo "[smoke-check] Smoke script FAIL after $max_retries retries (exit $smoke_exit)"
       if [[ -f "$VERIFICATION_FILE" ]]; then
         jq_inplace "$VERIFICATION_FILE" --arg ts "$ts" --arg sf "$smoke_script" --argjson ec "$smoke_exit" \
           '.smokeCheck = {"timestamp": $ts, "result": "fail", "method": "smoke-script", "script": $sf, "exitCode": $ec}'
       fi
-      append_gate_history "smoke-check" "fail" "{\"method\":\"smoke-script\",\"script\":\"$smoke_script\",\"exitCode\":$smoke_exit}"
+      append_gate_history "smoke-check" "fail" "{\"method\":\"smoke-script\",\"script\":\"$smoke_script\",\"exitCode\":$smoke_exit,\"attempts\":$attempts_made}"
       if [[ "$strict" == "true" ]]; then
         echo "=== SMOKE CHECK: FAIL (strict mode) ==="
         return 1
@@ -1712,6 +1800,12 @@ cmd_smoke_check() {
     fi
   fi
 
+  # smoke 스크립트 실패 상태 보존 (fallback 판정에 사용)
+  local smoke_script_failed=false
+  if [[ -n "$smoke_script" ]] && [[ "${smoke_exit:-1}" -ne 0 ]]; then
+    smoke_script_failed=true
+  fi
+
   # ─── 기존 서버 기동 + 헬스체크 (smoke 스크립트 없거나 실패 시 fallback) ───
 
   # 서버 시작 명령어 감지
@@ -1719,6 +1813,13 @@ cmd_smoke_check() {
   start_cmd=$(_detect_start_cmd)
 
   if [[ -z "$start_cmd" ]]; then
+    # smoke 스크립트가 실패한 상태에서 서버도 없으면 → SOFT_FAIL (실패를 SKIP으로 숨기지 않음)
+    if [[ "$smoke_script_failed" == "true" ]]; then
+      echo "[smoke-check] SOFT_FAIL (smoke script failed + no start script to fallback)"
+      echo "=== SMOKE CHECK: SOFT_FAIL ==="
+      append_gate_history "smoke-check" "fail" '{"reason":"smoke script failed, no server fallback"}'
+      return 1
+    fi
     echo "[smoke-check] SKIP (no start/dev script detected — library or serverless project)"
     local ts
     ts=$(timestamp)
@@ -2912,6 +3013,44 @@ cmd_external_service_check() {
       '{"externalServiceCheck": {"timestamp": $ts, "result": $result, "totalServices": $total, "missingServices": $missing}}' > "$VERIFICATION_FILE"
   fi
 
+  # ─── 외부 CLI 도구 감지 (SPEC에서 추출) ───
+  if [[ -n "$spec_file" ]]; then
+    # SPEC에서 자주 사용되는 외부 CLI 도구 키워드 매핑
+    local -A tool_keywords=(
+      ["ffmpeg"]="ffmpeg|FFmpeg|영상.*변환|video.*convert|transcode"
+      ["imagemagick"]="imagemagick|ImageMagick|convert.*image|이미지.*변환|이미지.*리사이즈"
+      ["puppeteer"]="puppeteer|Puppeteer|headless.*browser|스크린샷.*캡처"
+      ["chromium"]="chromium|Chromium|chrome.*headless"
+      ["wkhtmltopdf"]="wkhtmltopdf|PDF.*변환|html.*to.*pdf"
+      ["graphviz"]="graphviz|dot.*graph|다이어그램.*생성"
+      ["redis-cli"]="redis|Redis|캐시.*서버"
+      ["docker"]="docker|Docker|컨테이너"
+    )
+
+    local tool_missing=0 tool_total=0
+    for tool in "${!tool_keywords[@]}"; do
+      local pattern="${tool_keywords[$tool]}"
+      if grep -qiE "$pattern" "$spec_file" 2>/dev/null; then
+        tool_total=$((tool_total + 1))
+        if command -v "$tool" >/dev/null 2>&1; then
+          local tool_ver
+          tool_ver=$("$tool" --version 2>&1 | head -1 | head -c 80 || echo "unknown")
+          echo "  [PASS] CLI tool '$tool': installed ($tool_ver)"
+        else
+          tool_missing=$((tool_missing + 1))
+          echo "  [WARN] CLI tool '$tool': mentioned in SPEC but not found in PATH"
+        fi
+      fi
+    done
+
+    if [[ "$tool_total" -gt 0 ]]; then
+      echo "[external-service-check] CLI tools: $((tool_total - tool_missing))/$tool_total detected"
+      if [[ "$tool_missing" -gt 0 ]]; then
+        echo "  ⚠ $tool_missing tool(s) not installed — install before Phase 2 implementation"
+      fi
+    fi
+  fi
+
   echo "=== EXTERNAL SERVICE CHECK: ${result^^} ==="
   if [[ "$result" == "fail" ]]; then
     return 1
@@ -3126,6 +3265,7 @@ cmd_recover() {
   migrate_schema_v3 "$PROGRESS_FILE"
   migrate_schema_v4 "$PROGRESS_FILE"
   migrate_schema_v5 "$PROGRESS_FILE"
+  migrate_schema_v6 "$PROGRESS_FILE"
 
   echo "=== Recovery Info ==="
   echo "Progress: $PROGRESS_FILE"
@@ -3262,7 +3402,8 @@ cmd_handoff_update() {
 cmd_implementation_depth() {
   echo "=== Implementation Depth Check ==="
 
-  local threshold=5
+  local threshold
+  threshold=$(config_get '.quality.stubThreshold' '5')
   local scan_dir=""
 
   # 인수 파싱
@@ -3657,10 +3798,14 @@ cmd_test_quality() {
     '
   fi
 
-  # 판정 (SOFT gate)
+  # 판정 (SOFT gate) — 임계값을 설정 파일에서 로드
+  local min_assertion_pct max_skip_pct
+  min_assertion_pct=$(config_get '.quality.assertionRatio' '0.7' | awk '{printf "%d", $1 * 100}')
+  max_skip_pct=$(config_get '.quality.skipRatio' '0.2' | awk '{printf "%d", $1 * 100}')
+
   local issues=0
-  [[ $assertion_ratio -lt 70 ]] && { echo "[TEST-QUALITY] WARN: Assertion ratio $assertion_ratio% < 70%"; issues=$((issues + 1)); }
-  [[ $skip_ratio -gt 20 ]] && { echo "[TEST-QUALITY] WARN: Skip ratio $skip_ratio% > 20%"; issues=$((issues + 1)); }
+  [[ $assertion_ratio -lt $min_assertion_pct ]] && { echo "[TEST-QUALITY] WARN: Assertion ratio $assertion_ratio% < $min_assertion_pct%"; issues=$((issues + 1)); }
+  [[ $skip_ratio -gt $max_skip_pct ]] && { echo "[TEST-QUALITY] WARN: Skip ratio $skip_ratio% > $max_skip_pct%"; issues=$((issues + 1)); }
 
   local details
   details=$(jq -n --argjson tt "$total_tests" --argjson ar "$assertion_ratio" --argjson sr "$skip_ratio" --argjson usr "$us_ratio" \
@@ -4093,6 +4238,298 @@ cmd_functional_flow() {
   fi
 }
 
+# ─── init-config: .claude-auto-config.json 초기화 ───
+
+cmd_init_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    echo "OK: $CONFIG_FILE already exists"
+    return 0
+  fi
+
+  cat > "$CONFIG_FILE" <<'ENDJSON'
+{
+  "quality": {
+    "stubThreshold": 5,
+    "assertionRatio": 0.7,
+    "skipRatio": 0.2
+  },
+  "smoke": {
+    "timeout": 15,
+    "maxRetries": 3,
+    "backoffSeconds": 5
+  },
+  "docs": {
+    "maxSizeKB": 30
+  }
+}
+ENDJSON
+  echo "OK: $CONFIG_FILE initialized with defaults"
+}
+
+# ─── skip-phases: --start-phase N 지원 (Phase 0 ~ N-1 스킵) ───
+
+cmd_skip_phases() {
+  local start_phase="${1:?Usage: skip-phases <start_phase_number>}"
+  require_jq
+  require_progress
+
+  # 입력 검증: 0-4 정수
+  if ! [[ "$start_phase" =~ ^[0-4]$ ]]; then
+    die "skip-phases: start_phase must be 0-4, got '$start_phase'"
+  fi
+
+  # 0이면 스킵할 게 없음
+  if [[ "$start_phase" -eq 0 ]]; then
+    echo "OK: start_phase=0, nothing to skip"
+    return 0
+  fi
+
+  # full-auto progress인지 확인
+  local is_full_auto
+  is_full_auto=$(jq 'if .steps then [.steps[].name] | any(. == "phase_0") else false end' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  [[ "$is_full_auto" == "true" ]] || die "skip-phases: not a full-auto progress file"
+
+  echo "Skipping Phase 0 ~ Phase $((start_phase - 1))..."
+
+  local skip_evidence="skipped by user (--start-phase $start_phase)"
+  local target_phase="phase_$start_phase"
+
+  # 단일 jq 호출로 모든 스킵 처리 일괄 수행 (I/O 최소화)
+  jq_inplace "$PROGRESS_FILE" \
+    --argjson sp "$start_phase" --arg ev "$skip_evidence" --arg target "$target_phase" '
+    # 스킵 대상 Phase steps를 completed로 (phase_N 형식만 매칭)
+    (.steps[] | select(
+      (.name | test("^phase_[0-9]+$")) and
+      ((.name | ltrimstr("phase_") | tonumber) < $sp)
+    )).status = "completed"
+    # 시작 Phase를 in_progress로
+    | (.steps[] | select(.name == $target)).status = "in_progress"
+    | .currentPhase = $target
+    | .handoff.currentPhase = $target
+    # Phase별 DoD 키 매핑
+    | (if $sp > 0 then .dod.pm_approved = {"checked":true,"evidence":$ev}
+         | .dod.assumptions_documented = {"checked":true,"evidence":$ev}
+         | .dod.premortem_done = {"checked":true,"evidence":$ev}
+       else . end)
+    | (if $sp > 1 then .dod.all_docs_complete = {"checked":true,"evidence":$ev}
+       else . end)
+    | (if $sp > 2 then .dod.all_code_implemented = {"checked":true,"evidence":$ev}
+         | .dod.build_pass = {"checked":true,"evidence":$ev}
+         | .dod.test_pass = {"checked":true,"evidence":$ev}
+         | .dod.e2e_pass = {"checked":true,"evidence":$ev}
+       else . end)
+    | (if $sp > 3 then .dod.code_review_pass = {"checked":true,"evidence":$ev}
+         | .dod.security_review = {"checked":true,"evidence":$ev}
+         | .dod.secret_scan = {"checked":true,"evidence":$ev}
+       else . end)
+    # consistencyChecks
+    | (if $sp >= 2 then .consistencyChecks.doc_vs_doc = {"checked":true,"evidence":$ev}
+       else . end)
+  '
+
+  for ((i = 0; i < start_phase; i++)); do
+    echo "  Phase $i: completed (skipped)"
+  done
+
+  echo "OK: Starting from Phase $start_phase ($target_phase)"
+}
+
+# ─── doc-size-check: 문서 크기 가드 (30KB 경고) ───
+
+cmd_doc_size_check() {
+  local docs_dir="${1:-docs}"
+  local threshold_kb="${2:-$(config_get '.docs.maxSizeKB' '30')}"
+
+  # 입력 검증: threshold_kb는 양의 정수
+  if ! [[ "$threshold_kb" =~ ^[0-9]+$ ]] || [[ "$threshold_kb" -lt 1 ]]; then
+    die "doc-size-check: threshold_kb must be a positive integer, got '$threshold_kb'"
+  fi
+
+  echo "=== Document Size Check (threshold: ${threshold_kb}KB) ==="
+
+  if [[ ! -d "$docs_dir" ]]; then
+    echo "[doc-size-check] SKIP (no $docs_dir directory)"
+    return 0
+  fi
+
+  local oversized=0 total=0 oversized_list=""
+
+  while IFS= read -r -d '' file; do
+    total=$((total + 1))
+    local size_bytes
+    size_bytes=$(wc -c < "$file" 2>/dev/null || echo "0")
+    local threshold_bytes=$((threshold_kb * 1024))
+    local size_kb=$(( (size_bytes + 1023) / 1024 ))  # 올림
+
+    if [[ "$size_bytes" -gt "$threshold_bytes" ]]; then
+      oversized=$((oversized + 1))
+      oversized_list="${oversized_list}  - $(basename "$file"): ${size_kb}KB (>${threshold_kb}KB)\n"
+      echo "  [WARN] $(basename "$file"): ${size_kb}KB exceeds ${threshold_kb}KB — consider splitting"
+    fi
+  done < <(find "$docs_dir" -maxdepth 2 -name "*.md" -print0 2>/dev/null)
+
+  local result="pass"
+  if [[ "$oversized" -gt 0 ]]; then
+    result="warn"
+    echo ""
+    echo "[doc-size-check] $oversized/$total documents exceed ${threshold_kb}KB"
+    echo "Recommendation: split large documents by feature (1 document = 1 feature, ≤${threshold_kb}KB)"
+  else
+    echo "[doc-size-check] All $total documents within ${threshold_kb}KB limit"
+  fi
+
+  append_gate_history "doc-size-check" "$result" \
+    "{\"total\":$total,\"oversized\":$oversized,\"thresholdKB\":$threshold_kb}"
+
+  echo "=== DOC SIZE CHECK: ${result^^} ==="
+}
+
+# ─── checkpoint: Git 체크포인트 생성/조회 ───
+
+cmd_checkpoint() {
+  local action="${1:?Usage: checkpoint create <name> | checkpoint list | checkpoint suggest-rollback}"
+  shift
+
+  case "$action" in
+    create)
+      local name="${1:?Usage: checkpoint create <name>}"
+      # 태그명 안전화: 영숫자/하이픈/점만 허용, 선행/후행 점/하이픈 제거
+      local safe_name
+      safe_name=$(echo "$name" | sed 's/[^a-zA-Z0-9._-]/-/g; s/^[.-]*//; s/[.-]*$//' | head -c 50)
+      [[ -z "$safe_name" ]] && safe_name="unnamed"
+      local tag_name="auto-checkpoint-${safe_name}"
+
+      # git 상태 확인
+      if ! command -v git >/dev/null 2>&1; then
+        echo "[checkpoint] SKIP (git not available)"
+        return 0
+      fi
+      if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "[checkpoint] SKIP (not a git repo)"
+        return 0
+      fi
+
+      # git ref 규칙 검증
+      if ! git check-ref-format "refs/tags/$tag_name" 2>/dev/null; then
+        echo "[checkpoint] WARN: invalid tag name '$tag_name' — skipping"
+        return 0
+      fi
+
+      # 커밋이 있어야 태그 가능
+      local head_sha
+      head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+      if [[ -z "$head_sha" ]]; then
+        echo "[checkpoint] SKIP (no commits yet)"
+        return 0
+      fi
+
+      # 이미 같은 태그가 있으면 덮어쓰기
+      if ! git tag -f "$tag_name" HEAD 2>&1; then
+        echo "[checkpoint] WARN: git tag failed for '$tag_name'"
+        return 0
+      fi
+      echo "OK: checkpoint '$tag_name' created at $head_sha"
+      ;;
+
+    list)
+      if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "[checkpoint] No git repo"
+        return 0
+      fi
+      echo "=== Auto Checkpoints ==="
+      git tag -l 'auto-checkpoint-*' --sort=-creatordate 2>/dev/null | head -20 || echo "(none)"
+      ;;
+
+    suggest-rollback)
+      if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        echo "[checkpoint] No git repo"
+        return 0
+      fi
+      local latest_tag
+      latest_tag=$(git tag -l 'auto-checkpoint-*' --sort=-creatordate 2>/dev/null | head -1)
+      if [[ -z "$latest_tag" ]]; then
+        echo "[checkpoint] No checkpoints found — rollback not available"
+        return 1
+      fi
+      local tag_sha
+      tag_sha=$(git rev-parse "$latest_tag" 2>/dev/null)
+      echo "=== Rollback Suggestion ==="
+      echo "Latest checkpoint: $latest_tag ($tag_sha)"
+      echo "Current HEAD:      $(git rev-parse --short HEAD)"
+      echo ""
+      echo "To rollback, run:  git reset --hard $latest_tag"
+      echo "⚠ This is a destructive operation — confirm with user before proceeding."
+      ;;
+
+    *)
+      die "checkpoint: unknown action '$action'. Use: create, list, suggest-rollback"
+      ;;
+  esac
+}
+
+# ─── docker-build-check: Dockerfile 빌드 검증 ───
+
+cmd_docker_build_check() {
+  echo "=== Docker Build Check ==="
+
+  local dockerfile=""
+  for candidate in "Dockerfile" "docker/Dockerfile" "Dockerfile.dev"; do
+    [[ -f "$candidate" ]] && { dockerfile="$candidate"; break; }
+  done
+
+  if [[ -z "$dockerfile" ]]; then
+    echo "[docker-build-check] SKIP (no Dockerfile found)"
+    append_gate_history "docker-build-check" "skip" '{"reason":"no Dockerfile"}'
+    return 0
+  fi
+
+  echo "[docker-build-check] Found: $dockerfile"
+
+  # Dockerfile 기본 문법 검증 (FROM 존재)
+  if ! grep -qE '^FROM\s+' "$dockerfile" 2>/dev/null; then
+    echo "[docker-build-check] FAIL: no FROM instruction in $dockerfile"
+    append_gate_history "docker-build-check" "fail" '{"reason":"no FROM instruction"}'
+    echo "=== DOCKER BUILD CHECK: FAIL ==="
+    return 1
+  fi
+
+  # docker 명령 존재 확인
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "[docker-build-check] SKIP (docker not installed)"
+    append_gate_history "docker-build-check" "skip" '{"reason":"docker not installed"}'
+    return 0
+  fi
+
+  # .dockerignore 존재 확인
+  if [[ ! -f ".dockerignore" ]]; then
+    echo "[docker-build-check] WARN: .dockerignore not found — sensitive files (.env, keys) may be sent to build context"
+  fi
+
+  # 실제 빌드 시도 (타임아웃 120초)
+  echo "[docker-build-check] Building $dockerfile..."
+  local build_output build_exit
+  build_output=$(timeout 120 docker build -f "$dockerfile" --no-cache --progress=plain . 2>&1) && build_exit=0 || build_exit=$?
+
+  if [[ "$build_exit" -eq 0 ]]; then
+    echo "[docker-build-check] Build successful"
+    append_gate_history "docker-build-check" "pass" "{\"dockerfile\":\"$dockerfile\"}"
+    echo "=== DOCKER BUILD CHECK: PASS ==="
+    return 0
+  elif [[ "$build_exit" -eq 124 ]]; then
+    echo "[docker-build-check] Build timed out (120s)"
+    echo "$build_output" | tail -20
+    append_gate_history "docker-build-check" "fail" '{"reason":"timeout"}'
+    echo "=== DOCKER BUILD CHECK: FAIL (timeout) ==="
+    return 1
+  else
+    echo "[docker-build-check] Build failed (exit $build_exit)"
+    echo "$build_output" | tail -30
+    append_gate_history "docker-build-check" "fail" "{\"reason\":\"build error\",\"exitCode\":$build_exit}"
+    echo "=== DOCKER BUILD CHECK: FAIL ==="
+    return 1
+  fi
+}
+
 # ─── add-dod-key: DoD 키 동적 추가 (idempotent) ───
 
 cmd_add_dod_key() {
@@ -4124,6 +4561,7 @@ main() {
 
   case "$subcmd" in
     init)              cmd_init "$@" ;;
+    init-config)       cmd_init_config "$@" ;;
     init-ralph)        cmd_init_ralph "$@" ;;
     status)            cmd_status "$@" ;;
     update-step)       cmd_update_step "$@" ;;
@@ -4149,6 +4587,10 @@ main() {
     test-quality)      cmd_test_quality "$@" ;;
     page-render-check) cmd_page_render_check "$@" ;;
     functional-flow)   cmd_functional_flow "$@" ;;
+    skip-phases)       cmd_skip_phases "$@" ;;
+    doc-size-check)    cmd_doc_size_check "$@" ;;
+    checkpoint)        cmd_checkpoint "$@" ;;
+    docker-build-check) cmd_docker_build_check "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
@@ -4158,6 +4600,7 @@ main() {
       echo "Subcommands:"
       echo "  init [--template <type>] [project] [req]  - Initialize progress JSON"
       echo "    Templates: full-auto, plan, implement, review, polish, e2e, doc-check"
+      echo "  init-config                                  - Initialize .claude-auto-config.json"
       echo "  init-ralph <promise> <progress_file> [max] - Create Ralph Loop file"
       echo "  status                                     - Show current status"
       echo "  update-step <step> <status>                - Transition step state"
@@ -4165,7 +4608,7 @@ main() {
       echo "  vuln-scan                                  - Dependency vulnerability scan (auto-detect)"
       echo "  secret-scan                                - Scan for hardcoded secrets (HARD_FAIL)"
       echo "  artifact-check                             - Check build artifact exists (SOFT_FAIL)"
-      echo "  smoke-check [port] [timeout]               - Server start + healthcheck (SOFT_FAIL)"
+      echo "  smoke-check [port] [timeout] [--max-retries N] [--backoff S] - Server start + healthcheck (SOFT_FAIL)"
       echo "  record-error --file <f> --type <t> --msg <m> [--level L0-L5] [--action '...']"
       echo "                                             - Record error + escalation tracking"
       echo "    --level L0-L5    Error level (L0=env, L1=build, L2=type, L3=runtime, L4=quality, L5=user)"
@@ -4183,6 +4626,10 @@ main() {
       echo "  test-quality                               - Check test assertion ratio, skip ratio, US coverage (SOFT)"
       echo "  page-render-check [--port N] [--strict]    - Playwright page render check (blank/errors/404)"
       echo "  functional-flow                            - Run project-type-specific smoke scripts (api/frontend/fullstack)"
+      echo "  skip-phases <N>                              - Skip Phase 0~(N-1), start from Phase N"
+      echo "  doc-size-check [docs_dir] [threshold_kb]     - Check doc sizes (default 30KB, SOFT)"
+      echo "  checkpoint create|list|suggest-rollback       - Git checkpoint management"
+      echo "  docker-build-check                           - Dockerfile build verification"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
       echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"

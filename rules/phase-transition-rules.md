@@ -18,6 +18,24 @@
 - 사용자가 강제 진행을 선택하면 progress에 `"directorOverride": true` 기록
 - GO 또는 CONDITIONAL GO 시 `directorNoGoCount`를 0으로 리셋
 
+## --start-phase 스킵 처리
+
+`$ARGUMENTS`에 `--start-phase N`이 포함된 경우 (N은 0-4):
+
+```
+1. $ARGUMENTS에서 --start-phase N을 추출하고 나머지를 순수 요구사항으로 사용
+2. N >= 2일 때: docs/ 폴더에 .md 파일이 1개 이상 존재하는지 확인
+   - 없으면: "기획 문서가 없습니다. Phase 0부터 시작합니다." 경고 → N=0으로 폴백
+3. Progress 초기화:
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init "<프로젝트명>" "<요구사항>" --progress-file {PROGRESS_FILE}
+4. Phase 스킵 실행:
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh skip-phases <N> --progress-file {PROGRESS_FILE}
+   # 예: skip-phases 2 → Phase 0, 1 스킵 후 Phase 2부터 시작
+5. Phase N의 스킬을 Read하여 해당 Phase부터 워크플로우 시작
+```
+
+**스킵된 Phase의 가드 조건은 면제됩니다** — Pre-mortem 가드, 스코프 완전성 게이트 등은 해당 Phase가 실제로 실행될 때만 적용.
+
 ## Phase 0 → Phase 1
 
 ```

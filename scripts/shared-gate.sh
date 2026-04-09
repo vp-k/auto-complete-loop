@@ -1850,7 +1850,7 @@ cmd_smoke_check() {
   if [[ "$success" == "true" ]]; then
     # SPEC.md 또는 기획 문서에서 API 엔드포인트 추출
     local spec_file=""
-    for candidate in "SPEC.md" "docs/SPEC.md" "spec.md"; do
+    for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
       if [[ -f "$candidate" ]]; then
         spec_file="$candidate"
         break
@@ -2346,8 +2346,52 @@ cmd_doc_consistency() {
     echo "  No explicit cross-references found"
   fi
 
+  # 5. 수치+단위 교차 일관성 (같은 단위가 다른 파일에서 다른 값)
+  echo ""
+  echo "[5] Numeric Consistency"
+  local -a all_doc_files=()
+  while IFS= read -r -d '' df; do
+    all_doc_files+=("$df")
+  done < <(find "$docs_dir" -maxdepth 2 -name "*.md" -print0 2>/dev/null)
+  [[ -f "overview.md" ]] && all_doc_files+=("overview.md")
+  [[ -f "SPEC.md" ]] && all_doc_files+=("SPEC.md")
+
+  if [[ ${#all_doc_files[@]} -gt 0 ]]; then
+    # 수치+단위 패턴 추출: "100MB", "30s", "5000ms", "10개", "3분" 등
+    local numeric_values
+    # 수치와 단위를 명시 분리: "100MB" → "100 MB", "30s" → "30 s"
+    numeric_values=$(grep -hoE '[0-9]+\s*(MB|KB|GB|TB|ms|s|초|분|시간|개|items|connections|requests|bytes|B)' -- "${all_doc_files[@]}" 2>/dev/null \
+      | sed -E 's/([0-9]+)\s*/\1 /' | sort || true)
+    if [[ -n "$numeric_values" ]]; then
+      # 단위별로 distinct 값 수 비교
+      local unit_conflicts
+      unit_conflicts=$(echo "$numeric_values" | awk '{print $2}' | sort -u | while read -r unit; do
+        local values
+        values=$(echo "$numeric_values" | awk -v u="$unit" '$2==u {print $1}' | sort -un)
+        local val_count
+        val_count=$(echo "$values" | wc -l | tr -d ' ')
+        if [[ "$val_count" -gt 1 ]]; then
+          echo "  WARNING: Multiple values for '$unit': $(echo "$values" | tr '\n' ', ' | sed 's/,$//')"
+        fi
+      done)
+      if [[ -n "$unit_conflicts" ]]; then
+        echo "$unit_conflicts"
+        local conflict_count
+        conflict_count=$(echo "$unit_conflicts" | grep -c "WARNING" || echo "0")
+        issues=$((issues + conflict_count))
+      else
+        echo "  No numeric inconsistencies found"
+      fi
+    else
+      echo "  No numeric+unit patterns found"
+    fi
+  else
+    echo "  No documentation files to check"
+  fi
+
   echo ""
   echo "=== Issues found: $issues ==="
+  append_gate_history "doc-consistency" "$([ "$issues" -eq 0 ] && echo "pass" || echo "warn")" "{\"issues\":$issues}"
   [[ "$issues" -eq 0 ]] && return 0 || return 1
 }
 
@@ -2364,19 +2408,31 @@ cmd_doc_code_check() {
   echo ""
   echo "[1] Route Matching"
   local doc_routes
-  doc_routes=$(grep -rhoE '(GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_/{}\:.-]+' "$docs_dir"/*.md SPEC.md 2>/dev/null | sort -u || true)
+  # SPEC 파일 후보 탐색 (다양한 경로 지원)
+  local spec_for_check=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_for_check="$candidate"; break; }
+  done
+  doc_routes=$(grep -rhoE '(GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_/{}\:.-]+' "$docs_dir"/*.md ${spec_for_check:+"$spec_for_check"} 2>/dev/null | sort -u || true)
   if [[ -n "$doc_routes" ]]; then
     while IFS= read -r route; do
       local method path
       method=$(echo "$route" | awk '{print $1}')
       path=$(echo "$route" | awk '{print $2}' | sed 's/{[^}]*}//g' | sed 's|//|/|g' | sed 's|/$||')
-      local found
-      found=$(grep -rl "$path" src/ app/ lib/ server/ api/ routes/ 2>/dev/null | head -1 || true)
+      # path 존재 확인 + HTTP 메서드 매칭 (대소문자 무시)
+      local found method_lower
+      method_lower=$(echo "$method" | tr '[:upper:]' '[:lower:]')
+      found=$(grep -Frl "$path" src/ app/ lib/ server/ api/ routes/ 2>/dev/null | head -1 || true)
       if [[ -z "$found" ]]; then
         echo "  MISSING: $method $path (not found in code)"
         ((issues++)) || true
       else
-        echo "  OK: $method $path -> $found"
+        # 메서드도 같은 파일에 존재하는지 확인 (get/post/put/patch/delete 또는 GET/POST 등)
+        if grep -qiE "(${method}|\.${method_lower}|'${method}'|\"${method}\")" "$found" 2>/dev/null; then
+          echo "  OK: $method $path -> $found"
+        else
+          echo "  WARN: $path found in $found but HTTP method '$method' not confirmed"
+        fi
       fi
     done <<< "$doc_routes"
   else
@@ -2387,7 +2443,7 @@ cmd_doc_code_check() {
   echo ""
   echo "[2] Model Matching"
   local doc_models
-  doc_models=$(grep -rhoE '(model|schema|table|interface|type)\s+[A-Za-z0-9_]+' "$docs_dir"/*.md SPEC.md 2>/dev/null | awk '{print $2}' | sort -u || true)
+  doc_models=$(grep -rhoE '(model|schema|table|interface|type)\s+[A-Za-z0-9_]+' "$docs_dir"/*.md ${spec_for_check:+"$spec_for_check"} 2>/dev/null | awk '{print $2}' | sort -u || true)
   if [[ -n "$doc_models" ]]; then
     while IFS= read -r model; do
       local found
@@ -2920,7 +2976,7 @@ cmd_external_service_check() {
 
   # SPEC.md에서 외부 서비스 키워드 추출
   local spec_file=""
-  for candidate in "SPEC.md" "docs/SPEC.md" "spec.md"; do
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
     [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
   done
 
@@ -3639,11 +3695,19 @@ cmd_implementation_depth() {
 cmd_test_quality() {
   echo "=== Test Quality Check ==="
 
-  # 테스트 디렉토리 탐지
+  # 테스트 디렉토리 탐지 (src는 US 커버리지 과대평가 방지를 위해 제외)
   local test_dirs=()
-  for d in test tests __tests__ spec src; do
+  for d in test tests __tests__ spec; do
     [[ -d "$d" ]] && test_dirs+=("$d")
   done
+  # src 내 테스트 파일도 포함 (*.test.*, *.spec.* 패턴만)
+  if [[ -d "src" ]]; then
+    local src_test_count
+    src_test_count=$(find src -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "*_test.*" -o -name "test_*" \) 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$src_test_count" -gt 0 ]]; then
+      test_dirs+=("src")
+    fi
+  fi
 
   if [[ ${#test_dirs[@]} -eq 0 ]]; then
     echo "[TEST-QUALITY] SKIP: No test directories found"
@@ -3766,8 +3830,9 @@ cmd_test_quality() {
   # US-* 커버리지 (SPEC 존재 시)
   local us_total=0 us_covered=0 us_ratio=0
   local spec_file=""
-  [[ -f "SPEC.md" ]] && spec_file="SPEC.md"
-  [[ -f "docs/api-spec.md" ]] && spec_file="docs/api-spec.md"
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
 
   if [[ -n "$spec_file" ]]; then
     local us_ids
@@ -3876,8 +3941,9 @@ cmd_page_render_check() {
   # 페이지 경로 추출 (SPEC 또는 progress에서)
   local page_routes="/"
   local spec_file=""
-  [[ -f "SPEC.md" ]] && spec_file="SPEC.md"
-  [[ -f "docs/api-spec.md" ]] && spec_file="docs/api-spec.md"
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
 
   if [[ -n "$spec_file" ]]; then
     local extracted
@@ -4530,6 +4596,243 @@ cmd_docker_build_check() {
   fi
 }
 
+# ─── ambiguity-check: TBD/모호 표현 탐지 (SOFT gate) ───
+
+cmd_ambiguity_check() {
+  local docs_dir="${1:-docs}"
+  echo "=== Ambiguity Check ==="
+
+  # 스캔 대상 파일 수집: docs/ + 프로젝트 루트 .md
+  local scan_files=()
+  for f in overview.md SPEC.md spec.md README.md; do
+    [[ -f "$f" ]] && scan_files+=("$f")
+  done
+  if [[ -d "$docs_dir" ]]; then
+    while IFS= read -r -d '' f; do
+      scan_files+=("$f")
+    done < <(find "$docs_dir" -maxdepth 2 -name "*.md" -print0 2>/dev/null)
+  fi
+
+  if [[ ${#scan_files[@]} -eq 0 ]]; then
+    echo "[ambiguity-check] SKIP (no documentation files found)"
+    append_gate_history "ambiguity-check" "skip" '{"reason":"no docs"}'
+    return 0
+  fi
+
+  # 모호 표현 패턴 (한국어 + 영어)
+  local pattern='\bTBD\b|\bTODO\b|\bFIXME\b|to be decided|to be determined|미정|추후 결정|추후|as needed|if appropriate|적절한|등등|나중에|optionally|필요 시|Phase [0-9]에서 추가|later phase'
+
+  local total_matches=0 match_output=""
+
+  # 단일 grep으로 전체 스캔 (코드 블록 제외 후)
+  for f in "${scan_files[@]}"; do
+    # awk로 fenced code block(``` ... ```) 내부 제거
+    local filtered
+    filtered=$(awk '/^```/{skip=!skip; next} !skip{print NR": "$0}' "$f" 2>/dev/null || true)
+    local matches
+    matches=$(echo "$filtered" | grep -iE "$pattern" | head -20 || true)
+    if [[ -n "$matches" ]]; then
+      local count
+      count=$(echo "$matches" | wc -l | tr -d ' ')
+      total_matches=$((total_matches + count))
+      match_output="${match_output}--- $f ($count matches) ---\n$matches\n\n"
+    fi
+  done
+
+  local result="pass"
+  if [[ "$total_matches" -gt 0 ]]; then
+    result="warn"
+    echo -e "$match_output"
+    echo "[ambiguity-check] WARN: $total_matches ambiguous/deferred expressions found"
+    echo "  All TBD/TODO markers must be replaced with concrete decisions before Phase 2."
+  else
+    echo "[ambiguity-check] All documentation has concrete decisions (no TBD/TODO)"
+  fi
+
+  append_gate_history "ambiguity-check" "$result" "{\"matches\":$total_matches}"
+  echo "=== AMBIGUITY CHECK: ${result^^} ==="
+}
+
+# ─── spec-completeness: 기획 문서 완전성 검사 (HARD gate) ───
+
+cmd_spec_completeness() {
+  echo "=== Spec Completeness Check ==="
+  require_jq
+  require_progress
+
+  local critical=0 major=0 minor=0
+  local issues=""
+
+  # projectScope 로드
+  local has_frontend="false" has_backend="false"
+  has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+
+  # ── 공통 검사 ──
+
+  # overview.md 존재 + 빈 섹션 검사
+  if [[ ! -f "overview.md" ]]; then
+    critical=$((critical + 1))
+    issues="${issues}CRITICAL: overview.md not found\n"
+  else
+    local empty_sections
+    empty_sections=$(awk '/^##/ {title=$0; getline; if (/^$/ || /^##/) print title}' overview.md 2>/dev/null | head -10 || true)
+    if [[ -n "$empty_sections" ]]; then
+      local count
+      count=$(echo "$empty_sections" | wc -l | tr -d ' ')
+      major=$((major + count))
+      issues="${issues}MAJOR: overview.md has $count empty section(s):\n$empty_sections\n"
+    fi
+  fi
+
+  # SPEC.md 존재
+  local spec_file=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
+  if [[ -z "$spec_file" ]]; then
+    critical=$((critical + 1))
+    issues="${issues}CRITICAL: SPEC.md not found (searched: SPEC.md, docs/SPEC.md, docs/api-spec.md, spec.md)\n"
+  else
+    # US-* ID 존재
+    local us_count
+    us_count=$(grep -oE 'US-[A-Z]-[0-9]+' "$spec_file" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$us_count" -eq 0 ]]; then
+      major=$((major + 1))
+      issues="${issues}MAJOR: No User Story IDs (US-F-*/US-B-*) in $spec_file\n"
+    fi
+
+    # Acceptance Criteria 존재 (US가 있는데 AC가 없는 경우)
+    if [[ "$us_count" -gt 0 ]]; then
+      local ac_count
+      ac_count=$({ grep -iE 'acceptance criteria|인수 기준|완료 조건|AC:' "$spec_file" 2>/dev/null || true; } | wc -l | tr -d ' ')
+      if [[ "$ac_count" -eq 0 ]]; then
+        major=$((major + 1))
+        issues="${issues}MAJOR: User Stories exist but no Acceptance Criteria found in $spec_file\n"
+      fi
+    fi
+  fi
+
+  # test-plan.md 존재
+  local has_test_plan=false
+  for tp in "docs/test-plan.md" "test-plan.md"; do
+    [[ -f "$tp" ]] && { has_test_plan=true; break; }
+  done
+  if [[ "$has_test_plan" == "false" ]]; then
+    major=$((major + 1))
+    issues="${issues}MAJOR: test-plan.md not found (Test Strategist output required)\n"
+  fi
+
+  # TBD/모호 표현 (ambiguity-check 직접 스캔 — cmd 호출 대신 인라인으로 결과 수집)
+  local ambiguity_matches=0
+  local ambiguity_pattern='TBD|TODO|FIXME|to be decided|to be determined|미정|추후 결정|추후|as needed|if appropriate|적절한|등등|나중에|optionally|필요 시|Phase [0-9]에서 추가|later phase'
+  local ambiguity_files=()
+  for af in overview.md SPEC.md spec.md; do
+    [[ -f "$af" ]] && ambiguity_files+=("$af")
+  done
+  if [[ -d "docs" ]]; then
+    while IFS= read -r -d '' af; do
+      ambiguity_files+=("$af")
+    done < <(find docs -maxdepth 2 -name "*.md" -print0 2>/dev/null)
+  fi
+  if [[ ${#ambiguity_files[@]} -gt 0 ]]; then
+    # 코드 블록 제외: ``` 사이 라인 스킵
+    ambiguity_matches=$({ for af in "${ambiguity_files[@]}"; do
+      awk '/^```/{skip=!skip; next} !skip{print}' "$af" 2>/dev/null
+    done; } | grep -icE "$ambiguity_pattern" || true)
+    # grep -c가 0매치 시 빈 문자열 또는 "0"을 반환; 정수 보정
+    ambiguity_matches=$(echo "$ambiguity_matches" | tr -d '[:space:]')
+    [[ -z "$ambiguity_matches" || ! "$ambiguity_matches" =~ ^[0-9]+$ ]] && ambiguity_matches=0
+  fi
+  if [[ "$ambiguity_matches" -gt 0 ]]; then
+    major=$((major + 1))
+    issues="${issues}MAJOR: $ambiguity_matches TBD/ambiguous expressions in documentation\n"
+  fi
+
+  # ── hasBackend 검사 ──
+  if [[ "$has_backend" == "true" ]] && [[ -n "$spec_file" ]]; then
+    # API Contract 섹션
+    if ! grep -qiE 'API Contract|API 계약|엔드포인트|Endpoint' "$spec_file" 2>/dev/null; then
+      critical=$((critical + 1))
+      issues="${issues}CRITICAL: Backend project but no API Contract section in $spec_file\n"
+    fi
+
+    # Data Model 섹션
+    if ! grep -qiE 'Data Model|데이터 모델|DB Schema|스키마' "$spec_file" 2>/dev/null; then
+      critical=$((critical + 1))
+      issues="${issues}CRITICAL: Backend project but no Data Model section in $spec_file\n"
+    fi
+
+    # 에러 포맷 정의 (MAJOR)
+    if ! grep -qiE 'Error Response|에러 응답|에러 포맷|error format' "$spec_file" 2>/dev/null; then
+      major=$((major + 1))
+      issues="${issues}MAJOR: Backend project but no standard error response format defined\n"
+    fi
+
+    # 상태 전이 테이블 (status 필드가 있는 경우)
+    if grep -qiE 'status.*CHECK|status.*ENUM|상태.*필드' "$spec_file" 2>/dev/null; then
+      if ! grep -qiE 'State Machine|상태 전이|State Transition|from.*→.*to|from.*->.*to' "$spec_file" 2>/dev/null; then
+        major=$((major + 1))
+        issues="${issues}MAJOR: Status fields found but no state transition table defined\n"
+      fi
+    fi
+  fi
+
+  # ── hasFrontend 검사 ──
+  if [[ "$has_frontend" == "true" ]] && [[ -n "$spec_file" ]]; then
+    # Frontend Pages 섹션
+    if ! grep -qiE 'Frontend Pages|프론트엔드.*페이지|화면.*목록|Pages.*Components' "$spec_file" 2>/dev/null; then
+      critical=$((critical + 1))
+      issues="${issues}CRITICAL: Frontend project but no Frontend Pages section in $spec_file\n"
+    fi
+  fi
+
+  # ── Fullstack 검사 ──
+  if [[ "$has_frontend" == "true" ]] && [[ "$has_backend" == "true" ]] && [[ -n "$spec_file" ]]; then
+    # 데이터 흐름 추적 (MINOR — 권장)
+    if ! grep -qiE 'Data Flow|데이터 흐름|Flow Trace|플로우 추적' "$spec_file" 2>/dev/null; then
+      minor=$((minor + 1))
+      issues="${issues}MINOR: Fullstack project — consider adding data flow traces for critical paths\n"
+    fi
+  fi
+
+  # ── NFR (MINOR) ──
+  if [[ -n "$spec_file" ]]; then
+    if ! grep -qiE 'Non-Functional|비기능|성능.*요구|Performance.*Requirement' "$spec_file" 2>/dev/null; then
+      minor=$((minor + 1))
+      issues="${issues}MINOR: No non-functional requirements section\n"
+    fi
+  fi
+
+  # ── 결과 출력 ──
+  echo ""
+  if [[ -n "$issues" ]]; then
+    echo -e "$issues"
+  fi
+
+  echo "┌─────────────────────────────────────┐"
+  echo "│ CRITICAL: $critical  MAJOR: $major  MINOR: $minor"
+  echo "└─────────────────────────────────────┘"
+
+  local result="pass"
+  if [[ "$critical" -gt 0 ]]; then
+    result="fail"
+  elif [[ "$major" -gt 0 ]]; then
+    result="warn"
+  fi
+
+  append_gate_history "spec-completeness" "$result" \
+    "{\"critical\":$critical,\"major\":$major,\"minor\":$minor}"
+
+  echo "=== SPEC COMPLETENESS: ${result^^} ==="
+
+  if [[ "$critical" -gt 0 ]]; then
+    echo "BLOCKED: $critical CRITICAL issue(s) must be resolved before Phase 2."
+    return 1
+  fi
+  return 0
+}
+
 # ─── add-dod-key: DoD 키 동적 추가 (idempotent) ───
 
 cmd_add_dod_key() {
@@ -4591,6 +4894,8 @@ main() {
     doc-size-check)    cmd_doc_size_check "$@" ;;
     checkpoint)        cmd_checkpoint "$@" ;;
     docker-build-check) cmd_docker_build_check "$@" ;;
+    ambiguity-check)   cmd_ambiguity_check "$@" ;;
+    spec-completeness) cmd_spec_completeness "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
@@ -4630,6 +4935,8 @@ main() {
       echo "  doc-size-check [docs_dir] [threshold_kb]     - Check doc sizes (default 30KB, SOFT)"
       echo "  checkpoint create|list|suggest-rollback       - Git checkpoint management"
       echo "  docker-build-check                           - Dockerfile build verification"
+      echo "  ambiguity-check [docs_dir]                   - Scan for TBD/TODO/ambiguous language (SOFT)"
+      echo "  spec-completeness                            - Planning doc completeness check (HARD on CRITICAL)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
       echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"

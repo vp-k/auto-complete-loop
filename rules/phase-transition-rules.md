@@ -96,9 +96,15 @@ Phase 1 완료 시:
      - 0건이면 → WARN (차단하지 않지만 경고: "US-* ID 없음, test-quality 커버리지 측정 불가")
   4. 통과 시 아래로 진행
 
+  *** Spec 완전성 게이트 (검증 스크립트 가드 통과 후, Director 전 필수) ***
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness --progress-file {PROGRESS_FILE}
+  - CRITICAL > 0 → Phase 2 전이 차단 (HARD gate). CRITICAL 이슈 해결 후 재시도.
+  - MAJOR > 0 → 경고 출력 (차단하지 않지만 Director가 참고)
+  - MINOR → 정보성 (Phase 2에서 결정 가능)
+
   *** Director Agent 전이 게이트 (Phase 1 → 2) ***
   Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
-  - overview.md + SPEC.md + docs/test-plan.md + progress 파일 경로를 입력으로 제공
+  - overview.md + SPEC.md + docs/test-plan.md + progress 파일 경로 + spec-completeness 결과를 입력으로 제공
   - 전이 유형: "Phase 1 → Phase 2 (Documentation → Implementation)"
   - Architecture Review Report + Test Plan 존재 여부 확인
   - NO-GO → Phase 1 블로커 해결 후 재시도

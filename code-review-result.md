@@ -1,63 +1,38 @@
-# 코드 리뷰 결과: full-auto enhancement (v2.0.2)
+# 코드 리뷰 결과: opensource-planner 기획 강화 적용
 
 ## 요약
 
-> **Round 1**: 6건 발견 → 6건 수정
-> **Round 2**: 4건 발견 → 4건 수정
-> **Round 3**: 3건 발견 → 3건 수정
-> **Round 4**: 0건 발견 (Clean)
-> **최종**: 13건 발견, 13건 수정, 잔존 이슈 0건
+> **Round 1**: 6건 수정 | **Round 2**: 4건 수정 | **Round 3**: 2건 수정 + 2건 기각
+> **Round 4**: 2건 수정 | **Round 5**: 3건 수정 | **Round 6**: 5건 수정
+> **Round 7**: 3건 기각 (모두 기존 코드, 변경 범위 밖)
+> **최종**: 변경 범위 내 22건 수정, CRITICAL/HIGH 0건 잔존
 
 ## 리뷰 범위
 
-- **대상**: full-auto enhancement (E-3, A-1, B-1, D-1, E-1, C-1, B-2, C-2, D-3)
-- **파일 수**: 5개 (+554줄)
-- **리뷰어**: codex-cli (독립 탐색) → Claude Code (검증)
-- **라운드**: 4회 (이슈 0건까지 반복)
+- **대상**: opensource-planner → auto-complete-loop 기획 Phase 강화
+- **파일 수**: 5개 (+311줄 → 수정 후 +350줄)
+- **리뷰어**: codex-cli 7라운드 독립 탐색 → Claude Code 검증
+- **총 발견**: 26건 (수정 22건, 기각 4건 + 기존코드 기각 3건)
 
----
+## 라운드별 수정 내역
 
-## Round 1 Findings (6건)
+| Round | 발견 | 수정 | 기각 | 핵심 |
+|-------|------|------|------|------|
+| R1 | 6 | 6 | 0 | ambiguity 파싱 실패, 코드 블록 오탐, require_progress, xargs 안전성 |
+| R2 | 4 | 4 | 0 | grep -c 숫자 파싱, SPEC 후보 누락, test-strategist 스키마, US ID |
+| R3 | 4 | 2 | 2 | SPEC 후보 통일 (smoke/external), 피라미드 중복은 가이드라인으로 기각 |
+| R4 | 2 | 2 | 0 | 수치 일관성 awk 파싱, doc-planning SPEC 고정 참조 |
+| R5 | 3 | 3 | 0 | spec.md 후보 통일 (ambiguity/spec-completeness/doc-code-check) |
+| R6 | 5 | 5 | 0 | ERE 패턴 \|→|, test-quality/page-render SPEC 후보, grep -Frl, 문구 |
+| R7 | 3 | 0 | 3 | 모두 기존 코드 (HTTP 메서드, US 커버리지 범위, 스모크 스코프) |
 
-| ID | Severity | 제목 | 수정 |
-|----|----------|------|------|
-| ERR-HIGH-2 | HIGH | smoke-check 재시도 횟수 off-by-one | `attempts_made` 별도 변수 |
-| SEC-MEDIUM-1 | MEDIUM→LOW | docker-build-check .dockerignore 미검증 | WARN 메시지 추가 |
-| DATA-MEDIUM-3 | MEDIUM | doc-size-check 경계값 오검출 | 바이트 비교 + 올림 |
-| PERF-MEDIUM-4 | MEDIUM→LOW | skip-phases 반복 jq I/O | 단일 jq 필터 통합 |
-| CODE-LOW-5 | LOW | --start-phase 문서 범위 불일치 | 0-4로 통일 |
-| CODE-LOW-6 | LOW | 문서 내 범위 표기 상충 | 동일 수정 |
+## 리뷰 통계 (변경 범위 내)
 
-## Round 2 Findings (4건)
-
-| ID | Severity | 제목 | 수정 |
-|----|----------|------|------|
-| ERR-HIGH-01 | HIGH | checkpoint 태그명 검증 불충분 + 에러 은닉 | git check-ref-format + 에러 노출 |
-| ERR-MEDIUM-02 | MEDIUM | doc-size-check threshold 입력 검증 부재 | 양의 정수 검증 추가 |
-| DATA-MEDIUM-03 | MEDIUM | skip-phases jq 필터 step 이름 취약 | 정규식 가드 추가 |
-| CODE-LOW-04 | LOW | 규칙 문서 예시 명령 개선 | `<N>` + 실제 값 예시 |
-
-## Round 3 Findings (3건)
-
-| ID | Severity | 제목 | 수정 |
-|----|----------|------|------|
-| ERR-HIGH-01 | HIGH | smoke 스크립트 실패가 SKIP으로 덮임 | smoke_script_failed 플래그 + SOFT_FAIL 반환 |
-| DATA-MEDIUM-02 | MEDIUM | recover에서 schema v6 마이그레이션 누락 | migrate_schema_v6 추가 |
-| DATA-MEDIUM-03 | MEDIUM→LOW | config_get 파싱 오류 무음 fallback | jq empty 사전 검증 + WARNING 출력 |
-
-## Round 4
-
-> **NO_FINDINGS** - codex 독립 리뷰에서 새 이슈 없음
-
----
-
-## 리뷰 통계 (전체 합산)
-
-| 카테고리 | 발견 | 확인 | 기각 |
-|----------|------|------|------|
+| 카테고리 | 발견 | 확인+수정 | 기각 |
+|----------|------|-----------|------|
 | Security (SEC) | 1 | 1 | 0 |
-| Error Handling (ERR) | 4 | 4 | 0 |
-| Data Consistency (DATA) | 4 | 4 | 0 |
+| Error Handling (ERR) | 8 | 7 | 1 |
+| Data Consistency (DATA) | 10 | 9 | 1 |
 | Performance (PERF) | 1 | 1 | 0 |
-| Code Consistency (CODE) | 3 | 3 | 0 |
-| **합계** | **13** | **13** | **0** |
+| Code Consistency (CODE) | 6 | 4 | 2 |
+| **합계** | **26** | **22** | **4** |

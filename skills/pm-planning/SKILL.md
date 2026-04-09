@@ -102,6 +102,12 @@ Won't 항목은 Non-Goals로 이동.
 
 #### 6. 기술 스택 결정
 요구사항에 맞는 기술 스택을 결정하고 근거를 기록합니다.
+다음 항목을 **명시적으로** 선택하여 overview.md에 기록:
+- Framework (웹/앱 프레임워크)
+- ORM / Query Layer (DB 접근 도구)
+- Migration Tool (스키마 마이그레이션)
+- Test Framework (테스트 실행기 + assertion)
+- Linter / Formatter (코드 품질 도구)
 
 ---
 
@@ -189,10 +195,11 @@ jq '.phases.phase_0.outputs.assumptions = [...]' ...
 
 #### User Stories (5~10개, 규모별)
 ```
-US-001: As a [페르소나], I want to [행동], so that [가치]
-  - AC-001-1: [수락 기준]
-  - AC-001-2: [예외 케이스]
-  - AC-001-3: [에러 시나리오]
+US-F-001: As a [페르소나], I want to [프론트엔드 행동], so that [가치]
+US-B-001: As a [페르소나], I want to [백엔드 행동], so that [가치]
+  - AC-F-001-1: [수락 기준]
+  - AC-F-001-2: [예외 케이스]
+  - AC-F-001-3: [에러 시나리오]
 ```
 
 #### (Medium+) 핵심 사용자 플로우 (3개)
@@ -210,6 +217,11 @@ US-001: As a [페르소나], I want to [행동], so that [가치]
 
 #### Part A: 아키텍처 원칙 (기존)
 기술 스택에 맞는 구체적 원칙 (예: Clean Architecture 레이어, 상태 관리 패턴 등).
+
+**코드 컨벤션** (overview.md에 기록):
+- 네이밍 컨벤션: 기술 스택에 맞는 표기법 (예: camelCase for JS/TS, snake_case for Python/Go)
+- 에러 핸들링 패턴: 중앙화 전략 (예: try-catch at controller, custom error classes)
+- 파일 구조 패턴: 기능 기반 vs 레이어 기반 (예: feature-based modules)
 
 #### Part B: 비주얼 디자인 방향 (3가지 결정)
 

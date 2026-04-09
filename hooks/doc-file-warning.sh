@@ -3,7 +3,7 @@
 # README.md, CHANGELOG.md 등 요청하지 않은 문서 파일 생성을 경고
 #
 # 입력: stdin JSON { "tool_input": { "file_path": "..." } }
-# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "allow"}
+# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "approve"}
 
 set -euo pipefail
 
@@ -24,4 +24,4 @@ case "$FILENAME" in
     ;;
 esac
 
-echo '{"decision": "allow"}'
+echo '{"decision": "approve"}'

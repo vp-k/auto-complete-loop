@@ -5,7 +5,7 @@
 # 3. CLAUDE.md 보호 (full-auto Phase 2+ block)
 #
 # 입력: stdin JSON { "tool_input": { "file_path": "..." } }
-# 출력: {"decision": "block"|"allow", "reason": "..."} 또는 {"decision": "allow"}
+# 출력: {"decision": "block"|"approve", "reason": "..."} 또는 {"decision": "approve"}
 
 # --- 공통 boilerplate (block-no-verify.sh 패턴 준수) ---
 
@@ -25,7 +25,7 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null) || 
 
 # 파일 경로가 비어있으면 통과 (도구가 file_path를 사용하지 않는 경우)
 if [[ -z "$FILE_PATH" ]]; then
-  echo '{"decision": "allow"}'
+  echo '{"decision": "approve"}'
   exit 0
 fi
 
@@ -72,7 +72,7 @@ fi
 
 # 보호 대상이 아니면 통과
 if [[ -z "$PROTECTION_TYPE" ]]; then
-  echo '{"decision": "allow"}'
+  echo '{"decision": "approve"}'
   exit 0
 fi
 
@@ -81,7 +81,7 @@ fi
 PROGRESS_FILE=".claude-full-auto-progress.json"
 if [[ ! -f "$PROGRESS_FILE" ]]; then
   # full-auto 워크플로우가 아님 → allow
-  echo '{"decision": "allow"}'
+  echo '{"decision": "approve"}'
   exit 0
 fi
 
@@ -113,4 +113,4 @@ case "$CURRENT_PHASE" in
     ;;
 esac
 
-echo '{"decision": "allow"}'
+echo '{"decision": "approve"}'

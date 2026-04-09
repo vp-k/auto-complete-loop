@@ -18,7 +18,7 @@ set -euo pipefail
 # jq 의존성 사전 검증
 if ! command -v jq &>/dev/null; then
   echo "Auto Complete Loop: ERROR - jq is required but not found. Install jq to use Ralph Loop."
-  echo '{"decision": "allow"}'
+  echo '{"decision": "approve"}'
   exit 0
 fi
 

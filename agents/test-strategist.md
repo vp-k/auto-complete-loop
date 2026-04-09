@@ -13,7 +13,7 @@ Read these artifacts before designing the test plan:
 1. `overview.md` — project scope, features, personas
 2. `SPEC.md` — technical specification, architecture decisions
 3. Architecture Review Report (if available) — architectural risks to cover
-4. `projectScope` — hasFrontend, hasBackend, hasDatabase, hasExternalAPI flags
+4. `projectScope` — hasFrontend, hasBackend flags (from progress file). hasDatabase and hasExternalAPI can be inferred from SPEC.md if needed (e.g., DB schema presence → hasDatabase=true, external service mentions → hasExternalAPI=true)
 
 ## Test Plan Design
 
@@ -144,11 +144,30 @@ Rank tests by business impact:
 2. P1: [list of P1 test cases]
 3. P2: [list of P2 test cases]
 
+### Test Requirements Matrix
+| T-ID | Source | Feature | Description | Priority |
+|------|--------|---------|-------------|----------|
+| T-001 | AC (US-F-001) | [feature] | [test description] | P0 |
+| T-002 | SM (status) | [feature] | [state transition test] | P0 |
+| T-003 | EC (boundary) | [feature] | [edge case test] | P1 |
+| T-004 | API (error) | [feature] | [API error test] | P1 |
+| T-005 | SEC (auth) | [feature] | [security test] | P0 |
+
+Source codes: AC=Acceptance Criteria, SM=State Machine, EC=Edge Case, API=API Error, SEC=Security
+
+### Critical Edge Cases Summary (Top 5)
+| Rank | Feature | Edge Case | Expected Behavior | Impact if Missed |
+|------|---------|-----------|-------------------|-----------------|
+| 1 | [feature] | [case] | [behavior] | [impact] |
+
+> This summary should be copied to SPEC.md under Constraints or Edge Cases section.
+
 ### Verification Criteria
 [Criteria for Phase 4 verification-auditor to cross-check against this plan]
 - Minimum coverage: [X]% for P0 paths
 - All P0 and P1 test cases must have corresponding test files
 - Each failure path scenario must have at least one test
+- Test Requirements Matrix T-IDs should be traceable in actual test files
 ```
 
 ## Rules

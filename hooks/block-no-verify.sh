@@ -3,7 +3,7 @@
 # git commit/push에서 --no-verify 및 -n 사용을 차단하여 pre-commit hook 보호
 #
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
-# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "allow"}
+# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "approve"}
 
 BLOCK_MSG='{"decision": "block", "reason": "--no-verify는 사용할 수 없습니다. pre-commit hook을 우회하면 품질 게이트가 무력화됩니다. hook 실패 시 근본 원인을 해결하세요."}'
 
@@ -36,4 +36,4 @@ if echo "$COMMAND" | grep -qE 'git\s+commit'; then
   fi
 fi
 
-echo '{"decision": "allow"}'
+echo '{"decision": "approve"}'

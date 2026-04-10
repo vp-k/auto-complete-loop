@@ -3054,7 +3054,7 @@ cmd_external_service_check() {
   elif [[ "$missing_services" -gt 0 ]]; then
     result="fail"
     echo "[external-service-check] Services: $((total_services - missing_services))/$total_services verified"
-    echo -e "$missing_list"
+    printf '%b\n' "$missing_list"
   else
     result="pass"
     echo "[external-service-check] Services: $total_services/$total_services verified"
@@ -3639,11 +3639,11 @@ cmd_implementation_depth() {
   # 결과 출력
   if [[ $src_count -gt 0 ]]; then
     echo "[IMPL-DEPTH] Source file stubs: $src_count findings"
-    echo -e "$src_findings" | head -20
+    printf '%b' "$src_findings" | head -20
   fi
   if [[ $test_count -gt 0 ]]; then
     echo "[IMPL-DEPTH] Test file issues: $test_count findings"
-    echo -e "$test_findings" | head -20
+    printf '%b' "$test_findings" | head -20
   fi
 
   # verification.json 기록
@@ -3695,7 +3695,7 @@ cmd_implementation_depth() {
 cmd_test_quality() {
   echo "=== Test Quality Check ==="
 
-  # 테스트 디렉토리 탐지 (src는 US 커버리지 과대평가 방지를 위해 제외)
+  # 테스트 디렉토리 탐지 (src 내 테스트 파일도 포함하되 US 커버리지는 테스트 파일만 대상)
   local test_dirs=()
   for d in test tests __tests__ spec; do
     [[ -d "$d" ]] && test_dirs+=("$d")
@@ -3836,14 +3836,21 @@ cmd_test_quality() {
 
   if [[ -n "$spec_file" ]]; then
     local us_ids
-    us_ids=$(grep -oE 'US-[A-Z]-[0-9]+' "$spec_file" 2>/dev/null | sort -u || true)
+    us_ids=$(grep -oE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null | sort -u || true)
     if [[ -n "$us_ids" ]]; then
       us_total=$(echo "$us_ids" | wc -l)
-      while IFS= read -r us; do
-        if grep -rl "$us" "${test_dirs[@]}" >/dev/null 2>&1; then
-          us_covered=$((us_covered + 1))
-        fi
-      done <<< "$us_ids"
+      # US 커버리지는 테스트 파일만 대상 (프로덕션 코드의 US-* 주석 제외)
+      # 테스트 파일에서 US ID를 1회 추출하여 집합화 (NUL 안전 — 직접 파이프)
+      local covered_us_set
+      covered_us_set=$(find "${test_dirs[@]}" -type f \( -name "*.test.*" -o -name "*.spec.*" -o -name "*_test.*" -o -name "test_*" \) -print0 2>/dev/null \
+        | xargs -0 grep -hoE 'US-(F|B)-[0-9]+' 2>/dev/null | sort -u || true)
+      if [[ -n "$covered_us_set" ]]; then
+        while IFS= read -r us; do
+          if echo "$covered_us_set" | grep -qF "$us" 2>/dev/null; then
+            us_covered=$((us_covered + 1))
+          fi
+        done <<< "$us_ids"
+      fi
       [[ $us_total -gt 0 ]] && us_ratio=$(( (us_covered * 100) / us_total ))
       echo "[TEST-QUALITY] US coverage: $us_covered / $us_total ($us_ratio%)"
     fi
@@ -4642,7 +4649,7 @@ cmd_ambiguity_check() {
   local result="pass"
   if [[ "$total_matches" -gt 0 ]]; then
     result="warn"
-    echo -e "$match_output"
+    printf '%b' "$match_output"
     echo "[ambiguity-check] WARN: $total_matches ambiguous/deferred expressions found"
     echo "  All TBD/TODO markers must be replaced with concrete decisions before Phase 2."
   else
@@ -4663,10 +4670,22 @@ cmd_spec_completeness() {
   local critical=0 major=0 minor=0
   local issues=""
 
-  # projectScope 로드
+  # projectScope 로드 (fail-closed: 누락/타입 오류 시 CRITICAL)
   local has_frontend="false" has_backend="false"
-  has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
-  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // false' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  local scope_valid
+  scope_valid=$(jq -r '
+    .phases.phase_0.outputs.projectScope
+    | if type == "object" and has("hasFrontend") and has("hasBackend")
+         and (.hasFrontend | type == "boolean") and (.hasBackend | type == "boolean")
+      then "valid" else "invalid" end
+  ' "$PROGRESS_FILE" 2>/dev/null || echo "invalid")
+  if [[ "$scope_valid" != "valid" ]]; then
+    critical=$((critical + 1))
+    issues="${issues}CRITICAL: projectScope missing or malformed in progress file (need {hasFrontend: bool, hasBackend: bool})\n"
+  else
+    has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  fi
 
   # ── 공통 검사 ──
 
@@ -4696,7 +4715,7 @@ cmd_spec_completeness() {
   else
     # US-* ID 존재
     local us_count
-    us_count=$(grep -oE 'US-[A-Z]-[0-9]+' "$spec_file" 2>/dev/null | wc -l | tr -d ' ')
+    us_count=$(grep -oE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null | wc -l | tr -d ' ')
     if [[ "$us_count" -eq 0 ]]; then
       major=$((major + 1))
       issues="${issues}MAJOR: No User Story IDs (US-F-*/US-B-*) in $spec_file\n"
@@ -4807,7 +4826,7 @@ cmd_spec_completeness() {
   # ── 결과 출력 ──
   echo ""
   if [[ -n "$issues" ]]; then
-    echo -e "$issues"
+    printf '%b\n' "$issues"
   fi
 
   echo "┌─────────────────────────────────────┐"

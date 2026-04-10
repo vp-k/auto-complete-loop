@@ -25,8 +25,24 @@ for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
   fi
 done
 
-# progress 파일 없으면 복구 불필요
+# progress 파일 없으면 복구 불필요 — 단, 프로젝트 컨텍스트 주입 (A5)
 if [[ -z "$PROGRESS_FILE" ]]; then
+  CONTEXT_HINTS=""
+  [[ -f ".claude/acl-learnings.local.md" ]] && CONTEXT_HINTS="${CONTEXT_HINTS}\n- .claude/acl-learnings.local.md (이전 워크플로우 학습 내역)"
+  [[ -f "overview.md" ]] && CONTEXT_HINTS="${CONTEXT_HINTS}\n- overview.md (프로젝트 정의 문서)"
+  for _spec in SPEC.md docs/SPEC.md; do
+    [[ -f "$_spec" ]] && { CONTEXT_HINTS="${CONTEXT_HINTS}\n- ${_spec} (기술 사양)"; break; }
+  done
+
+  if [[ -n "$CONTEXT_HINTS" ]]; then
+    CTX_MSG=$(printf '[Project Context] 이전 작업 컨텍스트가 감지되었습니다. 참고할 문서:%b' "$CONTEXT_HINTS")
+    jq -n --arg ctx "$CTX_MSG" '{
+      "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": $ctx
+      }
+    }'
+  fi
   exit 0
 fi
 

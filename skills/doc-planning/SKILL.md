@@ -202,16 +202,36 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
 
 스크립트가 발견한 구조적 불일치를 Claude가 수정합니다.
 
-### Step 1-6: 스펙 깊이 검증 + Architect Agent
+### Step 1-6: 스펙 깊이 검증 + 라운드테이블 아키텍처 리뷰
 
 Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다.
 
-**Architect Agent**를 병렬로 호출하여 아키텍처 리뷰를 수행합니다:
-- Agent tool로 `architect` 에이전트 호출
-- 기술 스택 적합성, 의존성 분석, API 설계 일관성, 데이터 모델, NFR 커버리지 검증
-- overview.md + SPEC.md 경로를 프롬프트에 포함
-- 결과: Architecture Review Report (ARCHITECTURE_SCORE 포함)
-- ARCHITECTURE_SCORE < 5 또는 블로커 존재 시 Phase 2 진행 전 반드시 해결
+**Roundtable Agent**를 호출하여 다관점 아키텍처 리뷰를 수행합니다:
+- Agent tool로 `roundtable` 에이전트 호출
+- 컨텍스트: "Phase 1 Step 1-6 (Architecture Review)"
+- overview.md + SPEC.md + docs/*.md 경로를 프롬프트에 포함
+- projectScope 정보 (hasFrontend, hasBackend) 전달 → 조건부 페르소나 활성화
+
+**라운드테이블 프로세스** (roundtable.md 참조):
+1. Architect(리드), Senior Developer, QA Specialist, Devil's Advocate + 조건부 DBA/UI/UX가 독립 검토
+2. 기술 스택 적합성, API 설계 일관성, 데이터 모델 무결성, NFR 커버리지, 테스트 가능성을 교차 검증
+3. 충돌 지점에 대해 토론 (최대 3라운드)
+4. 합의 결과: Roundtable Architecture Review Report
+
+**블로킹 조건**:
+- CRITICAL 항목 잔존 시 Phase 2 진행 차단
+- Unresolved Conflicts → 사용자에게 결정 위임
+
+결과를 progress 파일에 기록:
+```bash
+_tmp=$(mktemp)
+jq '.phases.phase_1.outputs.roundtableArchReview = {
+  "verdict": "PROCEED|REVISE|ESCALATE",
+  "criticalCount": N,
+  "consensusItems": [...],
+  "unresolvedConflicts": [...]
+}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
+```
 
 Claude가 직접 수행하는 검증:
 
@@ -269,8 +289,8 @@ if [[ -n "$spec_file" ]]; then
     echo "WARN: $spec_file에 API 상세 부족"
   fi
 
-  # US-* ID 존재 체크
-  us_count=$({ grep -coE 'US-[A-Z]-[0-9]+' "$spec_file" 2>/dev/null || true; } | tr -d '[:space:]')
+  # US-* ID 존재 체크 (US-F-*/US-B-* 형식만 허용)
+  us_count=$({ grep -coE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null || true; } | tr -d '[:space:]')
   [[ -z "$us_count" || ! "$us_count" =~ ^[0-9]+$ ]] && us_count=0
   if [[ $us_count -eq 0 ]]; then
     echo "WARN: $spec_file에 US-* ID 없음"
@@ -279,7 +299,9 @@ else
   echo "WARN: SPEC 파일을 찾을 수 없음 (SPEC.md, docs/SPEC.md, docs/api-spec.md, spec.md)"
 fi
 
-# 검증 스크립트 존재 체크 (projectScope 기반)
+# 검증 스크립트 존재 체크 (projectScope 기반 — progress 파일에서 로드)
+has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "false"' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // "false"' "$PROGRESS_FILE" 2>/dev/null || echo "false")
 # hasBackend=true → api-smoke.sh 필수
 if [[ "$has_backend" == "true" ]] && [[ ! -f tests/api-smoke.sh ]]; then
   echo "FAIL: hasBackend=true이지만 tests/api-smoke.sh 미생성"

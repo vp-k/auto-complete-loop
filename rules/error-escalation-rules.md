@@ -21,8 +21,8 @@
 |------|------|------|
 | **L0: 즉시 수정** | 3회 | 같은 방법 내 수정 (import 추가, 타입 수정, 간단한 로직) |
 | **L1: 다른 방법** | 3회 | 같은 설계, 다른 구현 (라이브러리 교체, 패턴 변경, API 변경) |
-| **L2: codex 분석** | 1회 | codex-cli에 근본 원인 분석 요청 + 변경 파일만 `git stash push -- <files>`로 안전 지점 확보 (repo-wide stash 금지) |
-| **L3: 완전히 다른 접근법** | 3회 | 설계/아키텍처 수준 전환 (REST→GraphQL, CSR→SSR, WebSocket→폴링). codex 분석 기반 |
+| **L2: codex 분석 + 라운드테이블** | 1회 | codex-cli에 근본 원인 분석 요청 + **라운드테이블 토론** (Senior Developer(리드), Architect, QA, Devil's Advocate) + 변경 파일만 `git stash push -- <files>`로 안전 지점 확보 (repo-wide stash 금지) |
+| **L3: 완전히 다른 접근법** | 3회 | 설계/아키텍처 수준 전환 (REST→GraphQL, CSR→SSR, WebSocket→폴링). codex 분석 + 라운드테이블 합의 기반 |
 | **L4: 범위 축소** | 1회 | 최소 동작 버전으로 구현 + `scopeReductions`에 기록 |
 | **L5: 사용자 개입** | - | 선택지 제시 |
 
@@ -39,6 +39,26 @@ record-error exit code:
 - `exit 1`: 현재 레벨 예산 소진 → 다음 레벨로 에스컬레이트
 - `exit 2`: L2 도달 → codex 분석 필요
 - `exit 3`: L5 도달 → 사용자 개입 필요
+
+## L2+ 라운드테이블 토론 (다관점 이슈 해결)
+
+L2 에스컬레이션 도달 시, codex 분석과 함께 `roundtable` 에이전트를 호출하여 다관점 토론을 수행합니다:
+
+**참여 페르소나** (축소 라운드테이블 — 4-5명):
+- Senior Developer (리드) — 구현 대안, 기술 부채 평가
+- Architect — 설계 수준 전환 필요 여부 판단
+- QA Specialist — 테스트 가능성, 회귀 영향
+- Devil's Advocate — 현재 접근법의 근본 문제, 숨겨진 가정
+
+**스코프 변경 제안 시 추가 소집**:
+- Product Planner — 스코프 축소의 사용자 가치 영향
+- PM — 일정/리소스 영향
+
+**프로세스**:
+1. codex 근본 원인 분석 결과를 라운드테이블에 입력
+2. 각 페르소나가 독립적으로 대안 제시
+3. 대안 간 교차 검증 → 합의된 접근법 선택
+4. 합의 실패 시 → L3로 에스컬레이트 (다른 접근법 시도)
 
 ## Scope Reduction (범위 축소)
 

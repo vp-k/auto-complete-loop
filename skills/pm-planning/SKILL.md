@@ -132,7 +132,8 @@ Won't 항목은 Non-Goals로 이동.
 #### 3. progress 파일에 기록
 
 ```bash
-jq '.phases.phase_0.outputs.projectScope = {"hasFrontend": true, "hasBackend": true}' {PROGRESS_FILE} > /tmp/pg.tmp && mv /tmp/pg.tmp {PROGRESS_FILE}
+_tmp=$(mktemp)
+jq '.phases.phase_0.outputs.projectScope = {"hasFrontend": true, "hasBackend": true}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
 ```
 
 #### 4. overview.md에 레이어 섹션 추가
@@ -290,20 +291,36 @@ jq '.phases.phase_0.outputs.nsm = "..." | .phases.phase_0.outputs.successCriteri
 
 ---
 
-### Step 0-7: Codex + PM Agent 병렬 검토
+### Step 0-7: 다관점 라운드테이블 + Codex 병렬 검토
 
-**PM Planner Agent**와 **Codex 검토**를 병렬로 실행합니다:
+**Roundtable Agent**(다관점 합의)와 **Codex 검토**를 병렬로 실행합니다.
 
-#### 7-A. PM Planner Agent (병렬 실행)
+#### 7-A. Roundtable Agent (병렬 실행)
 
-Agent tool로 `pm-planner` 에이전트를 호출합니다:
-- 페르소나/JTBD 품질, MoSCoW→ICE→Kano 일관성, User Story INVEST 기준, Non-Goals 모순 검증
-- overview.md 경로를 프롬프트에 포함
-- 결과: PM Review Report (REVIEW_SCORE 포함)
+Agent tool로 `roundtable` 에이전트를 호출합니다:
+
+```
+프롬프트에 포함할 내용:
+- 컨텍스트: "Phase 0 Step 0-7 (Planning Review)"
+- overview.md 경로 (직접 읽도록 지시)
+- projectScope 정보 (hasFrontend, hasBackend) → 조건부 페르소나 활성화
+- 검토 범위: 페르소나/JTBD 품질, 우선순위 일관성, 리스크 분석, 10-Star Challenge, 기술 스택 적합성, 테스트 가능성
+```
+
+**라운드테이블 프로세스** (roundtable.md 참조):
+1. 7개 핵심 페르소나 + 조건부 페르소나가 **독립적으로** overview.md 검토
+2. 각 페르소나가 관점별 피드백 제출 (CRITICAL/HIGH/MEDIUM/LOW)
+3. Claude가 피드백 교차 비교 → 충돌 지점 식별
+4. 충돌 지점에 대해 관련 페르소나 간 토론 (최대 3라운드)
+5. 합의 도달 → 반영. 합의 실패 → 사용자에게 결정 위임
+
+**핵심 리드**: Product Planner (기획 품질), Devil's Advocate (가정 도전)
+
+결과: Roundtable Review Report (Consensus Decisions + Unresolved Conflicts + Action Items)
 
 #### 7-B. Codex 검토 (병렬 실행)
 
-codex-cli에게 다음 관점에서 전체 기획을 검토 요청:
+codex-cli에게 Pre-mortem 중심으로 독립 검토 요청:
 
 ```bash
 codex exec --skip-git-repo-check '## Phase 0 기획 검토
@@ -331,6 +348,22 @@ codex exec --skip-git-repo-check '## Phase 0 기획 검토
 Pre-mortem 결과를 Tigers/Paper Tigers/Elephants로 분류.
 각 Tiger에 대해 blocking 여부와 대응책 제시.
 '
+```
+
+#### 7-C. 교차 검증 및 합의
+
+라운드테이블과 Codex 결과를 **교차 비교**합니다:
+1. 양쪽 모두 CRITICAL/HIGH로 지적한 항목 → **즉시 반영** (높은 신뢰도)
+2. 한쪽만 지적한 CRITICAL → 해당 근거를 검토 후 수용/반론
+3. 라운드테이블 Unresolved Conflicts → **사용자에게 결정 위임** (Step 0-10에서)
+4. 결과를 progress 파일에 기록: `roundtableConsensus` 필드
+
+```bash
+jq '.phases.phase_0.outputs.roundtableConsensus = {
+  "consensusItems": [...],
+  "unresolvedConflicts": [...],
+  "codexAlignment": "N/M items aligned"
+}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
 ```
 
 #### Pre-mortem 결과 기록

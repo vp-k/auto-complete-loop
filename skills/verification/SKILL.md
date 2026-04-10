@@ -132,18 +132,30 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh find-debug-code
 - console.log, print, debugger, breakpoint 등 제거
 - 테스트 파일의 의도적 로깅은 유지
 
-**4-3b: 코드 위생 정리**
+**4-3b: AI 슬롭 정리 (Code Simplifier Agent)**
+
+Agent tool로 `code-simplifier` 에이전트를 호출하여 AI 생성 코드 안티패턴을 탐지:
+- 불필요한 추상화 레이어 (단일 사용 래퍼, 단일 구현 팩토리 등)
+- 과잉 에러 핸들링 (도달 불가능한 에러 경로, 재throw만 하는 catch)
+- 코드를 반복하는 주석 (// increment counter 위의 counter++)
+- 과잉 일반화 타입 (1회 사용 제네릭, 1-필드 인터페이스)
+- 조기 설정화 (변하지 않는 값의 환경변수화)
+
+에이전트 프롬프트에 프로젝트의 src/ 또는 주요 소스 디렉토리 경로를 포함.
+결과의 HIGH 항목은 즉시 수정, MEDIUM은 판단 후 수정.
+
+**4-3c: 코드 위생 정리**
 - 주석 처리된 코드 블록 제거 (TODO 주석은 유지)
 - 미사용 import/require 제거
 - 빈 파일, 빈 함수 정리
 - 불필요한 타입 캐스팅 제거
 
-**4-3c: 일관성 정리**
+**4-3d: 일관성 정리**
 - 네이밍 일관성 확인 (camelCase/snake_case 혼용)
 - 에러 메시지 포맷 일관성
 - 로깅 레벨 적절성 (info/warn/error)
 
-**4-3d: 정리 후 품질 재검증**
+**4-3e: 정리 후 품질 재검증**
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
 ```

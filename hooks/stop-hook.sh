@@ -33,8 +33,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 상태 파일이 없으면 정상 종료 허용
+# 상태 파일이 없으면 정상 종료 허용 (단, progress 파일 미완료 시 WARNING)
 if [[ ! -f "$RALPH_STATE_FILE" ]]; then
+  # A1: 비-Ralph 워크플로우에서도 미완료 progress 파일 경고
+  for _pf in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
+             .claude-progress.json .claude-plan-progress.json .claude-polish-progress.json \
+             .claude-review-loop-progress.json .claude-e2e-progress.json .claude-doc-check-progress.json; do
+    if [[ -f "$_pf" ]]; then
+      _status=$(jq -r '.status // "unknown"' "$_pf" 2>/dev/null || echo "unknown")
+      if [[ "$_status" != "completed" ]]; then
+        # 2회째 종료 시도 시 승인 (1회 경고 후 통과)
+        _confirm_file=".claude/stop-confirm.local"
+        if [[ -f "$_confirm_file" ]]; then
+          rm -f "$_confirm_file"
+          exit 0
+        fi
+        # 1회째: 경고 + 플래그 파일 생성
+        mkdir -p .claude
+        touch "$_confirm_file"
+        _phase=$(jq -r '.currentPhase // "unknown"' "$_pf" 2>/dev/null || echo "unknown")
+        _next=$(jq -r '.handoff.nextSteps | if type=="array" then .[0] // "check progress file" else . // "check progress file" end' "$_pf" 2>/dev/null || echo "check progress file")
+        jq -n --arg pf "$_pf" --arg st "$_status" --arg ph "$_phase" --arg nx "$_next" '{
+          "decision": "block",
+          "reason": ("WARNING: 진행 중인 작업이 있습니다 (" + $pf + ", phase=" + $ph + ", status=" + $st + "). 다음 단계: " + $nx + "\n\n작업을 계속하려면 progress 파일을 읽고 이어서 진행하세요. 정말 종료하려면 다시 종료를 시도하세요."),
+          "systemMessage": ("Incomplete workflow detected: " + $pf + " (status=" + $st + ")")
+        }'
+        exit 0
+      fi
+    fi
+  done
   exit 0
 fi
 
@@ -235,8 +262,8 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: qualityDimensions missing (Phase 4 verification required). "
       else
         # layerCoverage 하드 게이트: 필수 존재 + result=pass 필요
-        LC_RESULT=$(jq '.qualityDimensions.layerCoverage.result // "missing"' .claude-verification.json 2>/dev/null || echo '"missing"')
-        if [[ "$LC_RESULT" != '"pass"' ]]; then
+        LC_RESULT=$(jq -r '.qualityDimensions.layerCoverage.result // "missing"' .claude-verification.json 2>/dev/null || echo "missing")
+        if [[ "$LC_RESULT" != "pass" ]]; then
           VERIFICATION_PASSED="false"
           FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: layerCoverage ${LC_RESULT} (must be pass). "
         fi
@@ -276,6 +303,37 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
     # 검증 결과에 따른 분기
     if [[ "$VERIFICATION_PASSED" = "true" ]]; then
       echo "Auto Complete Loop: Promise verified. All conditions met."
+
+      # A3: 세션 학습 추출 — progress 파일 삭제 전에 핵심 결정/패턴 저장
+      LEARNINGS_FILE=".claude/acl-learnings.local.md"
+      for pf in "${VERIFIED_PROGRESS_FILES[@]}"; do
+        if [[ -f "$pf" ]]; then
+          _has_handoff=$(jq 'has("handoff")' "$pf" 2>/dev/null || echo "false")
+          if [[ "$_has_handoff" == "true" ]]; then
+            _key_decisions=$(jq -r '
+              [.handoff.keyDecisions // [] | .[]? ] | if length > 0 then join("; ") else empty end
+            ' "$pf" 2>/dev/null || true)
+            _scope_reductions=$(jq -r '
+              [.handoff.scopeReductions // [] | .[]? ] | if length > 0 then "Scope reductions: " + join("; ") else empty end
+            ' "$pf" 2>/dev/null || true)
+            _warnings=$(jq -r '
+              [.handoff.warnings // [] | .[]? ] | if length > 0 then "Warnings: " + join("; ") else empty end
+            ' "$pf" 2>/dev/null || true)
+
+            if [[ -n "$_key_decisions" ]] || [[ -n "$_scope_reductions" ]] || [[ -n "$_warnings" ]]; then
+              mkdir -p .claude
+              {
+                echo ""
+                echo "## $(date '+%Y-%m-%d %H:%M') — ${pf}"
+                [[ -n "$_key_decisions" ]] && echo "- Decisions: $_key_decisions"
+                [[ -n "$_scope_reductions" ]] && echo "- $_scope_reductions"
+                [[ -n "$_warnings" ]] && echo "- $_warnings"
+              } >> "$LEARNINGS_FILE"
+            fi
+          fi
+        fi
+      done
+
       rm -f "$RALPH_STATE_FILE" ".claude/ralph-loop-failure-history.local"
       # 검증 완료된 progress 파일 정리
       for pf in "${VERIFIED_PROGRESS_FILES[@]}"; do

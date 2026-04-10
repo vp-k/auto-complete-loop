@@ -1,6 +1,6 @@
 {
   "name": "auto-complete-loop",
-  "version": "2.0.1",
+  "version": "2.0.3",
   "description": "AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job",
   "author": {
     "name": "user01"

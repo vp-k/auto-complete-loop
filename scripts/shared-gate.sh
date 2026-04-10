@@ -2151,7 +2151,21 @@ cmd_record_error() {
     echo "ACTION: L2 → codex 분석 필요"
     exit 2
   elif [[ $current_count -ge $current_budget ]]; then
-    echo "ACTION: $current_escalation 예산 소진 ($current_count/$current_budget) → 다음 레벨로 에스컬레이트"
+    # 예산 소진 → 다음 레벨로 자동 전이 + 카운터 리셋
+    local next_levels=("L0" "L1" "L2" "L3" "L4" "L5")
+    local current_idx=0
+    for i in "${!next_levels[@]}"; do
+      [[ "${next_levels[$i]}" == "$current_escalation" ]] && current_idx=$i
+    done
+    local next_level="${next_levels[$((current_idx + 1))]:-L5}"
+    local next_budget="${level_budget[$next_level]:-3}"
+    jq_inplace "$PROGRESS_FILE" --arg nl "$next_level" --argjson nb "$next_budget" '
+      .errorHistory.escalationLevel = $nl
+      | .errorHistory.escalationBudget = $nb
+      | .errorHistory.currentError.count = 0
+      | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + [$nl])
+    '
+    echo "ACTION: $current_escalation 예산 소진 ($current_count/$current_budget) → $next_level 로 자동 에스컬레이트"
     exit 1
   else
     echo "ACTION: 계속 시도 ($current_count/$current_budget)"
@@ -3646,11 +3660,17 @@ cmd_implementation_depth() {
     printf '%b' "$test_findings" | head -20
   fi
 
-  # verification.json 기록
+  # verification.json 기록 (없으면 생성)
+  local _impl_result
+  _impl_result=$(if [[ $((src_count + test_count)) -ge $threshold ]]; then echo "fail"; elif [[ $((src_count + test_count)) -gt 0 ]]; then echo "warn"; else echo "pass"; fi)
   if [[ -f "$VERIFICATION_FILE" ]]; then
-    jq_inplace "$VERIFICATION_FILE" --argjson sc "$src_count" --argjson tc "$test_count" --argjson th "$threshold" '
-      .implementationDepth = {"srcStubs": $sc, "testIssues": $tc, "threshold": $th, "result": (if ($sc + $tc) >= $th then "fail" elif ($sc + $tc) > 0 then "warn" else "pass" end)}
+    jq_inplace "$VERIFICATION_FILE" --argjson sc "$src_count" --argjson tc "$test_count" --argjson th "$threshold" --arg r "$_impl_result" '
+      .implementationDepth = {"srcStubs": $sc, "testIssues": $tc, "threshold": $th, "result": $r}
     '
+  else
+    jq -n --argjson sc "$src_count" --argjson tc "$test_count" --argjson th "$threshold" --arg r "$_impl_result" '
+      {"implementationDepth": {"srcStubs": $sc, "testIssues": $tc, "threshold": $th, "result": $r}}
+    ' > "$VERIFICATION_FILE"
   fi
 
   # DoD 업데이트
@@ -3856,18 +3876,19 @@ cmd_test_quality() {
     fi
   fi
 
-  # verification.json 기록
+  # verification.json 기록 (없으면 생성)
+  local _tq_json
+  _tq_json=$(jq -n --argjson tt "$total_tests" --argjson at "$assertion_tests" --argjson ar "$assertion_ratio" \
+    --argjson st "$skipped_tests" --argjson sr "$skip_ratio" \
+    --argjson ust "$us_total" --argjson usc "$us_covered" --argjson usr "$us_ratio" '{
+      "totalTests": $tt, "assertionTests": $at, "assertionRatio": $ar,
+      "skippedTests": $st, "skipRatio": $sr,
+      "usTotal": $ust, "usCovered": $usc, "usRatio": $usr
+    }')
   if [[ -f "$VERIFICATION_FILE" ]]; then
-    jq_inplace "$VERIFICATION_FILE" \
-      --argjson tt "$total_tests" --argjson at "$assertion_tests" --argjson ar "$assertion_ratio" \
-      --argjson st "$skipped_tests" --argjson sr "$skip_ratio" \
-      --argjson ust "$us_total" --argjson usc "$us_covered" --argjson usr "$us_ratio" '
-      .testQuality = {
-        "totalTests": $tt, "assertionTests": $at, "assertionRatio": $ar,
-        "skippedTests": $st, "skipRatio": $sr,
-        "usTotal": $ust, "usCovered": $usc, "usRatio": $usr
-      }
-    '
+    jq_inplace "$VERIFICATION_FILE" --argjson tq "$_tq_json" '.testQuality = $tq'
+  else
+    jq -n --argjson tq "$_tq_json" '{"testQuality": $tq}' > "$VERIFICATION_FILE"
   fi
 
   # 판정 (SOFT gate) — 임계값을 설정 파일에서 로드
@@ -4098,6 +4119,10 @@ PLAYWRIGHT_SCRIPT
     jq_inplace "$VERIFICATION_FILE" --arg r "$result_str" --argjson tp "$total_pages" --argjson pp "$pass_pages" --argjson fp "$fail_pages" '
       .pageRender = {"result": $r, "totalPages": $tp, "passPages": $pp, "failPages": $fp}
     '
+  else
+    jq -n --arg r "$result_str" --argjson tp "$total_pages" --argjson pp "$pass_pages" --argjson fp "$fail_pages" '
+      {"pageRender": {"result": $r, "totalPages": $tp, "passPages": $pp, "failPages": $fp}}
+    ' > "$VERIFICATION_FILE"
   fi
 
   # 판정
@@ -4266,6 +4291,8 @@ cmd_functional_flow() {
     fi
     if [[ -f "$VERIFICATION_FILE" ]]; then
       jq_inplace "$VERIFICATION_FILE" --arg pt "$project_type" '.functionalFlow = {"result": "skip", "projectType": $pt, "details": "no smoke scripts"}'
+    else
+      jq -n --arg pt "$project_type" '{"functionalFlow": {"result": "skip", "projectType": $pt, "details": "no smoke scripts"}}' > "$VERIFICATION_FILE"
     fi
     echo ""
     echo "[FLOW] SKIP: No smoke scripts found for project type '$project_type'"
@@ -4281,6 +4308,10 @@ cmd_functional_flow() {
     jq_inplace "$VERIFICATION_FILE" --arg r "$result_str" --arg fr "$flow_results" --arg pt "$project_type" '
       .functionalFlow = {"result": $r, "projectType": $pt, "details": $fr}
     '
+  else
+    jq -n --arg r "$result_str" --arg fr "$flow_results" --arg pt "$project_type" '
+      {"functionalFlow": {"result": $r, "projectType": $pt, "details": $fr}}
+    ' > "$VERIFICATION_FILE"
   fi
 
   if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then

@@ -9,6 +9,8 @@
 
 # --- 공통 boilerplate (block-no-verify.sh 패턴 준수) ---
 
+set -euo pipefail
+
 # jq 미설치 시 fail-closed
 if ! command -v jq &>/dev/null; then
   echo '{"decision": "block", "reason": "jq가 설치되지 않아 파일 보호를 검증할 수 없습니다. jq를 설치하세요."}'
@@ -35,13 +37,13 @@ FILENAME=$(basename "$FILE_PATH")
 
 case "$FILENAME" in
   .claude-quality-baseline.json|.claude-verification.json)
-    echo "{\"decision\": \"allow\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 품질 게이트 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
+    echo "{\"decision\": \"approve\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 품질 게이트 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
     exit 0
     ;;
 esac
 
 if [[ "$FILENAME" =~ ^\.claude-.*-progress\.json$ ]]; then
-  echo "{\"decision\": \"allow\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 워크플로우 진행 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
+  echo "{\"decision\": \"approve\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 워크플로우 진행 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
   exit 0
 fi
 
@@ -65,6 +67,7 @@ fi
 
 if [[ -z "$PROTECTION_TYPE" ]]; then
   if [[ "$FILE_PATH" == *"/docs/specs/"* ]] || [[ "$FILE_PATH" == *"/docs/plans/"* ]] \
+  || [[ "$FILE_PATH" == *"docs/specs/"* ]] || [[ "$FILE_PATH" == *"docs/plans/"* ]] \
   || [[ "$FILE_PATH" == *"\\docs\\specs\\"* ]] || [[ "$FILE_PATH" == *"\\docs\\plans\\"* ]]; then
     PROTECTION_TYPE="spec_doc"
   fi

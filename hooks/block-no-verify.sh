@@ -5,6 +5,8 @@
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
 # 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "approve"}
 
+set -euo pipefail
+
 BLOCK_MSG='{"decision": "block", "reason": "--no-verify는 사용할 수 없습니다. pre-commit hook을 우회하면 품질 게이트가 무력화됩니다. hook 실패 시 근본 원인을 해결하세요."}'
 
 # jq 미설치 시 fail-closed

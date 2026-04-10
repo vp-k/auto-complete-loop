@@ -41,7 +41,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --strict --progress-f
 - **PASS (exit 0)** → `dod.e2e_pass` 업데이트
 - **FAIL (exit 1)** → 실패한 테스트 수정 (에러 에스컬레이션 L0-L5 적용)
   - Flakiness 대응: 1회 자동 재실행, 2회 연속 실패 시 에스컬레이션
-- **SKIP (exit 2, --strict 모드에서는 FAIL)** → 프레임워크 없음 = Phase 2에서 설정했어야 하는 에러 상태
+- **SKIP (exit 2)** → 프레임워크 없음. `--strict` 모드에서는 FAIL(exit 1)로 승격됨 = Phase 2에서 설정했어야 하는 에러 상태
   - Last-resort: `Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md` → 설정 + 작성 + 실행
   - 이후 e2e-gate 재실행
 

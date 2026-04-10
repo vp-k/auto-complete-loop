@@ -60,7 +60,12 @@ if [[ "$PROGRESS_STATUS" == "completed" ]]; then
 fi
 
 # recover 실행하여 컨텍스트 수집
-RECOVER_OUTPUT=$(bash "$SHARED_GATE" recover --progress-file "$PROGRESS_FILE" 2>/dev/null || true)
+RECOVER_STDERR=$(mktemp 2>/dev/null || echo "/tmp/acl-recover-$$")
+RECOVER_OUTPUT=$(bash "$SHARED_GATE" recover --progress-file "$PROGRESS_FILE" 2>"$RECOVER_STDERR" || true)
+if [[ -s "$RECOVER_STDERR" ]]; then
+  RECOVER_OUTPUT="${RECOVER_OUTPUT}\n[recover warning] $(head -3 "$RECOVER_STDERR")"
+fi
+rm -f "$RECOVER_STDERR"
 
 if [[ -z "$RECOVER_OUTPUT" ]]; then
   exit 0

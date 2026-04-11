@@ -89,9 +89,10 @@ if [[ ! -f "$PROGRESS_FILE" ]]; then
 fi
 
 CURRENT_PHASE=$(jq -r '
-  .phases // {} | to_entries[]
-  | select(.value.status == "in_progress")
-  | .key' "$PROGRESS_FILE" 2>/dev/null | head -1) || {
+  if has("currentPhase") then .currentPhase
+  elif has("steps") then [.steps[] | select(.status == "in_progress") | .name] | first // empty
+  else empty
+  end' "$PROGRESS_FILE" 2>/dev/null) || {
   # progress 파일 파싱 실패 시 fail-closed (보호 대상 파일이므로)
   echo "{\"decision\": \"block\", \"reason\": \"progress 파일 파싱 실패. ${FILENAME} 수정을 차단합니다.\"}"
   exit 0

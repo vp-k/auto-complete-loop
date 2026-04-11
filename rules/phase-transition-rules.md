@@ -18,6 +18,30 @@
 - 사용자가 강제 진행을 선택하면 progress에 `"directorOverride": true` 기록
 - GO 또는 CONDITIONAL GO 시 `directorNoGoCount`를 0으로 리셋
 
+### CONDITIONAL GO 추적
+
+Director Agent가 CONDITIONAL GO를 반환하면, 조건을 progress 파일에 기록하여 다음 Phase에서 자동 검증합니다:
+
+1. **기록**: CONDITIONAL GO 시 조건을 `conditionalGoItems` 배열에 추가:
+   ```json
+   {
+     "condition": "API 인증 미들웨어 구현 필요",
+     "fromPhase": "phase_1",
+     "targetPhase": "phase_2",
+     "resolvedAt": null,
+     "evidence": null
+   }
+   ```
+2. **검증**: 다음 Phase 완료 시 Director Agent가 미해결 `conditionalGoItems` 검토:
+   - 해결됨 → `resolvedAt` 타임스탬프 + `evidence` 기록
+   - 미해결 → Director NO-GO 사유에 포함
+3. **스크립트**: 조건 추가는 jq로 수행:
+   ```bash
+   jq_inplace {PROGRESS_FILE} --arg cond "조건 내용" --arg from "phase_N" --arg target "phase_M" '
+     .conditionalGoItems += [{"condition":$cond,"fromPhase":$from,"targetPhase":$target,"resolvedAt":null,"evidence":null}]
+   '
+   ```
+
 ## --start-phase 스킵 처리
 
 `$ARGUMENTS`에 `--start-phase N`이 포함된 경우 (N은 0-4):

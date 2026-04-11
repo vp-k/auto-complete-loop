@@ -96,85 +96,16 @@ No Ralph/progress/promise code — managed by the orchestrator.
    '
    ```
 
-2. **Claude Code가 codex 피드백 분석**
-   - Critical/High: 즉시 수정
-   - Medium: 즉시 수정 (스킵 금지)
-   - Low: 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵 (사유 기록 필수)
+2. **Claude Code가 codex 피드백 분석 및 수정**
 
-3. **수정 후 품질 게이트 재실행**
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
-   ```
+   > 공통 리뷰 규칙은 아래 파일을 Read하여 적용합니다.
+   > Read ${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md
 
-4. **자동 커밋** (품질 게이트 통과 시):
+   Finding 검증, severity별 수정 처리, 품질 게이트 재실행, 라운드 결과 기록, Suppression List, 리뷰 완료 조건, Phase 3 완료, Iteration 관리 모두 위 템플릿을 따릅니다.
+
+3. **자동 커밋** (품질 게이트 통과 시):
    ```bash
    git add -A && git commit -m "[auto] Phase 3 코드 리뷰 Round N 수정 완료"
    ```
 
-5. **다음 라운드** 또는 완료 판단
-
-progress 파일에 라운드 결과 기록:
-```json
-"phase_3": {
-  "currentRound": 2,
-  "roundResults": [
-    {
-      "round": 1,
-      "critical": 0, "high": 2, "medium": 3, "low": 1,
-      "fixed": 5,
-      "dismissed": 1,
-      "dismissedDetails": [
-        { "id": "CODE-LOW-003", "reason": "테스트 파일의 의도적 매직넘버, 프로덕션 코드 아님" }
-      ]
-    }
-  ]
-}
-```
-
-### Step 3-2.5: Suppression List 적용
-
-리뷰 시 `.claude-review-suppressions.json` 파일이 존재하면 로드하여 적용:
-
-1. **로드**: 파일에서 만료되지 않은(생성일+30일 이내) suppression 항목 로드
-2. **매칭**: 각 finding에 대해 `file` + `category` + `keyword` 패턴 매칭
-3. **적용**: 매칭된 finding은 자동 dismissed (reason: "suppressed")
-4. **보고**: 라운드 결과에 suppressed 건수 포함
-5. **만료**: 30일 경과한 항목은 자동 제거 (재검토 유도)
-
-**파일 형식** (`.claude-review-suppressions.json`):
-```json
-[
-  {
-    "file": "src/legacy/auth.ts",
-    "category": "SEC",
-    "keyword": "loose comparison",
-    "reason": "레거시 코드, 다음 스프린트에서 마이그레이션 예정",
-    "createdAt": "2026-03-01T00:00:00Z",
-    "expiresAt": "2026-03-31T00:00:00Z"
-  }
-]
-```
-
-### Step 3-3: 리뷰 완료 조건
-
-- Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복). 특히 IMPL-MISSING-CRITICAL, IMPL-STUB-HIGH는 반드시 수정 필요.
-- 품질 게이트 통과
-- E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
-  ```bash
-  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .claude-full-auto-progress.json
-  ```
-  applicable이 false/null이면 E2E 게이트 스킵. E2E 실패 시: 수정 후 e2e-gate만 재실행 (코드 리뷰 재실행 불필요)
-
-### Step 3-4: Phase 3 완료
-
-1. 코드 품질 일관성 검사:
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
-   ```
-2. DoD 업데이트: `code_review_pass.checked = true`, evidence에 "N라운드 리뷰 완료, CRITICAL/HIGH/MEDIUM: 0"
-3. Phase 전이는 오케스트레이터가 수행
-
-### Iteration 관리
-
-- 한 iteration에서 1 리뷰 라운드만 처리
-- 라운드 완료 후 handoff 업데이트하고 자연스럽게 종료
+4. **다음 라운드** 또는 완료 판단

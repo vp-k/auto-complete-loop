@@ -101,7 +101,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh recover --progress-file {PROGR
 
 ## Handoff (Iteration 종료 전 필수)
 
-스크립트로 handoff 필드를 일괄 갱신:
+> handoff 필드 구조와 읽기 절차는 shared-rules.md 참조. 아래는 오케스트레이터의 스크립트 기반 일괄 갱신 방법:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
@@ -120,11 +120,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
 
 ## 컨텍스트 관리 (Prompt Too Long 방지)
 
+> 상세 컴팩션 원칙/시점/복구 절차는 shared-rules.md 참조. 아래는 오케스트레이터 추가 트리거:
+
 | 조건 | 트리거 |
 |------|--------|
 | 단일 Phase 내 작업 12턴 이상 | `/compact` |
-| "prompt too long" 에러 | 즉시 `/compact` |
-| Phase 전환 시 | `/compact` |
 | 문서 완료 후 | 다음 문서 시작 전 `/compact` |
 
 ## 사용자 개입 시점 (최소화)
@@ -135,13 +135,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
 
 ## 강제 규칙 (오케스트레이터 전용 — 절대 위반 금지)
 
-1. **자동 진행**: Phase 간, 문서 간 사용자 확인 없이 자동 진행
-2. **단일 in_progress**: 동시에 하나의 문서만 `in_progress` 상태
-3. **완료 전 진행 금지**: `in_progress` 작업이 `completed` 되기 전 다음 작업 시작 금지
-4. **스킵 금지**: 어떤 이유로도 `pending` 작업을 건너뛰지 않음
-5. **중간 종료 금지**: 모든 Phase가 `completed` 될 때까지 종료하지 않음
-6. **상태 파일 동기화**: 상태 변경 시 반드시 progress 파일 업데이트
-7. **질문 금지**: Phase 0과 예외 상황 외에는 AskUserQuestion 절대 사용 금지
+> 공통 강제 규칙(1~7)은 shared-rules.md 참조
+
 8. **자체 탐색**: codex에게 파일 경로를 전달하여 직접 읽도록 함
 9. **handoff 필수**: 매 iteration 종료 시 handoff 필드 업데이트
 10. **스크립트 우선**: 구조적/기계적 검사는 `shared-gate.sh`로 먼저 실행

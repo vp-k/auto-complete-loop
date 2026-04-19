@@ -535,6 +535,34 @@ overview.md + README.md를 사용자에게 제시하고 승인 요청.
 
 ---
 
+### Step 0-10.5: CLAUDE.md 가드레일 자동 주입
+
+**목적**: 후속 Claude Code 세션이 프로젝트 규칙을 자동 로드하도록 프로젝트 루트에 `CLAUDE.md`를 생성한다.
+
+**조건부 실행**:
+- 프로젝트 루트에 `CLAUDE.md`가 **존재하지 않을 때만** 생성 (기존 파일 보존 — protect-files-guard 정책과 정합)
+- 이미 존재하면 이 스텝 전체 스킵
+
+**생성 방식**:
+```bash
+if [[ ! -f "CLAUDE.md" ]]; then
+  cp "${CLAUDE_PLUGIN_ROOT}/templates/project-claude-md.md" "CLAUDE.md"
+  echo "CLAUDE.md 생성 완료 — 수동으로 Stack/Test/Lint 섹션 채워주세요"
+fi
+```
+
+**후속 편집**:
+- Claude는 생성 직후 Stack/Test/Lint/Package Manager 섹션을 overview.md 기술 스택 결정값으로 채워넣는다 (Read → Edit, 1회)
+- 이후 이 파일은 protect-files-guard가 편집을 차단 (사용자만 수정 가능)
+- 추가 변경이 필요하면 사용자에게 수정 요청
+
+**progress 기록**:
+```bash
+jq '.phases.phase_0.outputs.claudeMdCreated = true' ...
+```
+
+---
+
 ### Step 0-11: Phase 0 결과 기록
 
 **주의**: Progress init은 오케스트레이터에서 이미 완료. 여기서는 outputs 기록만.

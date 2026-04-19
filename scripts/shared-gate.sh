@@ -100,6 +100,7 @@ main() {
     checkpoint)        cmd_checkpoint "$@" ;;
     docker-build-check) cmd_docker_build_check "$@" ;;
     ambiguity-check)   cmd_ambiguity_check "$@" ;;
+    clarification-gate) cmd_clarification_gate "$@" ;;
     spec-completeness) cmd_spec_completeness "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
@@ -141,6 +142,7 @@ main() {
       echo "  checkpoint create|list|suggest-rollback       - Git checkpoint management"
       echo "  docker-build-check                           - Dockerfile build verification"
       echo "  ambiguity-check [docs_dir]                   - Scan for TBD/TODO/ambiguous language (SOFT)"
+      echo "  clarification-gate [docs_dir]                - Block on unresolved [NEEDS-CLARIFICATION] tags (HARD_FAIL)"
       echo "  spec-completeness                            - Planning doc completeness check (HARD on CRITICAL)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"

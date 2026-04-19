@@ -321,6 +321,60 @@ cmd_ambiguity_check() {
   echo "=== AMBIGUITY CHECK: ${result^^} ==="
 }
 
+# ─── clarification-gate: [NEEDS-CLARIFICATION] 잔존 검사 (HARD_FAIL) ───
+
+cmd_clarification_gate() {
+  local docs_dir="${1:-docs}"
+  echo "=== Clarification Gate ==="
+
+  local scan_files=()
+  for f in overview.md SPEC.md spec.md README.md; do
+    [[ -f "$f" ]] && scan_files+=("$f")
+  done
+  if [[ -d "$docs_dir" ]]; then
+    while IFS= read -r -d '' f; do
+      scan_files+=("$f")
+    done < <(find "$docs_dir" -maxdepth 3 -name "*.md" -print0 2>/dev/null)
+  fi
+
+  if [[ ${#scan_files[@]} -eq 0 ]]; then
+    echo "[clarification-gate] SKIP (no documentation files found)"
+    append_gate_history "clarification-gate" "skip" '{"reason":"no docs"}'
+    return 0
+  fi
+
+  local total=0 output=""
+  for f in "${scan_files[@]}"; do
+    local filtered
+    filtered=$(awk '/^```/{skip=!skip; next} !skip{print NR": "$0}' "$f" 2>/dev/null || true)
+    local matches
+    matches=$(echo "$filtered" | grep -E '\[NEEDS-CLARIFICATION' | head -20 || true)
+    if [[ -n "$matches" ]]; then
+      local count
+      count=$(echo "$matches" | wc -l | tr -d ' ')
+      total=$((total + count))
+      output="${output}--- $f ($count tags) ---\n$matches\n\n"
+    fi
+  done
+
+  local result="pass"
+  if [[ "$total" -gt 0 ]]; then
+    result="hard_fail"
+    printf '%b' "$output"
+    echo "[clarification-gate] HARD_FAIL: $total unresolved [NEEDS-CLARIFICATION] tags"
+    echo "  Phase 2 진입 차단. 모든 태그를 사용자 답변으로 치환해야 한다."
+    echo "  프로토콜: templates/doc-planning-common.md → [NEEDS-CLARIFICATION] 태그 프로토콜"
+    append_gate_history "clarification-gate" "$result" "{\"unresolved\":$total}"
+    echo "=== CLARIFICATION GATE: HARD_FAIL ==="
+    return 1
+  fi
+
+  echo "[clarification-gate] All [NEEDS-CLARIFICATION] tags resolved"
+  append_gate_history "clarification-gate" "$result" '{"unresolved":0}'
+  echo "=== CLARIFICATION GATE: PASS ==="
+  return 0
+}
+
 # ─── spec-completeness: 기획 문서 완전성 검사 (HARD gate) ───
 
 cmd_spec_completeness() {

@@ -62,3 +62,41 @@ doc-planning, doc-planning-solo 스킬이 공유하는 규칙입니다.
 2. **High**: 다른 문서와 불일치, 누락된 필수 정보
 3. **Medium**: 명확성 부족, 예시 부족
 4. **Low**: 형식, 표현 개선
+
+## [NEEDS-CLARIFICATION] 태그 프로토콜
+
+**원칙**: AI는 문서에 근거 없는 결정을 **추측으로 채우지 않는다**. 정보가 부족하거나 결정이 필요한 지점은 `[NEEDS-CLARIFICATION: <질문>]` 리터럴 태그로 마크업한다.
+
+### 사용 규칙
+
+**태그 형식**:
+```markdown
+[NEEDS-CLARIFICATION: 비밀번호 재설정 시 이메일 링크 유효기간은 몇 분인가?]
+[NEEDS-CLARIFICATION: 주문 취소 가능 시점 — 결제완료 후 N시간 또는 배송시작 전?]
+```
+
+**사용 시점 (문서 작성 중)**:
+- 기술 결정이 사용자 입력을 요구하지만 아직 답이 없을 때
+- 여러 해석이 가능한 요구사항에서 합의 전 단계
+- 외부 서비스 사양/API 키/정책이 확인 필요할 때
+- 보안/성능 임계값이 명시되지 않아 추정해야 할 때
+
+**금지 사용**:
+- 단순 구현 디테일(코드 레벨) 결정에는 사용하지 않음 (그런 건 Phase 2에서 해결)
+- "나중에 결정" 용도로 방치 금지 — 반드시 Phase 1 완료 전 모두 해소
+
+### 해소 프로세스
+
+1. **작성 중**: 문서에 `[NEEDS-CLARIFICATION: ...]` 태그 삽입 후 계속 작성 (블로킹되지 않음)
+2. **문서 완료 직전**: 각 태그를 목록으로 추출 → AskUserQuestion으로 사용자 질의
+3. **사용자 답변 수신**: 해당 태그를 구체 결정으로 치환 + `docs/adr/` 하위에 결정 ADR 추가 권장
+4. **Phase 1 완료 게이트**: `shared-gate.sh clarification-gate` 통과 필수 (잔존 0건 요구)
+
+### 검증
+
+Phase 1 → Phase 2 전이 시 **clarification-gate**가 HARD_FAIL:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
+```
+
+1개라도 잔존하면 Phase 2 진입 차단. 모두 해소한 뒤에만 구현 시작 가능.

@@ -21,6 +21,11 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" block-no-verify.sh",
             "description": "--no-verify 플래그 차단 (pre-commit hook 보호)"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" commit-msg-guard.sh",
+            "description": "[auto] 커밋 메시지의 US-ID suffix 의무화 검증"
           }
         ]
       },

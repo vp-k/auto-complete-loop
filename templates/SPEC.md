@@ -59,9 +59,25 @@
   - 경계값 -> [예상 동작]
 
 ## Constraints
-- 성능: 응답시간 목표, 동시접속 제한, 쿼리 제한
-- 보안: 입력 검증, 인증/인가, 민감정보 처리
-- 관측성: 로깅 규칙, 에러 리포팅
+
+> **hasBackend=true일 때 아래 3개 상세 문서 작성 필수** — 이 섹션은 요약만 두고 상세는 별도 문서 참조.
+
+### 성능
+- 응답시간: p95 < [N]ms, p99 < [N]ms
+- 동시접속: [N] concurrent users
+- 쿼리 제한: per-request [N] queries 이하
+
+### 보안
+- 상세: `docs/security-authn-authz.md` 참조 (인증·인가·입력검증·비밀번호·세션·민감정보·레이트리밋)
+- 본 문서 엔드포인트의 `Auth:` 필드는 위 문서의 토큰 정책을 따름
+
+### 에러 응답
+- 상세: `docs/error-policy.md` 참조 (응답 포맷·HTTP 매핑·재시도·타임아웃)
+- 본 문서 각 엔드포인트의 에러 응답은 위 정책 포맷 준수
+
+### 관측성 (로깅)
+- 상세: `docs/logging-standard.md` 참조 (레벨·JSON 포맷·마스킹·감사 로그)
+- ERROR 이상 로그는 `request_id` + `error.code` 필수
 
 ## Non-Goals
 - [명시적으로 이 프로젝트에서 하지 않는 것]

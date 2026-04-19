@@ -16,6 +16,17 @@ No Ralph/progress/promise code — managed by the orchestrator.
 1. overview.md (정의 문서) 읽기 — 프로젝트 핵심 원칙, 경계, 책임 파악
 2. README.md에서 작성할 문서 목록 추출
 3. 각 문서의 현재 상태 확인 (완료/미작성)
+4. **백엔드 필수 문서 존재 검증** (`projectScope.hasBackend=true`인 경우):
+   - `docs/logging-standard.md` — 없으면 `${CLAUDE_PLUGIN_ROOT}/templates/logging-standard.md`를 docs/로 복사 후 문서 목록에 pending으로 추가
+   - `docs/error-policy.md` — 없으면 동일 템플릿 복사 후 pending 등록
+   - `docs/security-authn-authz.md` — 없으면 동일 템플릿 복사 후 pending 등록
+   - 이 3개 문서는 Phase 1 완료 전 반드시 `completed` 상태여야 함 (이후 Step 1-9 검증에서 HARD_FAIL)
+   - 템플릿 복사 예시:
+   ```bash
+   for t in logging-standard error-policy security-authn-authz; do
+     [[ -f "docs/$t.md" ]] || cp "${CLAUDE_PLUGIN_ROOT}/templates/$t.md" "docs/$t.md"
+   done
+   ```
 
 #### overview.md 구조 검증 (PM Planning 산출물)
 
@@ -263,6 +274,27 @@ fi
 ```
 
 WARN은 경고만 출력하고 진행, FAIL은 해당 단계를 재수행합니다.
+
+#### 백엔드 표준 문서 3종 존재 검증 (hasBackend=true인 경우)
+
+```bash
+if [[ "$has_backend" == "true" ]]; then
+  for t in logging-standard error-policy security-authn-authz; do
+    if [[ ! -f "docs/$t.md" ]]; then
+      echo "FAIL: docs/$t.md 미생성 (hasBackend=true는 3종 표준 문서 필수)"
+    fi
+  done
+fi
+```
+
+#### [NEEDS-CLARIFICATION] 태그 잔존 게이트 (HARD_FAIL)
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
+```
+
+- PASS → Phase 2 전이 가능
+- HARD_FAIL → 잔존 태그를 사용자에게 AskUserQuestion으로 질의하여 모두 해소. 해소 전 Phase 2 진입 금지.
 
 ### Step 1-10: Phase 1 완료
 

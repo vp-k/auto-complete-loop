@@ -33,7 +33,7 @@ if ! echo "$COMMAND" | grep -qE 'git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]
 fi
 
 # -m / --message 플래그가 없으면 (에디터 사용) 본 훅은 검증하지 않음
-if ! echo "$COMMAND" | grep -qE -- '(-m[[:space:]]|-m"|-m'"'"'|--message[[:space:]=])'; then
+if ! echo "$COMMAND" | grep -qE -- '(-m.|--message[[:space:]=])'; then
   echo '{"decision": "approve"}'
   exit 0
 fi

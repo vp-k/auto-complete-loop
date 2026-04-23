@@ -89,6 +89,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template review "" "자
 - `reviewMode`: `"solo"` | `"codex"` | `"gemini"` (--mode 파라미터)
 - `loopMode`: `"rounds"` | `"goal"` (반복 방식)
 - `targetRounds`, `goal` 등
+- 기존 `mode` 필드 제거: `jq 'del(.mode)'` (init 템플릿이 생성하는 구 필드 정리)
 
 findingHistory 각 항목 스키마:
 - `id`: finding ID (예: "SEC-CRITICAL-001")
@@ -422,7 +423,9 @@ git add -A && git commit -m "[auto] 코드 리뷰 Round {currentRound} {COMMIT_M
 
 **종료 조건** = (rounds 또는 goal 조건 충족) && (빌드/테스트 통과)
 
-- **종료 조건 충족**: → DoD 최종 업데이트, `.claude-review-loop-progress.json`의 `status`를 `"completed"`로 변경 → **7단계(Live App Testing) 진행** → 완료 보고 후 `<promise>REVIEW_LOOP_COMPLETE</promise>` 출력
+- **종료 조건 충족**: → DoD 최종 업데이트 → **7단계(Live App Testing) 진행**
+  - 7단계 완료 (promise 차단 없음) → `status`를 `"completed"`로 변경 → 완료 보고 후 `<promise>REVIEW_LOOP_COMPLETE</promise>` 출력
+  - 7단계에서 promise 차단 (open LIVE-CRITICAL/HIGH) → `status`를 `"in_progress"` 유지, `handoff.nextSteps`에 `"live_testing_blocked"` 기록 → 종료 (stop-hook 미트리거)
 - **미충족**: → `handoff`에 다음 라운드 안내 기록, 현재 턴에서 종료 (stop-hook이 다음 반복 트리거)
 
 ---

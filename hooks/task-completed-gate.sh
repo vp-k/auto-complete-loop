@@ -31,10 +31,13 @@ if [[ -z "$TASK_OUTPUT" ]]; then
   exit 0
 fi
 
-# NO_FINDINGS — 라인 단위 정확 일치로 검사 (부분 문자열 우회 방지)
-if echo "$TASK_OUTPUT" | grep -qxF "NO_FINDINGS"; then
+# NO_FINDINGS — output 전체가 정확히 "NO_FINDINGS"인 경우만 허용
+# (부분 문자열 우회 방지: findings와 NO_FINDINGS가 공존하면 차단)
+TRIMMED_OUTPUT=$(echo "$TASK_OUTPUT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr -d '\r')
+if [[ "$TRIMMED_OUTPUT" == "NO_FINDINGS" ]]; then
   exit 0
 fi
+# NO_FINDINGS 라인이 있지만 전체가 아닌 경우: findings와 혼재 → 무시하고 계속 검증
 
 # FINDING_COUNT 라인만 정확히 추출 (다른 숫자에 오염 방지)
 FINDING_COUNT_LINE=$(echo "$TASK_OUTPUT" | grep -E "^FINDING_COUNT:[[:space:]]*[0-9]+$" || true)
@@ -44,9 +47,17 @@ if [[ -z "$FINDING_COUNT_LINE" ]]; then
 fi
 FINDING_COUNT=$(echo "$FINDING_COUNT_LINE" | sed 's/FINDING_COUNT:[[:space:]]*//')
 
-# finding 형식 검증 (최소 1개의 finding이 올바른 형식인지)
-if ! echo "$TASK_OUTPUT" | grep -qE "###[[:space:]]+(SEC|ERR|DATA|PERF|CODE|LIVE)-(CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+"; then
-  if [[ "${FINDING_COUNT:-0}" -gt 0 ]]; then
+# finding heading 실제 개수 계산 및 FINDING_COUNT와 일치 확인
+ACTUAL_COUNT=$(echo "$TASK_OUTPUT" | grep -cE "###[[:space:]]+(SEC|ERR|DATA|PERF|CODE|LIVE)-(CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+" || true)
+if [[ "$ACTUAL_COUNT" -ne "$FINDING_COUNT" ]]; then
+  echo "FINDING_COUNT($FINDING_COUNT)와 실제 finding heading 수($ACTUAL_COUNT)가 일치하지 않습니다."
+  exit 2
+fi
+
+# FINDING_COUNT가 0인데 finding heading이 있으면 차단 (이미 위에서 처리됨)
+# finding 형식 검증: FINDING_COUNT > 0일 때 올바른 형식 찾기
+if [[ "${FINDING_COUNT:-0}" -gt 0 ]]; then
+  if ! echo "$TASK_OUTPUT" | grep -qE "###[[:space:]]+(SEC|ERR|DATA|PERF|CODE|LIVE)-(CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+"; then
     echo "finding이 있지만 올바른 형식이 아닙니다."
     echo "형식: ### {CATEGORY}-{SEVERITY}-{번호}: {제목}"
     echo "카테고리: SEC, ERR, DATA, PERF, CODE, LIVE"

@@ -14,25 +14,26 @@
 set -euo pipefail
 
 if ! command -v jq &>/dev/null; then
-  echo '{"decision": "approve"}'
+  echo '{"decision": "block", "reason": "jq가 설치되지 않아 커밋 메시지를 검증할 수 없습니다. jq를 설치하세요."}'
   exit 0
 fi
 
 INPUT=$(cat)
 
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || {
-  echo '{"decision": "approve"}'
+  echo '{"decision": "block", "reason": "입력 JSON 파싱에 실패했습니다. 커밋 메시지를 검증할 수 없어 차단합니다."}'
   exit 0
 }
 
 # git commit 커맨드가 아니면 즉시 통과
-if ! echo "$COMMAND" | grep -qE 'git[[:space:]]+commit'; then
+# git global option(-C, -c, --git-dir, --work-tree)이 앞에 있어도 commit을 포함하면 검사
+if ! echo "$COMMAND" | grep -qE 'git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+\S+=\S+|--git-dir[[:space:]]+\S+|--work-tree[[:space:]]+\S+))*[[:space:]]+commit'; then
   echo '{"decision": "approve"}'
   exit 0
 fi
 
-# -m 플래그가 없으면 (에디터 사용) 본 훅은 검증하지 않음
-if ! echo "$COMMAND" | grep -qE -- '-m[[:space:]]'; then
+# -m / --message 플래그가 없으면 (에디터 사용) 본 훅은 검증하지 않음
+if ! echo "$COMMAND" | grep -qE -- '(-m[[:space:]]|-m"|-m'"'"'|--message[[:space:]=])'; then
   echo '{"decision": "approve"}'
   exit 0
 fi

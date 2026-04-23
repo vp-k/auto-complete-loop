@@ -145,9 +145,11 @@ curl -s -X POST http://localhost:3000/api/posts -d '{}'  # 잘못된 입력
 
 ### 3c: Acceptance Criteria 검증
 
-progress 파일에서 로드한 acceptance criteria 각 항목을 실제로 검증:
-- 각 기준에 대해 pass/fail 판정
-- fail인 항목은 LIVE finding으로 보고
+progress 파일의 `acceptanceCriteria` 또는 `phases.phase_0.outputs.acceptanceCriteria` 필드를 확인:
+- **필드 존재 시**: 각 기준에 대해 pass/fail 판정 → fail인 항목은 LIVE finding으로 보고
+- **필드 없음 (code-review-loop 등 standalone 워크플로우)**: `scope` 기반 주요 user flow를 추론하여 검증
+  - scope가 디렉토리/파일이면 → 해당 모듈의 핵심 CRUD/인증/네비게이션 플로우 검증
+  - scope가 자연어이면 → 그 기능 범위의 주요 동작 검증
 
 ## Step 4: Finding 보고
 
@@ -176,16 +178,17 @@ LIVE-CRITICAL 및 LIVE-HIGH finding을 자동 수정합니다.
 1. Finding 목록에서 CRITICAL/HIGH만 필터링
 2. 각 finding에 대해:
    a. 원인 추정과 에러 로그를 기반으로 해당 파일 코드 수정 (Edit 도구)
-   b. 품질 게이트 재실행:
+   b. 품질 게이트 재실행 (호출자가 전달한 PROGRESS_FILE 사용):
       ```bash
-      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file "${PROGRESS_FILE}"
       ```
+      PROGRESS_FILE이 전달되지 않은 경우 `--progress-file` 플래그 생략 (shared-gate.sh 자동 탐지).
    c. 앱 재기동 → 해당 user flow 재테스트 (Step 2~3의 해당 시나리오만)
    d. 통과 시 finding status = "fixed"
    e. 실패 시 최대 3회 재시도 → 3회 후에도 실패 시 handoff에 기록하고 다음 finding으로 진행 (포기 금지)
 3. 모든 CRITICAL/HIGH finding 처리 후 전체 품질 게이트 재실행:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file "${PROGRESS_FILE:-}"
    ```
 4. 수정 결과 요약 출력:
    - Fixed: N건 (CRITICAL: A, HIGH: B)

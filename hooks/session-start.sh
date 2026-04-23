@@ -52,10 +52,28 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # completed 상태 progress 파일 정리
+# 모든 progress 파일 스캔: active(in_progress) 파일이 하나라도 있으면 verification.json 보존
 PROGRESS_STATUS=$(jq -r '.status // "unknown"' "$PROGRESS_FILE" 2>/dev/null || echo "unknown")
 if [[ "$PROGRESS_STATUS" == "completed" ]]; then
   rm -f "$PROGRESS_FILE"
-  rm -f ".claude-verification.json"
+  # 다른 진행 중인 progress 파일이 없는 경우에만 전역 verification.json 삭제
+  HAS_ACTIVE=0
+  for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
+           .claude-progress.json \
+           .claude-plan-progress.json .claude-polish-progress.json \
+           .claude-review-loop-progress.json .claude-e2e-progress.json \
+           .claude-doc-check-progress.json; do
+    if [[ -f "$f" ]]; then
+      _status=$(jq -r '.status // "unknown"' "$f" 2>/dev/null || echo "unknown")
+      if [[ "$_status" == "in_progress" ]]; then
+        HAS_ACTIVE=1
+        break
+      fi
+    fi
+  done
+  if [[ "$HAS_ACTIVE" -eq 0 ]]; then
+    rm -f ".claude-verification.json"
+  fi
   exit 0
 fi
 

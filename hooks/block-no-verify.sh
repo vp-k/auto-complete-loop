@@ -31,8 +31,9 @@ fi
 
 # git commit의 -n (short form of --no-verify) 차단
 # 주의: git push -n은 dry-run이므로 차단하지 않음
-if echo "$COMMAND" | grep -qE 'git\s+commit'; then
-  if echo "$COMMAND" | grep -qE '(^|\s)-[a-zA-Z]*n(\s|$)'; then
+# git global option(-C, -c, --git-dir, --work-tree)이 앞에 있어도 commit을 포함하면 검사
+if echo "$COMMAND" | grep -qE 'git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+\S+=\S+|--git-dir[[:space:]]+\S+|--work-tree[[:space:]]+\S+))*[[:space:]]+commit'; then
+  if echo "$COMMAND" | grep -qE '(^|[[:space:]])-[a-zA-Z]*n([[:space:]]|$)'; then
     echo "$BLOCK_MSG"
     exit 0
   fi

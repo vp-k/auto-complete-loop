@@ -85,7 +85,10 @@ argument-hint: "[--mode <solo|codex|gemini>] [--rounds N | --goal \"조건\"] <s
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template review "" "자연어 scope 원문"
 ```
 
-생성 후 mode, targetRounds, goal 등을 jq로 설정합니다.
+생성 후 다음 필드를 jq로 설정합니다:
+- `reviewMode`: `"solo"` | `"codex"` | `"gemini"` (--mode 파라미터)
+- `loopMode`: `"rounds"` | `"goal"` (반복 방식)
+- `targetRounds`, `goal` 등
 
 findingHistory 각 항목 스키마:
 - `id`: finding ID (예: "SEC-CRITICAL-001")
@@ -131,8 +134,11 @@ solo 모드에서는 Claude가 직접 대상 파일을 탐색합니다.
 
 ## 2단계: 리뷰 실행 (모드별 분기)
 
-**라운드 1**: 자연어 scope를 리뷰어에게 전달하여 자체 탐색
-**라운드 2+**: 수정된 파일 전체 (`git diff --name-only`) 목록을 전달. 이전 finding 목록은 **참고용으로만** 프롬프트에 포함 (범위 제한 금지). 리뷰어가 Claude가 놓친 새로운 이슈를 독립적으로 발견할 수 있어야 함.
+**라운드 1**: 자연어 scope를 리뷰어에게 전달하여 자체 탐색. 라운드 시작 시 기준 커밋 SHA 기록:
+```bash
+ROUND_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+```
+**라운드 2+**: `git diff --name-only <roundStartSha>..HEAD` 목록을 전달 (커밋 후 uncommitted diff가 비는 문제 방지). 이전 finding 목록은 **참고용으로만** 프롬프트에 포함 (범위 제한 금지). 리뷰어가 Claude가 놓친 새로운 이슈를 독립적으로 발견할 수 있어야 함.
 
 ### 모드별 리뷰 실행
 
@@ -386,10 +392,11 @@ git add -A && git commit -m "[auto] 코드 리뷰 Round {currentRound} {COMMIT_M
 
 ### 6-2. 종료 조건 평가
 
-**횟수 모드** (`mode: "rounds"`):
-- `currentRound >= targetRounds` → 종료 조건 충족
+**횟수 모드** (`loopMode: "rounds"`):
+- `currentRound > targetRounds` → 종료 조건 충족
+  (6-1에서 currentRound를 증가시킨 뒤 검사하므로, `>`를 사용해야 targetRounds만큼 실행됨)
 
-**목표 모드** (`mode: "goal"`):
+**목표 모드** (`loopMode: "goal"`):
 - 목표 조건 파싱:
   - "CRITICAL 0개" → CRITICAL severity open finding 0개
   - "CRITICAL/HIGH 0개" → CRITICAL + HIGH open finding 합계 0개
@@ -458,7 +465,29 @@ Read ${CLAUDE_PLUGIN_ROOT}/skills/live-testing/SKILL.md
 git add -A && git commit -m "[auto] Live 테스트 이슈 수정 완료 {COMMIT_MSG_TAG}"
 ```
 
-Live 테스트 완료 후 완료 보고로 이동.
+### Live 테스트 결과 확인 (ERR-HIGH-006 대응)
+
+Step 4.5 수정 루프 완료 후, 잔여 open LIVE-CRITICAL/HIGH 수를 확인합니다:
+
+**open LIVE-CRITICAL/HIGH == 0** → 완료 보고로 이동.
+
+**open LIVE-CRITICAL/HIGH > 0** (3회 재시도 실패 항목 존재):
+1. `dod.live_testing` 업데이트:
+   ```json
+   { "checked": false, "evidence": "open LIVE-CRITICAL: N, LIVE-HIGH: M (재시도 실패)" }
+   ```
+2. progress 파일에 `live_testing_issues` 필드로 미해결 finding 목록 기록
+3. 다음 메시지를 출력하고 워크플로우를 중단 (promise 출력 안 함):
+   ```
+   ## ⚠️ Live 테스트 미해결 이슈
+
+   자동 수정 3회 재시도 후에도 다음 CRITICAL/HIGH 이슈가 남아 있습니다:
+   - LIVE-CRITICAL-XXX: ...
+   - LIVE-HIGH-XXX: ...
+
+   수동 확인 후 `/code-review-loop` 를 다시 실행하거나, 이슈를 진행 불가로 표시하세요.
+   ```
+   → `<promise>REVIEW_LOOP_COMPLETE</promise>` **출력하지 않음**
 
 ---
 

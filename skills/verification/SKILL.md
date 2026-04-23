@@ -97,6 +97,51 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-f
 - SOFT gate: 문제 페이지 수 보고, --strict 시 FAIL
 - 실패 시 해당 페이지 수정 후 재실행
 
+### Step 4-1.11: Live App Testing
+
+코드 리뷰와 자동화 E2E가 잡지 못하는 런타임 버그를 사용자 관점에서 검증합니다.
+
+#### 실행 조건
+
+progress 파일에서 다음 중 하나를 확인:
+- `phases.phase_0.outputs.projectScope.hasFrontend == true`
+- `phases.phase_0.outputs.projectScope.isMobileApp == true`
+- 또는 `pubspec.yaml` / `package.json` + `src/` 존재로 앱 실행 가능 판단
+
+해당 없으면: `dod.live_testing = {checked: true, evidence: "N/A: no frontend or mobile app"}` 후 SKIP.
+
+#### 실행
+
+```
+Read ${CLAUDE_PLUGIN_ROOT}/skills/live-testing/SKILL.md
+```
+
+위 스킬의 절차를 순서대로 따릅니다:
+1. Step 1: 프로젝트 타입 감지 → 도구 선택 (Playwright MCP / Maestro / curl)
+2. Step 2: 앱 기동
+3. Step 3: User flow 테스트 (progress 파일의 acceptance criteria 포함)
+4. Step 4: Finding 보고
+5. Step 4.5: LIVE-CRITICAL/HIGH finding 수정 루프 → quality-gate 재실행
+6. Step 5: 앱 종료 + 정리
+
+#### 수정 후 커밋 (수정 사항이 있는 경우)
+
+```bash
+git add -A && git commit -m "[auto] Phase 4 Live 테스트 이슈 수정 완료"
+```
+
+#### DoD 업데이트
+
+```json
+"live_testing": {
+  "checked": true,
+  "evidence": "Live 테스트 N건 수행, CRITICAL/HIGH A건 수정"
+}
+```
+
+남은 open CRITICAL/HIGH가 있으면 evidence에 명시하고 Step 4-2로 계속 진행
+(live testing 실패가 Phase 완료를 차단하지는 않으나, 최종 보고서에 포함).
+
 ### Step 4-2: 보안 검토
 
 1. **시크릿 스캔**

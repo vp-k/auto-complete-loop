@@ -415,8 +415,50 @@ git add -A && git commit -m "[auto] 코드 리뷰 Round {currentRound} {COMMIT_M
 
 **종료 조건** = (rounds 또는 goal 조건 충족) && (빌드/테스트 통과)
 
-- **종료 조건 충족**: → DoD 최종 업데이트, `.claude-review-loop-progress.json`의 `status`를 `"completed"`로 변경, 완료 보고 후 `<promise>REVIEW_LOOP_COMPLETE</promise>` 출력
+- **종료 조건 충족**: → DoD 최종 업데이트, `.claude-review-loop-progress.json`의 `status`를 `"completed"`로 변경 → **7단계(Live App Testing) 진행** → 완료 보고 후 `<promise>REVIEW_LOOP_COMPLETE</promise>` 출력
 - **미충족**: → `handoff`에 다음 라운드 안내 기록, 현재 턴에서 종료 (stop-hook이 다음 반복 트리거)
+
+---
+
+## 7단계: Live App Testing (코드 리뷰 완료 후)
+
+코드 리뷰 종료 조건 충족 후, 실제 앱을 기동하여 사용자 플로우를 검증합니다.
+코드 리뷰(정적 분석)가 발견하지 못하는 런타임 버그를 탐지하고 수정합니다.
+
+### 실행 조건 확인
+
+프로젝트 루트에서 다음을 확인:
+- `package.json` + `src/` or `app/` 존재 → 웹앱/Node 서버
+- `pubspec.yaml` 존재 → Flutter 앱
+- `go.mod` 존재 → Go 서버
+- `requirements.txt` or `pyproject.toml` 존재 → Python 서버
+
+라이브러리 only 프로젝트 판단 (start 스크립트 없음 + 서버 진입점 없음):
+→ `dod.live_testing = {checked: true, evidence: "N/A: library-only project"}` 후 SKIP.
+→ 그 외 모두 실행.
+
+### 실행
+
+```
+Read ${CLAUDE_PLUGIN_ROOT}/skills/live-testing/SKILL.md
+```
+
+위 스킬의 절차를 순서대로 따릅니다:
+1. Step 1: 프로젝트 타입 감지
+2. Step 2: 앱 기동
+3. Step 3: User flow 테스트 (scope 기반 주요 기능 검증)
+4. Step 4: Finding 보고 (LIVE-{SEVERITY}-{번호} 형식)
+5. Step 4.5: LIVE-CRITICAL/HIGH 자동 수정 루프 → quality-gate 재실행
+6. Step 5: 앱 종료 + 정리
+
+### 수정 후 커밋
+
+수정 사항이 있을 경우:
+```bash
+git add -A && git commit -m "[auto] Live 테스트 이슈 수정 완료 {COMMIT_MSG_TAG}"
+```
+
+Live 테스트 완료 후 완료 보고로 이동.
 
 ---
 

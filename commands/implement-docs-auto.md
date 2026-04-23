@@ -657,6 +657,28 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate
 
 3. 프레임워크 미감지 시: 이 시점에서 E2E 설정 + 테스트 작성 후 재실행.
 
+### 4.1.6 Live App Testing
+
+E2E 스크립트 테스트 완료 후, Claude가 직접 앱에 접속하여 사용자 플로우를 검증합니다.
+스크립트 테스트가 잡지 못하는 런타임 버그와 UX 이슈를 탐지합니다.
+
+```
+Read ${CLAUDE_PLUGIN_ROOT}/skills/live-testing/SKILL.md
+```
+
+위 스킬의 절차를 순서대로 따릅니다:
+1. Step 1: 프로젝트 타입 감지 (웹앱 / Flutter Mobile / API 서버)
+2. Step 2: 앱 기동
+3. Step 3: 핵심 user flow 테스트 (SPEC.md 또는 기획 문서 기반)
+4. Step 4: Finding 보고
+5. Step 4.5: LIVE-CRITICAL/HIGH 자동 수정 루프
+6. Step 5: 앱 종료 + 정리
+
+수정 사항이 있으면:
+```bash
+git add -A && git commit -m "[auto] Live 테스트 이슈 수정 완료"
+```
+
 ### 4.2 보안 검토
 
 1. **민감 정보 노출 확인**

@@ -1,1 +1,15 @@
+# Workflow runtime artifacts — never commit
+# Progress files (resume-on-restart, deleted on completion)
+.claude-*-progress.json
 .claude-review*.json
+# Verification snapshot (recreated each run)
+.claude-verification.json
+# Quality gate baseline (per-environment, persists locally only)
+.claude-quality-baseline.json
+# Atomic-write orphans (never valid persistent state)
+.claude-*.tmp
+*.json.tmp
+# Ralph loop local state
+.claude/ralph-loop.local.md
+.claude/ralph-loop-failure-history.local
+.claude/acl-learnings.local.md

@@ -12,6 +12,12 @@ if [[ ! -f "$SHARED_GATE" ]]; then
   exit 0
 fi
 
+# 고아 .tmp 정리 — atomic write 중간 산물은 절대 재개 정보가 아님, 무조건 삭제
+# (jq_inplace는 mktemp를 쓰지만 과거 버전이나 외부 도구가 남긴 잔재를 청소)
+for _orphan in .claude-*-progress.json.tmp .claude-*.tmp; do
+  [[ -f "$_orphan" ]] && rm -f "$_orphan"
+done
+
 # progress 파일 탐지 (shared-gate.sh detect_progress_file와 동일 목록)
 PROGRESS_FILE=""
 for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
@@ -51,26 +57,21 @@ if ! command -v jq &>/dev/null; then
   exit 0
 fi
 
-# completed 상태 progress 파일 정리
-# 모든 progress 파일 스캔: active(in_progress) 파일이 하나라도 있으면 verification.json 보존
-PROGRESS_STATUS=$(jq -r '.status // "unknown"' "$PROGRESS_FILE" 2>/dev/null || echo "unknown")
-if [[ "$PROGRESS_STATUS" == "completed" ]]; then
-  rm -f "$PROGRESS_FILE"
-  # 다른 진행 중인 progress 파일이 없는 경우에만 전역 verification.json 삭제
-  HAS_ACTIVE=0
-  for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
-           .claude-progress.json \
-           .claude-plan-progress.json .claude-polish-progress.json \
-           .claude-review-loop-progress.json .claude-e2e-progress.json \
-           .claude-doc-check-progress.json; do
-    if [[ -f "$f" ]]; then
-      _status=$(jq -r '.status // "unknown"' "$f" 2>/dev/null || echo "unknown")
-      if [[ "$_status" == "in_progress" ]]; then
-        HAS_ACTIVE=1
-        break
-      fi
-    fi
-  done
+# completed 상태 progress 파일 일괄 정리 (glob 기반 — 신규/구 파일명 모두 커버)
+# 동시에 active(in_progress) 존재 여부 추적 → verification.json 보존 판단
+HAS_ACTIVE=0
+for f in .claude-*-progress.json; do
+  [[ -f "$f" ]] || continue
+  _status=$(jq -r '.status // "unknown"' "$f" 2>/dev/null || echo "unknown")
+  case "$_status" in
+    completed) rm -f "$f" ;;
+    in_progress) HAS_ACTIVE=1 ;;
+  esac
+done
+
+# 첫 매치였던 PROGRESS_FILE도 위 루프에서 처리되었으므로 다시 상태 확인
+if [[ ! -f "$PROGRESS_FILE" ]]; then
+  # PROGRESS_FILE이 completed로 정리되었음
   if [[ "$HAS_ACTIVE" -eq 0 ]]; then
     rm -f ".claude-verification.json"
   fi

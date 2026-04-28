@@ -8,7 +8,6 @@
 .claude-quality-baseline.json
 # Atomic-write orphans (never valid persistent state)
 .claude-*.tmp
-*.json.tmp
 # Ralph loop local state
 .claude/ralph-loop.local.md
 .claude/ralph-loop-failure-history.local

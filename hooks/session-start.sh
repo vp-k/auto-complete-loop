@@ -15,7 +15,9 @@ fi
 # 고아 .tmp 정리 — atomic write 중간 산물은 절대 재개 정보가 아님, 무조건 삭제
 # (jq_inplace는 mktemp를 쓰지만 과거 버전이나 외부 도구가 남긴 잔재를 청소)
 for _orphan in .claude-*-progress.json.tmp .claude-*.tmp; do
-  [[ -f "$_orphan" ]] && rm -f "$_orphan"
+  if [[ -f "$_orphan" ]]; then
+    rm -f "$_orphan"
+  fi
 done
 
 # progress 파일 탐지 (shared-gate.sh detect_progress_file와 동일 목록)
@@ -66,6 +68,7 @@ for f in .claude-*-progress.json; do
   case "$_status" in
     completed) rm -f "$f" ;;
     in_progress) HAS_ACTIVE=1 ;;
+    *) echo "WARN: $f has unrecognized status='$_status' — leaving in place for manual inspection" >&2 ;;
   esac
 done
 

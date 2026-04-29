@@ -60,9 +60,11 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # completed 상태 progress 파일 일괄 정리 (glob 기반 — 신규/구 파일명 모두 커버)
+# .claude-*-progress.json: 하이픈 포함 형식 (.claude-full-auto-progress.json 등)
+# .claude-progress.json:  하이픈 없는 단독 형식 (glob *-가 빈 문자열 매치 못 하므로 별도 명시)
 # 동시에 active(in_progress) 존재 여부 추적 → verification.json 보존 판단
 HAS_ACTIVE=0
-for f in .claude-*-progress.json; do
+for f in .claude-*-progress.json .claude-progress.json; do
   [[ -f "$f" ]] || continue
   _status=$(jq -r '.status // "unknown"' "$f" 2>/dev/null || echo "unknown")
   case "$_status" in

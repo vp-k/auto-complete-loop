@@ -1,6 +1,7 @@
 # Workflow runtime artifacts — never commit
 # Progress files (resume-on-restart, deleted on completion)
 .claude-*-progress.json
+.claude-progress.json
 .claude-review*.json
 # Verification snapshot (recreated each run)
 .claude-verification.json

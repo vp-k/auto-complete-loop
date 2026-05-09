@@ -566,3 +566,435 @@ cmd_spec_completeness() {
   fi
   return 0
 }
+
+# ─── doc-completeness: 구현자가 추가 판단 없이 코딩 가능한 수준의 정량 검증 (HARD_FAIL) ───
+# spec-completeness가 다루지 않는 API 블록 단위의 정량 임계값을 강제한다:
+#   - 각 API Contract 블록은 Request:, Response 200:, Response 4xx, 테스트 케이스 항목 ≥3건을 모두 가져야 함
+#   - overview.md의 필수 헤더 섹션이 비어있지 않아야 함
+
+cmd_doc_completeness() {
+  local docs_dir="${1:-docs}"
+  echo "=== Doc Completeness Check ==="
+
+  local hard_fail=0 issues=""
+
+  # progress 파일에서 projectScope 로드 — 잘못된 형식이면 fail-closed (HARD_FAIL)
+  # cmd_spec_completeness와 동일 패턴: 파일 자체가 없으면 생략, 있는데 형식 오류면 차단
+  local has_frontend="false" has_backend="false"
+  if [[ -n "${PROGRESS_FILE:-}" && -f "$PROGRESS_FILE" ]] && command -v jq >/dev/null 2>&1; then
+    local scope_valid
+    scope_valid=$(jq -r '
+      .phases.phase_0.outputs.projectScope
+      | if type == "object" and has("hasFrontend") and has("hasBackend")
+           and (.hasFrontend | type == "boolean") and (.hasBackend | type == "boolean")
+        then "valid" else "invalid" end
+    ' "$PROGRESS_FILE" 2>/dev/null || echo "invalid")
+    if [[ "$scope_valid" != "valid" ]]; then
+      hard_fail=$((hard_fail + 1))
+      issues="${issues}HARD_FAIL: projectScope missing or malformed in $PROGRESS_FILE (need {hasFrontend: bool, hasBackend: bool})\n"
+    else
+      has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+      has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    fi
+  fi
+
+  # ── 1. overview.md 필수 헤더 ──
+  if [[ ! -f "overview.md" ]]; then
+    hard_fail=$((hard_fail + 1))
+    issues="${issues}HARD_FAIL: overview.md not found\n"
+  else
+    local required_headers=("Problem Statement" "페르소나|Persona|Target Users" "Core Jobs|JTBD" "Non-Goals" "기술 스택|Tech Stack")
+    for header_pattern in "${required_headers[@]}"; do
+      if ! grep -qE "^##+ +($header_pattern)" overview.md; then
+        hard_fail=$((hard_fail + 1))
+        issues="${issues}HARD_FAIL: overview.md missing required section matching: $header_pattern\n"
+      fi
+    done
+  fi
+
+  # ── 2. SPEC.md 탐색 ──
+  local spec_file=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
+
+  if [[ -z "$spec_file" ]]; then
+    hard_fail=$((hard_fail + 1))
+    issues="${issues}HARD_FAIL: SPEC.md not found\n"
+  fi
+
+  # ── 3. SPEC.md API 블록 정량 검증 (hasBackend=true일 때) ──
+  if [[ -n "$spec_file" && "$has_backend" == "true" ]]; then
+    # 각 API 블록: '### METHOD /path' 헤더부터 다음 ### 또는 ## 까지
+    # awk로 블록 단위 검사
+    local block_report
+    block_report=$(awk '
+      BEGIN { current=""; req=0; res200=0; res4xx=0; tc=0; in_tc=0 }
+      /^### +(GET|POST|PUT|PATCH|DELETE) +\// {
+        if (current != "") {
+          if (req==0)    print current "|missing Request:"
+          if (res200==0) print current "|missing Response 200:"
+          if (res4xx==0) print current "|missing any Response 4xx"
+          if (tc<3)      print current "|insufficient test cases (" tc "<3)"
+        }
+        current=$0; req=0; res200=0; res4xx=0; tc=0; in_tc=0
+        next
+      }
+      /^### / || /^## / {
+        if (current != "") {
+          if (req==0)    print current "|missing Request:"
+          if (res200==0) print current "|missing Response 200:"
+          if (res4xx==0) print current "|missing any Response 4xx"
+          if (tc<3)      print current "|insufficient test cases (" tc "<3)"
+          current=""
+        }
+        in_tc=0
+        next
+      }
+      current != "" {
+        if ($0 ~ /(^|[[:space:]])(- )?(Request|요청)( body)?:/)             req=1
+        if ($0 ~ /(^|[[:space:]])(- )?Response +200:/)                       res200=1
+        if ($0 ~ /(^|[[:space:]])(- )?Response +4[0-9][0-9]/)                res4xx=1
+        # 테스트 케이스 라벨: 헤더 형식(#### 테스트 케이스), 리스트 형식(- 테스트 케이스:),
+        # 줄 끝 단독 모두 지원. 옵셔널 콜론.
+        if ($0 ~ /(^|[[:space:]>#-])(테스트 케이스|Test Cases?|Tests)[[:space:]]*:?[[:space:]]*$/) { in_tc=1; next }
+        # 빈 줄 만나면 in_tc 종료 — 같은 블록 내 별도 리스트 오집계 방지
+        if (in_tc==1 && $0 ~ /^[[:space:]]*$/)                                { in_tc=0; next }
+        if (in_tc==1 && $0 ~ /^[[:space:]]*-/)                                tc++
+        # 비-리스트, 비-빈줄 라인 만나면 in_tc 종료
+        if (in_tc==1 && $0 !~ /^[[:space:]]*-/ && $0 !~ /^[[:space:]]*$/)     in_tc=0
+      }
+      END {
+        if (current != "") {
+          if (req==0)    print current "|missing Request:"
+          if (res200==0) print current "|missing Response 200:"
+          if (res4xx==0) print current "|missing any Response 4xx"
+          if (tc<3)      print current "|insufficient test cases (" tc "<3)"
+        }
+      }
+    ' "$spec_file" 2>/dev/null || true)
+
+    if [[ -n "$block_report" ]]; then
+      while IFS= read -r line; do
+        hard_fail=$((hard_fail + 1))
+        issues="${issues}HARD_FAIL: ${spec_file} ${line}\n"
+      done <<< "$block_report"
+    fi
+  fi
+
+  # ── 4. SPEC.md US-* ID 존재 (hasFrontend 또는 hasBackend) ──
+  if [[ -n "$spec_file" ]]; then
+    local us_count
+    us_count=$(grep -coE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null || echo "0")
+    us_count=$(echo "$us_count" | tr -d '[:space:]')
+    [[ -z "$us_count" || ! "$us_count" =~ ^[0-9]+$ ]] && us_count=0
+    if [[ "$us_count" -eq 0 ]]; then
+      hard_fail=$((hard_fail + 1))
+      issues="${issues}HARD_FAIL: ${spec_file} has no US-F-*/US-B-* IDs\n"
+    fi
+  fi
+
+  # ── 5. hasFrontend=true일 때 Pages & Components 표 ──
+  if [[ -n "$spec_file" && "$has_frontend" == "true" ]]; then
+    if ! grep -qE '(Frontend Pages|Pages.*Components|페이지.*컴포넌트|화면.*목록)' "$spec_file" 2>/dev/null; then
+      hard_fail=$((hard_fail + 1))
+      issues="${issues}HARD_FAIL: hasFrontend=true but no Pages & Components section in $spec_file\n"
+    fi
+  fi
+
+  # ── 결과 출력 ──
+  echo ""
+  if [[ -n "$issues" ]]; then
+    printf '%b' "$issues"
+  fi
+
+  local result="pass"
+  if [[ "$hard_fail" -gt 0 ]]; then
+    result="hard_fail"
+    echo ""
+    echo "[doc-completeness] HARD_FAIL: $hard_fail blocking issue(s)"
+    echo "  All issues must be resolved — implementer cannot proceed without these."
+    append_gate_history "doc-completeness" "$result" "{\"blocking\":$hard_fail}"
+    echo "=== DOC COMPLETENESS: HARD_FAIL ==="
+    return 1
+  fi
+
+  echo "[doc-completeness] All planning documents pass quantitative thresholds"
+  append_gate_history "doc-completeness" "$result" '{"blocking":0}'
+  echo "=== DOC COMPLETENESS: PASS ==="
+  return 0
+}
+
+# ─── definition-conflict: overview.md Non-Goals 침범 탐지 (SOFT_FAIL) ───
+# 자연어 매칭은 false-positive가 있으므로 SOFT_FAIL — Claude가 각 매치를 검토 후 progress에 기록.
+
+cmd_definition_conflict() {
+  local docs_dir="${1:-docs}"
+  echo "=== Definition Conflict Check ==="
+
+  if [[ ! -f "overview.md" ]]; then
+    echo "[definition-conflict] SKIP (overview.md not found)"
+    append_gate_history "definition-conflict" "skip" '{"reason":"no overview.md"}'
+    return 0
+  fi
+
+  # Non-Goals 섹션 추출 (## Non-Goals 부터 다음 ## 까지)
+  local non_goals
+  non_goals=$(awk '
+    /^##+ +Non-Goals/ { capture=1; next }
+    /^##/ && capture==1 { capture=0 }
+    capture==1 && /^[[:space:]]*-/ { print }
+  ' overview.md 2>/dev/null || true)
+
+  if [[ -z "$non_goals" ]]; then
+    echo "[definition-conflict] No Non-Goals section content found in overview.md"
+    append_gate_history "definition-conflict" "skip" '{"reason":"no non-goals"}'
+    return 0
+  fi
+
+  # 키워드 추출: 각 라인에서 길이 ≥3 토큰을 분리 (한글/영문/숫자)
+  # 불용어 제외 (단순 명사/동사/형용사만 키워드로 사용)
+  # 한글: 조사/공통명사/일반동사 / 영어: 관사/조동사/일반동사/공통명사
+  local stopwords='^(the|and|for|not|with|that|this|will|from|have|has|had|are|was|were|but|all|any|its|none|use|user|users|data|api|app|service|when|then|than|into|over|under|here|there|should|must|can|may|need|like|via|also|same|other|both|each|some|none|more|less|much|many|such|own|new|old|good|best|true|false|null|등|또는|그리고|않는다|않는|않고|할|수|것|등을|등이|또한|기타|모든|일부|미지원|지원|사용|위한|대한|통해|관련|포함|제공|기능|구현|적용|반영|위해|되는|이다|있다|없다|않음|함|것은|이는|그러나|혹은|또한|위해|대해|에서|에게|으로|으로서|으로써|에는|에만|에서는|위에서)$'
+  local keywords
+  keywords=$(echo "$non_goals" \
+    | sed -E 's/[^[:alnum:][:space:]가-힣]/ /g' \
+    | tr -s '[:space:]' '\n' \
+    | awk 'length($0)>=3' \
+    | grep -ivE "$stopwords" \
+    | sort -u || true)
+
+  if [[ -z "$keywords" ]]; then
+    echo "[definition-conflict] No usable keywords extracted from Non-Goals"
+    append_gate_history "definition-conflict" "skip" '{"reason":"no keywords"}'
+    return 0
+  fi
+
+  # 스캔 대상 파일 (overview.md 자체는 제외)
+  local -a scan_files=()
+  for f in SPEC.md spec.md README.md; do
+    [[ -f "$f" ]] && scan_files+=("$f")
+  done
+  if [[ -d "$docs_dir" ]]; then
+    while IFS= read -r -d '' f; do
+      scan_files+=("$f")
+    done < <(find "$docs_dir" -maxdepth 2 -name "*.md" -print0 2>/dev/null)
+  fi
+
+  if [[ ${#scan_files[@]} -eq 0 ]]; then
+    echo "[definition-conflict] No documents to scan"
+    append_gate_history "definition-conflict" "skip" '{"reason":"no docs"}'
+    return 0
+  fi
+
+  local total_matches=0 match_output=""
+  while IFS= read -r kw; do
+    [[ -z "$kw" ]] && continue
+    # awk index() 기반 substring 매칭 — Windows git-bash의 grep -F core dump 회피
+    # 한/영 혼용 키워드, 정규식 메타문자 안전, 다중 파일 동시 처리
+    local hits
+    hits=$(awk -v kw="$kw" '
+      index($0, kw) > 0 { printf "%s:%d:%s\n", FILENAME, FNR, $0 }
+    ' "${scan_files[@]}" 2>/dev/null || true)
+    if [[ -n "$hits" ]]; then
+      local count
+      count=$(echo "$hits" | wc -l | tr -d ' ')
+      total_matches=$((total_matches + count))
+      match_output="${match_output}\n[Non-Goals keyword: $kw]\n${hits}\n"
+    fi
+  done <<< "$keywords"
+
+  local result="pass"
+  if [[ "$total_matches" -gt 0 ]]; then
+    result="warn"
+    printf '%b' "$match_output"
+    echo ""
+    echo "[definition-conflict] WARN: $total_matches potential Non-Goals violations"
+    echo "  Each match requires manual review:"
+    echo "    (a) intentional explicit exception with documented rationale, or"
+    echo "    (b) remove the violating content."
+    echo "  Record decision under progress.phases.phase_1.outputs.nonGoalsAudit"
+  else
+    echo "[definition-conflict] No Non-Goals violations detected"
+  fi
+
+  append_gate_history "definition-conflict" "$result" "{\"matches\":$total_matches}"
+  echo "=== DEFINITION CONFLICT: ${result^^} ==="
+  return 0
+}
+
+# ─── spec-to-tests: SPEC.md 엔드포인트 ↔ tests/api-smoke.sh 1:1 매핑 (HARD_FAIL) ───
+
+cmd_spec_to_tests() {
+  echo "=== Spec-to-Tests Mapping Check ==="
+
+  # progress 파일에서 projectScope 로드 — 잘못된 형식이면 fail-closed (HARD_FAIL)
+  local has_frontend="false" has_backend="false"
+  if [[ -n "${PROGRESS_FILE:-}" && -f "$PROGRESS_FILE" ]] && command -v jq >/dev/null 2>&1; then
+    local scope_valid
+    scope_valid=$(jq -r '
+      .phases.phase_0.outputs.projectScope
+      | if type == "object" and has("hasFrontend") and has("hasBackend")
+           and (.hasFrontend | type == "boolean") and (.hasBackend | type == "boolean")
+        then "valid" else "invalid" end
+    ' "$PROGRESS_FILE" 2>/dev/null || echo "invalid")
+    if [[ "$scope_valid" != "valid" ]]; then
+      echo "[spec-to-tests] HARD_FAIL: projectScope missing or malformed in $PROGRESS_FILE"
+      echo "  Need {hasFrontend: bool, hasBackend: bool}"
+      append_gate_history "spec-to-tests" "hard_fail" '{"reason":"invalid projectScope"}'
+      echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+      return 1
+    fi
+    has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+    has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+  fi
+
+  # hasBackend=false면 ui-smoke 또는 lib-smoke 존재만 확인하고 종료
+  if [[ "$has_backend" != "true" ]]; then
+    if [[ "$has_frontend" == "true" ]]; then
+      if [[ ! -f tests/ui-smoke.sh && ! -f tests/ui-smoke.spec.ts && ! -f tests/ui-smoke.spec.js ]]; then
+        echo "[spec-to-tests] HARD_FAIL: hasFrontend=true but no tests/ui-smoke.*"
+        append_gate_history "spec-to-tests" "hard_fail" '{"reason":"missing ui-smoke"}'
+        echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+        return 1
+      fi
+      echo "[spec-to-tests] hasFrontend=true, ui-smoke present (mapping check skipped — UI flows are validated by doc-planning Step 1-7)"
+    else
+      if [[ ! -f tests/lib-smoke.sh ]]; then
+        echo "[spec-to-tests] HARD_FAIL: library/CLI but no tests/lib-smoke.sh"
+        append_gate_history "spec-to-tests" "hard_fail" '{"reason":"missing lib-smoke"}'
+        echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+        return 1
+      fi
+      echo "[spec-to-tests] library/CLI lib-smoke present"
+    fi
+    append_gate_history "spec-to-tests" "pass" '{"hasBackend":false}'
+    echo "=== SPEC-TO-TESTS: PASS ==="
+    return 0
+  fi
+
+  # ── hasBackend=true: SPEC.md ↔ api-smoke.sh 매핑 ──
+  local spec_file=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
+
+  if [[ -z "$spec_file" ]]; then
+    echo "[spec-to-tests] HARD_FAIL: SPEC.md not found"
+    append_gate_history "spec-to-tests" "hard_fail" '{"reason":"no spec"}'
+    echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+    return 1
+  fi
+
+  if [[ ! -f tests/api-smoke.sh ]]; then
+    echo "[spec-to-tests] HARD_FAIL: hasBackend=true but tests/api-smoke.sh missing"
+    append_gate_history "spec-to-tests" "hard_fail" '{"reason":"missing api-smoke"}'
+    echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+    return 1
+  fi
+
+  # SPEC.md에서 엔드포인트 추출: '### METHOD /path' 형식
+  local spec_endpoints
+  spec_endpoints=$(grep -oE '^### +(GET|POST|PUT|PATCH|DELETE) +/[A-Za-z0-9_/{}\:.-]+' "$spec_file" 2>/dev/null \
+    | sed -E 's/^### +//' | sort -u || true)
+
+  if [[ -z "$spec_endpoints" ]]; then
+    echo "[spec-to-tests] HARD_FAIL: no '### METHOD /path' endpoints in $spec_file"
+    append_gate_history "spec-to-tests" "hard_fail" '{"reason":"no endpoints"}'
+    echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+    return 1
+  fi
+
+  # api-smoke.sh의 curl 호출 라인 추출 (path 변수 치환은 텍스트 그대로 유지)
+  # 각 라인은 '-X METHOD' (없으면 GET 기본값) + path를 포함한다고 가정
+  local smoke_lines
+  smoke_lines=$(grep -nE '\bcurl\b' tests/api-smoke.sh 2>/dev/null || true)
+
+  local missing=0 missing_list=""
+  while IFS= read -r ep; do
+    [[ -z "$ep" ]] && continue
+    local method path
+    method=$(echo "$ep" | awk '{print $1}')
+    path=$(echo "$ep" | awk '{print $2}')
+
+    # path templating 처리: '/users/{id}' → 세그먼트 단위 매칭
+    # 정규식 escape를 피하고 awk index() 기반 substring 매칭 사용
+    # 예: '/users/{id}/posts' → ['/users/', '/posts'] 두 토막 모두 포함되면 매치
+    # prefix collision 방지: 마지막 세그먼트가 영숫자로 끝나면 다음 char도 영숫자가 아니어야 함
+    # ('/api/goal' vs '/api/goalsX' 구분)
+    local matched=0
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      # path의 모든 비-{} 세그먼트가 line 내에서 순서대로 나타나고
+      # 마지막 세그먼트 직후가 word boundary인지 awk로 확인
+      if awk -v p="$path" -v line="$line" '
+        BEGIN {
+          # path를 {...} 기준으로 분할
+          n = 0
+          rem = p
+          while (match(rem, /\{[^}]+\}/) > 0) {
+            seg = substr(rem, 1, RSTART - 1)
+            if (length(seg) > 0) { n++; segs[n] = seg }
+            rem = substr(rem, RSTART + RLENGTH)
+          }
+          if (length(rem) > 0) { n++; segs[n] = rem }
+          if (n == 0) { exit 1 }  # path가 전부 {}로만 구성되면 비정상
+
+          # 세그먼트를 line 내에서 순서대로 매칭 (각 매치 후 그 뒤를 계속 검색)
+          search_from = 1
+          for (i = 1; i <= n; i++) {
+            tail = substr(line, search_from)
+            pos = index(tail, segs[i])
+            if (pos == 0) { exit 1 }
+
+            # 마지막 세그먼트인 경우 word boundary 검증
+            if (i == n) {
+              abs_end = search_from + pos - 1 + length(segs[i])
+              next_char = substr(line, abs_end, 1)
+              last_seg_char = substr(segs[i], length(segs[i]), 1)
+              # 마지막 세그먼트가 영숫자/언더스코어로 끝나는데
+              # 다음 문자도 영숫자/언더스코어이면 prefix collision → reject
+              if (last_seg_char ~ /[A-Za-z0-9_]/ && next_char ~ /[A-Za-z0-9_]/) { exit 1 }
+            }
+
+            search_from = search_from + pos - 1 + length(segs[i])
+          }
+          exit 0
+        }
+      '; then
+        # path 매치됨 — 메서드 매치 확인
+        if [[ "$method" == "GET" ]]; then
+          if ! echo "$line" | grep -qiE -- '-X +(POST|PUT|PATCH|DELETE)'; then
+            matched=1; break
+          fi
+        else
+          if echo "$line" | grep -qiE -- "-X +${method}([^A-Za-z]|$)"; then
+            matched=1; break
+          fi
+        fi
+      fi
+    done <<< "$smoke_lines"
+
+    if [[ $matched -eq 0 ]]; then
+      missing=$((missing + 1))
+      missing_list="${missing_list}  - $ep\n"
+    fi
+  done <<< "$spec_endpoints"
+
+  echo ""
+  if [[ "$missing" -gt 0 ]]; then
+    echo "Endpoints in SPEC.md not covered by tests/api-smoke.sh:"
+    printf '%b' "$missing_list"
+    echo "[spec-to-tests] HARD_FAIL: $missing endpoint(s) lack smoke coverage"
+    append_gate_history "spec-to-tests" "hard_fail" "{\"missing\":$missing}"
+    echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
+    return 1
+  fi
+
+  local total_eps
+  total_eps=$(echo "$spec_endpoints" | wc -l | tr -d ' ')
+  echo "[spec-to-tests] All $total_eps SPEC endpoints covered by tests/api-smoke.sh"
+  append_gate_history "spec-to-tests" "pass" "{\"endpoints\":$total_eps}"
+  echo "=== SPEC-TO-TESTS: PASS ==="
+  return 0
+}

@@ -102,6 +102,9 @@ main() {
     ambiguity-check)   cmd_ambiguity_check "$@" ;;
     clarification-gate) cmd_clarification_gate "$@" ;;
     spec-completeness) cmd_spec_completeness "$@" ;;
+    doc-completeness)  cmd_doc_completeness "$@" ;;
+    definition-conflict) cmd_definition_conflict "$@" ;;
+    spec-to-tests)     cmd_spec_to_tests "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
@@ -144,6 +147,9 @@ main() {
       echo "  ambiguity-check [docs_dir]                   - Scan for TBD/TODO/ambiguous language (SOFT)"
       echo "  clarification-gate [docs_dir]                - Block on unresolved [NEEDS-CLARIFICATION] tags (HARD_FAIL)"
       echo "  spec-completeness                            - Planning doc completeness check (HARD on CRITICAL)"
+      echo "  doc-completeness [docs_dir]                  - Quantitative API/section thresholds for plan-docs-full (HARD_FAIL)"
+      echo "  definition-conflict [docs_dir]               - Detect Non-Goals violations across docs (SOFT_FAIL)"
+      echo "  spec-to-tests                                - Verify SPEC.md endpoints map 1:1 to tests/api-smoke.sh (HARD_FAIL)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
       echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"

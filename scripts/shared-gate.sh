@@ -26,7 +26,7 @@
 #   artifact-check                                     - 빌드 아티팩트 존재/크기 검증
 #   smoke-check [--strict] [port] [timeout]             - 서버 기동 + 헬스체크 + 엔드포인트 검증 (--strict: FAIL 승격)
 #   record-error --file <f> --type <t> --msg <m> [--level L0-L5] [--action "..."] - 에러 기록 + 에스컬레이션
-#   check-tools                                         - codex/gemini CLI 존재 확인
+#   check-tools                                         - codex CLI 존재 확인
 #   find-debug-code [dir]                              - console.log/print/debugger 탐색
 #   doc-consistency [docs_dir]                         - 문서 간 일관성 검사
 #   doc-code-check [docs_dir]                          - 문서↔코드 매칭
@@ -130,7 +130,7 @@ main() {
       echo "    --result pass|fail  Result of the action"
       echo "    --reset-count    Reset attempt counter (on escalation level change)"
       echo "    Exit codes: 0=continue, 1=escalate, 2=codex needed, 3=user intervention"
-      echo "  check-tools                                - Check codex/gemini availability"
+      echo "  check-tools                                - Check codex availability"
       echo "  find-debug-code [dir]                      - Find debug code"
       echo "  doc-consistency [docs_dir]                 - Check doc consistency"
       echo "  doc-code-check [docs_dir]                  - Check doc-code matching"

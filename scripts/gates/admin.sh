@@ -872,10 +872,10 @@ cmd_record_error() {
   fi
 }
 
-# ─── check-tools: codex/gemini CLI 존재 확인 ───
+# ─── check-tools: codex CLI 존재 확인 ───
 
 cmd_check_tools() {
-  local has_codex=false has_gemini=false
+  local has_codex=false
 
   if command -v codex >/dev/null 2>&1; then
     has_codex=true
@@ -884,16 +884,9 @@ cmd_check_tools() {
     echo "[codex] Not found"
   fi
 
-  if command -v gemini >/dev/null 2>&1; then
-    has_gemini=true
-    echo "[gemini] Available: $(command -v gemini)"
-  else
-    echo "[gemini] Not found"
-  fi
-
   # JSON 출력
   echo ""
-  echo "{\"codex\": $has_codex, \"gemini\": $has_gemini}"
+  echo "{\"codex\": $has_codex}"
 }
 
 # ─── find-debug-code: 디버그 코드 탐색 ───

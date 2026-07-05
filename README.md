@@ -11,7 +11,7 @@ claude plugins install /path/to/auto-complete-loop
 ## Quick Start
 
 ```bash
-# Build a full project from one sentence (solo - no codex/gemini needed)
+# Build a full project from one sentence (solo - no codex needed)
 /full-auto-solo Make a community site with auth, posts, and comments
 
 # Build with codex code review (requires codex-cli)
@@ -32,16 +32,16 @@ Every major command comes in **3 modes**. Pick the one that matches your environ
 |------|------------|----------|
 | **Solo** | None | No setup needed. Claude switches roles for multi-perspective analysis |
 | **2-Way** | codex-cli | Stronger review - codex provides independent perspective |
-| **3-Way** | codex-cli + gemini-cli | Strongest - 3 independent AI perspectives |
+| **3-Way (dual)** | codex-cli ×2 (1차+2차) | Strongest - split-dimension independent review |
 
 ### Command Matrix
 
-| Feature | Solo | 2-Way (codex) | 3-Way (codex+gemini) |
+| Feature | Solo | 2-Way (codex) | 3-Way (dual, codex×2) |
 |---------|------|--------------|---------------------|
 | **Full project** | `/full-auto-solo` | `/full-auto` | `/full-auto-teams` |
-| **Code review** | `/code-review-loop-solo` | `/code-review-loop` | `/code-review-loop-gemini` |
-| **Planning docs** | `/plan-docs-auto-solo` | `/plan-docs-auto` | `/plan-docs-auto-gemini` |
-| **Release polish** | `/polish-for-release-solo` | `/polish-for-release` | `/polish-for-release-gemini` |
+| **Code review** | `/code-review-loop-solo` | `/code-review-loop` | `/code-review-loop-dual` |
+| **Planning docs** | `/plan-docs-auto-solo` | `/plan-docs-auto` | `/plan-docs-auto-dual` |
+| **Release polish** | `/polish-for-release-solo` | `/polish-for-release` | `/polish-for-release-dual` |
 
 ### How Solo Mode Works
 
@@ -134,7 +134,7 @@ Runs 5 phases: PM Planning, Doc Planning, Implementation, Code Review, Verificat
 | Command | Description |
 |---------|-------------|
 | `/code-review-loop [opts] <scope>` | Iterative review with codex |
-| `/code-review-loop-gemini [opts] <scope>` | 3-way: codex + gemini |
+| `/code-review-loop-dual [opts] <scope>` | 3-way: codex ×2 |
 | `/code-review-loop-solo [opts] <scope>` | Claude 3-pass multi-perspective |
 
 Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
@@ -143,14 +143,14 @@ Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
 | Command | Description |
 |---------|-------------|
 | `/plan-docs-auto <def> <docs>` | Doc refinement with codex debate |
-| `/plan-docs-auto-gemini <def> <docs>` | 3-way: codex + gemini + Claude |
+| `/plan-docs-auto-dual <def> <docs>` | 3-way: codex ×2 + Claude |
 | `/plan-docs-auto-solo <def> <docs>` | Claude self-debate (writer vs. critic) |
 
 ### Release
 | Command | Description |
 |---------|-------------|
 | `/polish-for-release [def] [docs]` | Pre-release polish with codex |
-| `/polish-for-release-gemini [def] [docs]` | 3-way advisory |
+| `/polish-for-release-dual [def] [docs]` | 3-way advisory |
 | `/polish-for-release-solo [def] [docs]` | Claude dual-role (executor + verifier) |
 
 ### Utilities

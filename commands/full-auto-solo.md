@@ -16,4 +16,4 @@ Read ${CLAUDE_PLUGIN_ROOT}/commands/full-auto.md
 위 파일의 지침을 `--mode solo`로 설정하여 따릅니다.
 - PHASE_1_SKILL: `skills/doc-planning-solo/SKILL.md`
 - PHASE_3_SKILL: `skills/code-review-solo/SKILL.md`
-- 외부 AI(codex, gemini) 없이 Claude 단독 다관점 리뷰
+- 외부 AI(codex) 없이 Claude 단독 다관점 리뷰

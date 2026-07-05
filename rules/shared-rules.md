@@ -188,8 +188,8 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
 4. `handoff.warnings`로 주의사항 인지
 5. `handoff.currentApproach`로 진행 구조 맥락 복구
 
-## 외부 AI 자체 탐색 (codex/gemini 호출 시)
-- codex/gemini에게 **파일 경로**를 전달하여 직접 읽도록 함
+## 외부 AI 자체 탐색 (codex 호출 시)
+- codex에게 **파일 경로**를 전달하여 직접 읽도록 함
 - Claude가 문서 내용을 요약/가공하여 프롬프트에 embed하지 않음 (요약 편향 방지)
 - 코드 전체가 아닌 **핵심 부분만** 전달 (최대 100줄)
 - 이전 토론 내용은 결론만 요약해서 전달

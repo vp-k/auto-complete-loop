@@ -13,7 +13,7 @@ argument-hint: <요구사항 (자연어)>
 - **codex** (기본): Claude = PM, codex-cli = 기획 토론 상대
 - **solo**: Claude = PM + 자기 토론 (외부 AI 불필요)
 - **teams**: Claude(리드) + Agent Teams 병렬 검토
-- **gemini**: Claude + codex-cli + gemini-cli 3자 토론
+- **dual**: Claude + codex 1차 + codex 2차 3자 토론 (codex-cli 두 번 독립 호출)
 
 **핵심 원칙**:
 - Phase 0에서만 사용자 질문 (overview.md 승인 + Critical 잔존 시 결정 위임)
@@ -23,10 +23,10 @@ argument-hint: <요구사항 (자연어)>
 
 ## 파라미터 (모드별)
 
-| 파라미터 | codex (기본) | solo | teams | gemini |
+| 파라미터 | codex (기본) | solo | teams | dual |
 |----------|-------------|------|-------|--------|
-| PROMISE_TAG | `PLAN_DOCS_FULL_COMPLETE` | `PLAN_DOCS_FULL_COMPLETE` | `PLAN_DOCS_FULL_TEAMS_COMPLETE` | `PLAN_DOCS_FULL_GEMINI_COMPLETE` |
-| PROGRESS_FILE | `.claude-plan-docs-full-progress.json` | `.claude-plan-docs-full-progress.json` | `.claude-plan-docs-full-teams-progress.json` | `.claude-plan-docs-full-gemini-progress.json` |
+| PROMISE_TAG | `PLAN_DOCS_FULL_COMPLETE` | `PLAN_DOCS_FULL_COMPLETE` | `PLAN_DOCS_FULL_TEAMS_COMPLETE` | `PLAN_DOCS_FULL_DUAL_COMPLETE` |
+| PROGRESS_FILE | `.claude-plan-docs-full-progress.json` | `.claude-plan-docs-full-progress.json` | `.claude-plan-docs-full-teams-progress.json` | `.claude-plan-docs-full-dual-progress.json` |
 | PHASE_1_SKILL | `skills/doc-planning/SKILL.md` | `skills/doc-planning-solo/SKILL.md` | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` |
 
 `--mode` 미지정 시 codex 모드를 사용합니다.
@@ -34,11 +34,11 @@ argument-hint: <요구사항 (자연어)>
 ## 인수
 
 - `$ARGUMENTS`: 자연어 요구사항 (예: "학생들이 일일 학습 목표를 등록하고 달성률을 보는 웹 대시보드")
-- `--mode <solo|codex|teams|gemini>` (선택, 기본: codex)
+- `--mode <solo|codex|teams|dual>` (선택, 기본: codex)
   - `codex`: Claude + codex-cli 2자 토론
   - `solo`: Claude 단독 다관점 토론 (외부 AI 불필요)
   - `teams`: Agent Teams 병렬 검토 (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 필요)
-  - `gemini`: Claude + codex-cli + gemini-cli 3자 토론
+  - `dual`: Claude + codex 1차 + codex 2차 3자 토론 (codex-cli 두 번 독립 호출)
 
 ## 아키텍처: 오케스트레이터 + Phase 스킬 재사용
 
@@ -64,11 +64,11 @@ argument-hint: <요구사항 (자연어)>
 `$ARGUMENTS`에서 `--mode <value>`를 감지하면:
 
 1. `$ARGUMENTS`에서 `--mode <value>` 부분을 제거하여 순수 요구사항만 추출
-2. value 검증: `solo`, `codex`, `teams`, `gemini` 중 하나
+2. value 검증: `solo`, `codex`, `teams`, `dual` 중 하나
 3. 위 "파라미터" 테이블에서 해당 모드의 값을 적용
 4. **teams 모드 전제 조건**: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` 환경 변수 확인
    - 미설정 시: `~/.claude/settings.json`에 자동 추가 후 새 세션 안내 및 중단
-5. **gemini 모드 전제 조건**: `gemini` CLI 존재 확인 (`bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh check-tools`)
+5. **dual 모드 전제 조건**: `codex` CLI 존재 확인 (`bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh check-tools`)
    - 미설치 시: codex 모드로 자동 폴백 + 경고 출력
 6. `--mode` 미지정 시 기본값 `codex` 적용
 

@@ -72,11 +72,11 @@ SPEC.md를 읽고 각 API 엔드포인트/페이지에 대해 검증:
 | 모드 | 관점 분할 |
 |------|-----------|
 | **codex 단독** (code-review SKILL, code-review-loop codex 모드) | 1회 호출로 전 관점 (SEC/ERR/DATA/PERF/CODE, 적용 조건 충족 시 IMPL/E2E 포함) |
-| **dual 분할** (code-review-loop dual 모드) | codex 1차: SEC/ERR/DATA → codex 2차: PERF/CODE. 순차 호출, 서로 결과 참조 금지 |
-| **solo 3-pass** (code-review-solo SKILL) | Pass 1: SEC+ERR → Pass 2: DATA+PERF → Pass 3: CODE+IMPL(+E2E). 각 패스는 해당 관점만 검토 |
+| **dual 분할** (code-review-loop dual 모드) | codex 1차: SEC/ERR/DATA ∥ codex 2차: PERF/CODE. 병렬 호출, 서로 결과 참조 금지 |
+| **solo 3관점** (code-review-solo SKILL) | 서브에이전트 3개 병렬: SEC+ERR / DATA+PERF / CODE+IMPL(+E2E). 각 에이전트는 해당 관점만 검토 (폴백: 순차 3-pass, 동일 분할) |
 | **team** (team-code-review SKILL) | sec-reviewer: SEC/ERR/DATA, quality-reviewer: PERF/CODE 병렬 (+ live-tester, 조건부 ux-reviewer) |
 
-- IMPL/E2E는 SPEC 기반 워크플로우(full-auto Phase 3)에서만 기본 포함. standalone `/code-review-loop`의 codex/dual 모드는 SEC/ERR/DATA/PERF/CODE만 사용하며, solo 3-pass의 Pass 3 IMPL(+E2E)은 프로젝트에 SPEC.md가 존재할 때만 검토 대상에 포함한다.
+- IMPL/E2E는 SPEC 기반 워크플로우(full-auto Phase 3)에서만 기본 포함. standalone `/code-review-loop`의 codex/dual 모드는 SEC/ERR/DATA/PERF/CODE만 사용하며, solo의 세 번째 관점(CODE+IMPL) 담당 에이전트(폴백 시 Pass 3)의 IMPL(+E2E)은 프로젝트에 SPEC.md가 존재할 때만 검토 대상에 포함한다.
 
 ## 리뷰 원칙 (회의적 리뷰어 역할)
 

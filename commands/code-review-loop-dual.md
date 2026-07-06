@@ -1,5 +1,5 @@
 ---
-description: "코드 리뷰 반복 수행 (dual). codex#1(SEC/ERR/DATA) + codex#2(PERF/CODE) 분할 리뷰"
+description: "코드 리뷰 반복 수행 (dual). codex#1(SEC/ERR/DATA) ∥ codex#2(PERF/CODE) 병렬 분할 리뷰"
 argument-hint: "[--rounds N | --goal \"조건\"] <scope>"
 ---
 
@@ -13,4 +13,4 @@ Read `${CLAUDE_PLUGIN_ROOT}/commands/code-review-loop.md`
 
 위 파일의 지침을 `--mode dual`로 설정하여 따릅니다.
 - codex-cli 1차(SEC/ERR/DATA) + codex-cli 2차(PERF/CODE) 분할 독립 리뷰
-- codex 1차 → codex 2차 순차 호출, 서로 결과 참조 금지
+- codex#1 ∥ codex#2 **병렬 호출** (각각 `run_in_background=true`로 동시에 띄우고 BashOutput으로 완료 폴링), 서로 결과 참조 금지

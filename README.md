@@ -45,15 +45,16 @@ Every major command comes in **3 modes**. Pick the one that matches your environ
 
 ### How Solo Mode Works
 
-Claude plays multiple roles by **explicitly switching perspectives** per pass:
+Claude plays multiple roles with **strictly separated perspectives**:
 
-**Code Review (3-pass sequential)**:
+**Code Review (3 parallel subagents; fallback: 3-pass sequential)**:
 ```
-Pass 1 [Security + Error Expert]   SEC, ERR only
-Pass 2 [Data + Performance Expert] DATA, PERF only
-Pass 3 [SPEC Compliance Expert]    IMPL, CODE only
+Agent 1 [Security + Error Expert]   SEC, ERR only   ┐
+Agent 2 [Data + Performance Expert] DATA, PERF only ├─ run in parallel
+Agent 3 [SPEC Compliance Expert]    CODE, IMPL only ┘
+        → main Claude merges + dedups findings
 ```
-Each pass reads the code fresh with a single focused lens. Prevents perspective contamination.
+Each agent reads the code fresh with a single focused lens. Prevents perspective contamination. If the Agent tool is unavailable, falls back to the same split as sequential passes.
 
 **Planning Docs (self-debate)**:
 ```
@@ -109,17 +110,6 @@ Runs 5 phases: PM Planning, Doc Planning, Implementation, Code Review, Verificat
 /add-e2e docs/
 ```
 
-### "Prepare for user interviews"
-```bash
-/interview-prep docs/overview.md
-```
-
-### "Analyze completed project"
-```bash
-/post-analysis
-/post-analysis --only metrics
-```
-
 ## All Commands
 
 ### Project Lifecycle
@@ -158,9 +148,8 @@ Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
 |---------|-------------|
 | `/check-docs [dir]` | Doc consistency check |
 | `/add-e2e [dir]` | Add E2E tests from docs or code analysis |
-| `/interview-prep <path>` | Generate interview scripts (The Mom Test) |
-| `/interview-summary <file>` | Extract patterns from interview transcripts |
-| `/post-analysis [--only X]` | Metrics / Retrospective / Launch / Competitive |
+
+> ℹ️ 제품 발견 도구(`/interview-prep`, `/interview-summary`, `/post-analysis`)는 v4.0.0에서 별도 플러그인 [product-discovery](https://github.com/vp-k/product-discovery)로 분리되었습니다.
 
 ## Architecture
 

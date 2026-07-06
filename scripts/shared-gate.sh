@@ -6,7 +6,11 @@
 #   lib/utils.sh      — 공통 유틸리티 (config_get, die, jq_inplace 등)
 #   lib/progress.sh   — Progress 파일 관리, 스키마 마이그레이션, 게이트 이력
 #   lib/server.sh     — 서버 시작/중지/헬스체크 유틸리티
-#   gates/admin.sh    — 초기화, 상태 관리, 에러 추적, 체크포인트 등
+#   gates/init.sh     — progress JSON / 설정 파일 / Ralph Loop 파일 초기화
+#   gates/state.sh    — 상태 조회/단계 전이/복구/handoff/skip-phases/DoD 키 관리
+#   gates/errors.sh   — 에러 기록 + 에스컬레이션(L0-L5) 추적, 디버그 코드 탐색
+#   gates/checkpoint.sh — Git 체크포인트 생성/조회/롤백 제안
+#   gates/build.sh    — 빌드 아티팩트 존재 검증, Dockerfile 빌드 검증
 #   gates/quality.sh  — 빌드/타입체크/린트/테스트 품질 게이트
 #   gates/security.sh — 취약점/시크릿/플레이스홀더 검사
 #   gates/smoke.sh    — 서버 기동, 통합 스모크, 기능 흐름 검증

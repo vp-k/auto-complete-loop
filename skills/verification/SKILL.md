@@ -335,6 +335,25 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh service-test-check --progress-
 
 각 게이트가 FAIL이면 해당 문제를 수정 후 재실행. 모두 PASS해야 Step 4-7 진행.
 
+### Step 4-6.7: 인수 테스트 게이트 (하드 게이트 — 필수 실행)
+
+Phase 1에서 동결된 인수 테스트의 무결성 검사 + 실행을 수행합니다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-gate --progress-file {PROGRESS_FILE}
+```
+
+> 인수 테스트 스위트가 오래 걸리는 프로젝트(서버 기동 포함)는 Bash 툴 기본 타임아웃(2분)을
+> 넘길 수 있다 — 호출 시 timeout을 상향(최대 10분)하여 실행할 것. 타임아웃으로 끊기면
+> 결과가 기록되지 않아 재실행이 필요하다.
+
+- 무결성(변조/추가/삭제 감지) + `bash tests/acceptance/run.sh` 실행. 결과는 verification.json의 `acceptanceTests`(`{result, total, passed, failed, tamperedFiles?}`)에 기록됨.
+- **FAIL 시**:
+  - **(a) tamper** (`tamperedFiles` 존재): 동결 이후 변조/추가/삭제된 파일 → `git restore` 등으로 동결 시점 상태로 **원복**하거나, 정당한 스펙 변경이었다면 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user` 재동결 후 재실행.
+  - **(b) red** (테스트 실패): **구현을 수정**한다 (에러 에스컬레이션 L0-L5 적용). **테스트 수정 금지** — implementation SKILL Step 2-1.10 참조.
+- `dod.acceptance_pass`는 이 게이트가 pass 시 **자동 기록**한다 — 모델이 직접 세팅하지 않는다.
+- stop-hook이 full-auto 계열 완주 조건으로 `acceptanceTests=pass`를 **fail-closed**로 요구한다 (기록 없음 = 미실행 = 완주 불가).
+
 ### Step 4-7: 최종 검증 (다차원 체크리스트)
 
 모든 정리/폴리싱 완료 후, 기술 게이트 + 다차원 품질 평가를 수행:

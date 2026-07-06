@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # PreToolUse:Write|Edit - 통합 파일 보호 가드
 # 1. 진행 상태 파일 수정 경고 (warn)
-# 2. 기획 문서 보호 (full-auto Phase 2+ block)
-# 3. CLAUDE.md 보호 (full-auto Phase 2+ block)
+# 2. 동결된 인수 테스트 보호 (tests/acceptance/ + .manifest.json 존재 시 block)
+# 3. 기획 문서 보호 (full-auto Phase 2+ block)
+# 4. CLAUDE.md 보호 (full-auto Phase 2+ block)
 #
 # 입력: stdin JSON { "tool_input": { "file_path": "..." } }
 # 출력: {"decision": "block"|"approve", "reason": "..."} 또는 {"decision": "approve"}
@@ -20,7 +21,7 @@ fi
 INPUT=$(cat)
 
 # JSON 파싱 실패 시 fail-closed
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null) || {
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // ""' 2>/dev/null) || {
   echo '{"decision": "block", "reason": "입력 JSON 파싱에 실패했습니다. 파일 보호를 검증할 수 없어 차단합니다."}'
   exit 0
 }
@@ -47,7 +48,24 @@ if [[ "$FILENAME" =~ ^\.claude-.*-progress\.json$ ]]; then
   exit 0
 fi
 
-# --- Guard 2 & 3: Phase 기반 보호 대상 판별 ---
+# --- Guard 2: 동결된 인수 테스트 보호 (Phase 무관 하드 차단) ---
+# tests/acceptance/ 하위(.manifest.json 포함) 파일이 대상이고, 동결 manifest가
+# 존재하면 차단. manifest 부재 = 동결 전(Phase 1 생성 중)이므로 허용.
+# 의도적으로 워크플로우 활성 여부(progress 파일 존재)와 무관하게 영구 적용된다 —
+# 완주 후 유지보수 세션에서도 인수 기준 변경은 승인 재동결 절차를 거쳐야 한다
+# (Guards 3&4가 progress 존재를 조건으로 하는 것과 다른 점은 의도된 비대칭).
+
+if [[ "$FILE_PATH" == *"/tests/acceptance/"* ]] || [[ "$FILE_PATH" == "tests/acceptance/"* ]] \
+|| [[ "$FILE_PATH" == *"\\tests\\acceptance\\"* ]] || [[ "$FILE_PATH" == "tests\\acceptance\\"* ]]; then
+  if [[ -f "tests/acceptance/.manifest.json" ]]; then
+    echo '{"decision": "block", "reason": "인수 테스트는 동결됨(선작성+동결 원칙). 스펙 변경이 필요하면 (1) 사용자 승인(AskUserQuestion) → (2) SPEC 갱신 → (3) shared-gate.sh acceptance-freeze --approved-by-user 재동결 후 수정하라."}'
+    exit 0
+  fi
+  # 동결 전(manifest 부재) → 이 가드는 통과 (Phase 1에서 인수 테스트 생성 중).
+  # 아래 기존 가드(기획 문서/CLAUDE.md)는 계속 적용된다 (회귀 방지).
+fi
+
+# --- Guard 3 & 4: Phase 기반 보호 대상 판별 ---
 
 PROTECTION_TYPE=""
 

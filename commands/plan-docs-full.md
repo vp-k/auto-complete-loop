@@ -1,5 +1,5 @@
 ---
-description: "PM Planning + Doc Planning end-to-end. One-line requirement → overview.md + all planning docs + SPEC + smoke scripts, with 4 strict gates"
+description: "PM Planning + Doc Planning end-to-end. One-line requirement → overview.md + all planning docs + SPEC + smoke scripts + frozen acceptance tests, with 6 strict gates"
 argument-hint: <요구사항 (자연어)>
 ---
 
@@ -18,7 +18,8 @@ argument-hint: <요구사항 (자연어)>
 **핵심 원칙**:
 - Phase 0에서만 사용자 질문 (overview.md 승인 + Critical 잔존 시 결정 위임)
 - MVP 금지, 릴리즈 수준 기획
-- **신규 게이트 4종이 모두 PASS해야 promise 발행** (임의 판단 자동 차단)
+- **게이트 6종이 모두 PASS해야 promise 발행** (임의 판단 자동 차단)
+- **인수 테스트 선작성+동결**: SPEC의 AC로부터 실행 가능한 인수 테스트를 만들어 해시 동결 — 구현 Phase는 이 테스트를 수정할 수 없음
 - 스크립트로 토큰 절약
 
 ## 파라미터 (모드별)
@@ -48,12 +49,13 @@ argument-hint: <요구사항 (자연어)>
     ├── skills/pm-planning/SKILL.md        (Phase 0 — 기존 재사용)
     └── {PHASE_1_SKILL}                    (Phase 1 — 모드별 스킬 재사용)
 
-→ [게이트 5종 — 모두 PASS여야 promise 발행]
+→ [게이트 6종 — 모두 PASS여야 promise 발행]
    0. spec-completeness    (HARD_FAIL: 필수 섹션 + 핵심 섹션 TBD 0건)
    1. doc-completeness     (HARD_FAIL: API 블록 정량 임계값)
    2. doc-consistency      (WARN: 모델/엔드포인트/네이밍 교차 검증)
    3. definition-conflict  (SOFT_FAIL: Non-Goals 침범 탐지 + Claude 판정 기록)
    4. spec-to-tests        (HARD_FAIL: SPEC ↔ smoke 1:1 매핑)
+   5. acceptance-freeze    (HARD_FAIL: tests/acceptance/ 해시 동결 — run.sh 필수, 구현 Phase 수정 불가)
 
 → <promise>{PROMISE_TAG}</promise>
 ```
@@ -91,12 +93,13 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 1. `{PROGRESS_FILE}`의 `phases.phase_0` + `phases.phase_1` 모든 step status가 `completed`
 2. `{PROGRESS_FILE}`의 `dod`(아래 DoD 키 목록) 모두 `checked: true`
-3. **게이트 5종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
+3. **게이트 6종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
    - `spec-completeness` exit 0 (CRITICAL 0건)
    - `doc-completeness` exit 0
    - `doc-consistency` exit 0 (이슈 0건)
    - `definition-conflict` exit 0 + 매치가 있다면 progress의 `nonGoalsAudit`에 모든 매치 판정 기록 완료
    - `spec-to-tests` exit 0
+   - `acceptance-freeze` exit 0 (verification.json의 `acceptanceFreeze = pass` — stop-hook이 fail-closed로 요구)
 4. 기존 Phase 1 게이트 통과:
    - `clarification-gate` exit 0 (`[NEEDS-CLARIFICATION]` 잔존 0건)
    - `placeholder-check` exit 0
@@ -119,7 +122,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 for key in pm_approved assumptions_documented premortem_done all_docs_complete \
            spec_md_generated smoke_scripts_generated doc_completeness_passed \
            doc_consistency_passed definition_conflict_resolved spec_to_tests_passed \
-           clarification_resolved; do
+           acceptance_frozen clarification_resolved; do
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key "$key" --progress-file {PROGRESS_FILE}
 done
 ```
@@ -131,10 +134,10 @@ Large 프로젝트인 경우 `pm-planning` Step 0-9.5에서 `stakeholders_mapped
 ```
 Phase 0: PM Planning ───── 사용자 승인 (유일한 상호작용)
     ↓ pm_approved.checked, assumptions_documented.checked, premortem_done.checked
-Phase 1: Doc Planning ──── {PHASE_1_SKILL}로 기획문서 + SPEC.md + smoke 스크립트 완성
+Phase 1: Doc Planning ──── {PHASE_1_SKILL}로 기획문서 + SPEC.md + smoke 스크립트 + 인수 테스트(tests/acceptance/) 완성
     ↓ all_docs_complete.checked, spec_md_generated.checked, smoke_scripts_generated.checked
-[신규 게이트 4종 검증]
-    ↓ doc_completeness_passed, doc_consistency_passed, definition_conflict_resolved, spec_to_tests_passed
+[게이트 6종 검증]
+    ↓ doc_completeness_passed, doc_consistency_passed, definition_conflict_resolved, spec_to_tests_passed, acceptance_frozen
 [기존 게이트 2종 검증]
     ↓ clarification_resolved (placeholder는 자동)
 <promise>{PROMISE_TAG}</promise>
@@ -185,15 +188,16 @@ Read ${PHASE_1_SKILL}
 - `docs/*.md` (각 도메인 기획문서, 모두 `completed` 상태)
 - `SPEC.md` (또는 `docs/SPEC.md`) — User Stories + API Contract + Data Model
 - `tests/api-smoke.sh` (hasBackend=true 시) / `tests/ui-smoke.*` (hasFrontend=true 시) / `tests/lib-smoke.sh` (library/CLI 시)
+- `tests/acceptance/` — run.sh + US별 인수 테스트 (스킬 Step 1-7.5에서 생성 + `acceptance-freeze` 실행. red 상태가 정상 — TDD red→green)
 - progress의 `phases.phase_1.outputs`
 
 스킬 내 Step 1-9에서 이미 `clarification-gate`가 호출됩니다. HARD_FAIL이면 사용자 질의로 모두 해소.
 
-## 3단계: 게이트 5종 순차 검증 (Phase 1 종료 직후)
+## 3단계: 게이트 6종 순차 검증 (Phase 1 종료 직후)
 
 스킬 완료 후 오케스트레이터가 다음 게이트를 **순차** 실행합니다. 하나라도 실패하면 Phase 1 재진입(해당 이슈 수정).
 
-> 게이트 결과는 `.claude-verification.json`에 자동 기록되며, stop-hook이 `specCompleteness` · `clarificationGate` · `docCompleteness` · `specToTests` 키가 전부 `pass`인지 최종 검증합니다 (미실행 = 완주 불가, fail-closed).
+> 게이트 결과는 `.claude-verification.json`에 자동 기록되며, stop-hook이 `specCompleteness` · `clarificationGate` · `docCompleteness` · `specToTests` · `acceptanceFreeze` 키가 전부 `pass`인지 최종 검증합니다 (미실행 = 완주 불가, fail-closed).
 
 ```bash
 # 게이트 0: spec-completeness (HARD_FAIL: CRITICAL 이슈 0건 — 핵심 섹션 TBD 포함)
@@ -222,6 +226,14 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh definition-conflict docs/
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-to-tests \
   --progress-file {PROGRESS_FILE}
 # 실패 → tests/api-smoke.sh에 누락된 엔드포인트 curl 호출 추가
+
+# 게이트 5: acceptance-freeze (HARD_FAIL — 인수 테스트 해시 동결)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze \
+  --progress-file {PROGRESS_FILE}
+# tests/acceptance/ 전체(run.sh 필수)를 해시 동결 → tests/acceptance/.manifest.json 생성
+# 인수 테스트 생성 자체는 Phase 1 스킬 Step 1-7.5가 수행 — 이 게이트는 동결 실행/확인만 담당
+# 실패(run.sh 없음 등) → Phase 1 재진입, Step 1-7.5에서 tests/acceptance/ 생성 후 재실행
+# 주의: 이 시점 인수 테스트는 red가 정상 (앱 미구현 — TDD red→green). 동결은 실행 결과와 무관.
 ```
 
 각 게이트 통과 시 DoD 갱신:
@@ -233,6 +245,7 @@ jq_inplace {PROGRESS_FILE} \
    | .dod.doc_consistency_passed = {checked:true, evidence:"shared-gate.sh doc-consistency PASS (0 issues)"}
    | .dod.definition_conflict_resolved = {checked:true, evidence:"N matches reviewed, all recorded in nonGoalsAudit"}
    | .dod.spec_to_tests_passed = {checked:true, evidence:"shared-gate.sh spec-to-tests PASS"}
+   | .dod.acceptance_frozen = {checked:true, evidence:"shared-gate.sh acceptance-freeze PASS (verification.json acceptanceFreeze=pass)"}
    | .dod.clarification_resolved = {checked:true, evidence:"clarification-gate PASS in Phase 1 Step 1-9"}'
 ```
 
@@ -262,6 +275,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file {PROGRE
 ## 강제 규칙
 
 - `pm-planning` / `doc-planning` 스킬 내부 로직을 이 파일에 복사하지 않는다 (단일 소스 원칙)
-- 4종 게이트 중 하나라도 실패한 채로 promise를 발행하지 않는다
+- 6종 게이트 중 하나라도 실패한 채로 promise를 발행하지 않는다
+- 동결 이후 tests/acceptance/**를 수정하지 않는다 (protect-files-guard 훅 차단. 스펙 변경 시에만 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user` 재동결)
 - `definition-conflict`의 매치된 라인 각각이 `nonGoalsAudit`에 기록되지 않은 채로 진행하지 않는다 (임의 판단 회피)
 - progress 파일의 DoD는 게이트 PASS evidence와 함께만 `checked: true`로 갱신한다

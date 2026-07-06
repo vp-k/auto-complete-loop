@@ -95,6 +95,7 @@ Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh skip-phases <N> --progress-file {PROGRESS_FILE}
    ```
 5. Phase N의 스킬을 Read하여 해당 Phase부터 시작
+6. **인수 테스트 동결 (N >= 2일 때)**: `tests/acceptance/.manifest.json`이 없으면 — 기획 Phase를 건너뛰었으므로 인수 테스트가 없는 상태. AskUserQuestion으로 사용자 승인을 받아 `templates/acceptance-tests-guide.md` 기준으로 인수 테스트를 생성한 뒤 `acceptance-freeze --approved-by-user`로 동결한다 (구현 단계의 신규 동결은 승인 플래그 없이는 거부됨). 사용자가 거부하면 acceptance 게이트로 인해 완주가 차단됨을 안내하고 중단.
 
 ## 공통 규칙 로드
 

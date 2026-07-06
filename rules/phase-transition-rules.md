@@ -85,7 +85,7 @@ Phase 0 완료 시:
 
 ```
 Phase 1 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/doc-planning/SKILL.md
-Phase 1 스킬의 Step 1-0 ~ 1-9 수행 (Step 1-6: 스펙 깊이 검증, Step 1-7: 검증 스크립트 생성, Step 1-8: 완료 검증)
+Phase 1 스킬의 Step 1-0 ~ 1-9 수행 (Step 1-6: 스펙 깊이 검증, Step 1-7: 검증 스크립트 생성, Step 1-7.5: 인수 테스트 생성+동결, Step 1-8: 완료 검증)
 Phase 1 완료 시:
   *** Pre-mortem 전이 가드 (Phase 2 진입 전 필수 — phase_1 completed 마킹보다 선행) ***
   1. progress 파일에서 phases.phase_0.outputs.premortem.tigers 조회
@@ -121,7 +121,17 @@ Phase 1 완료 시:
      - 0건이면 → WARN (차단하지 않지만 경고: "US-* ID 없음, test-quality 커버리지 측정 불가")
   4. 통과 시 아래로 진행
 
-  *** 기획 게이트 3종 (검증 스크립트 가드 통과 후, Director 전 필수) ***
+  *** 인수 테스트 동결 게이트 (Phase 2 진입 전 필수 — 검증 스크립트 가드 통과 후) ***
+  1. 인수 테스트 생성+동결 완료 확인: verification.json의 acceptanceFreeze = pass
+     (Phase 1 스킬 Step 1-7.5에서 tests/acceptance/ 생성 + acceptance-freeze 실행 결과)
+  2. 미실행/실패 시 → "인수 테스트 미동결 — Step 1-7.5 수행 필요" → Phase 2 전이 차단
+     - Phase 1에서 tests/acceptance/run.sh + US별 테스트 생성 후
+       bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --progress-file {PROGRESS_FILE}
+       재실행 → pass 확인
+  3. 이 시점에 인수 테스트가 red인 것은 정상 (앱 미구현 — TDD red→green). 동결 여부만 확인한다.
+  4. 통과 시 아래로 진행
+
+  *** 기획 게이트 3종 (인수 테스트 동결 가드 통과 후, Director 전 필수) ***
   1. Spec 완전성:
      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness --progress-file {PROGRESS_FILE}
      - CRITICAL > 0 → Phase 2 전이 차단 (HARD gate). CRITICAL 이슈 해결 후 재시도.
@@ -211,10 +221,14 @@ DoD: `"dod.code_review_pass": { "checked": true, "evidence": "N라운드 리뷰 
 
 ```
 Phase 4 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/verification/SKILL.md
-Phase 4 스킬의 Step 4-1 ~ 4-7 수행
+Phase 4 스킬의 Step 4-1 ~ 4-7 수행 (Step 4-6.7: acceptance-gate 필수 실행 포함)
 Phase 4 완료 시:
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_4 completed --progress-file {PROGRESS_FILE}
 
 모든 steps completed + DoD 전체 checked + verification 통과 확인 후:
 <promise>{PROMISE_TAG}</promise>
 ```
+
+완주 조건 주의: stop-hook이 verification.json의 `acceptanceTests = pass`를 fail-closed로 요구한다
+(`acceptance-gate` 실행 결과로만 기록 — 무결성 통과 + `tests/acceptance/run.sh` 전체 green.
+미실행 = 기록 없음 = 완주 불가. `dod.acceptance_pass`도 이 게이트가 자동 기록하며 모델 직접 세팅 금지).

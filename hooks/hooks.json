@@ -45,12 +45,12 @@
         ]
       },
       {
-        "matcher": "Edit",
+        "matcher": "Edit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" protect-files-guard.sh",
-            "description": "진행 상태 파일 경고 + 기획 문서/CLAUDE.md 보호 (통합 가드)"
+            "description": "진행 상태 파일 경고 + 기획 문서/CLAUDE.md 보호 + 동결된 인수 테스트 보호 (통합 가드)"
           }
         ]
       }

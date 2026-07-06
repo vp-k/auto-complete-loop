@@ -17,6 +17,7 @@
 #   gates/docs.sh     — 문서 일관성, 문서↔코드, 스펙 완전성
 #   gates/test.sh     — E2E, 구현 깊이, 테스트 품질
 #   gates/design.sh   — 디자인 폴리시(WCAG), 페이지 렌더링
+#   gates/acceptance.sh — 인수 테스트 선작성+동결(freeze) + 실행 게이트
 #
 # 서브커맨드:
 #   init [--template <type>] [project] [requirement]  - progress JSON 초기화
@@ -41,6 +42,8 @@
 #   integration-smoke                                  - 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL)
 #   runtime-gate [port] [--strict]                      - 서버 1회 기동으로 엔드포인트/연동/기능플로우 통합 실행
 #   live-testing-gate                                   - progress의 open LIVE-CRITICAL/HIGH 계수 (HARD_FAIL, 기록 없으면 skip)
+#   acceptance-freeze [--approved-by-user]              - tests/acceptance/ 해시 동결 (구현 시작 후 재동결은 사용자 승인 필수)
+#   acceptance-gate                                     - 동결 무결성 검증 + run.sh 실행 (HARD_FAIL, 디렉토리 없으면 skip)
 #   layer-coverage                                      - projectScope 대비 레이어 아티팩트 검증 (HARD_FAIL, scope 없으면 skip)
 #   code-review-findings                                - progress의 open CRITICAL/HIGH 리뷰 finding 계수 (HARD_FAIL)
 #   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
@@ -101,6 +104,8 @@ main() {
     integration-smoke)  cmd_integration_smoke "$@" ;;
     runtime-gate)      cmd_runtime_gate "$@" ;;
     live-testing-gate) cmd_live_testing_gate "$@" ;;
+    acceptance-freeze) cmd_acceptance_freeze "$@" ;;
+    acceptance-gate)   cmd_acceptance_gate "$@" ;;
     layer-coverage)    cmd_layer_coverage "$@" ;;
     code-review-findings) cmd_code_review_findings "$@" ;;
     implementation-depth) cmd_implementation_depth "$@" ;;
@@ -163,6 +168,10 @@ main() {
       echo "  runtime-gate [port] [--timeout S] [--strict] - Start server ONCE, run endpoint smoke + FE-BE integration + functional flows, stop once"
       echo "                                               Records smokeCheck/integrationSmoke/functionalFlow in .claude-verification.json"
       echo "  live-testing-gate                            - Count open LIVE-CRITICAL/HIGH findings in progress (HARD_FAIL; skip if no live records)"
+      echo "  acceptance-freeze [--approved-by-user]       - Freeze tests/acceptance/ into .manifest.json (sha256)"
+      echo "                                               Re-freeze after implementation started requires --approved-by-user"
+      echo "  acceptance-gate                              - Verify freeze integrity + run tests/acceptance/run.sh (HARD_FAIL)"
+      echo "                                               Runner contract: exit 0 + 'ACCEPTANCE_RESULT: total=N passed=N failed=N'"
       echo "  layer-coverage                               - Verify projectScope layers exist on filesystem (HARD_FAIL; skip if no projectScope)"
       echo "                                               Sole writer of qualityDimensions.layerCoverage (checked by stop-hook)"
       echo "  code-review-findings                         - Count open CRITICAL/HIGH review findings in progress (HARD_FAIL)"

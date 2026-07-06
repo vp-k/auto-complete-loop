@@ -30,8 +30,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
      - `soft_fail`(서버 기동 실패) 및 `fail`(--strict 모드 하드 실패)은 반드시 해결 후 `pass`로 전환해야 함
      - Phase 4에서는 `runtime-gate`가 서버 1회 기동으로 smoke 3종(smoke-check + integration-smoke + functional-flow)을 통합 실행
    - **하드 게이트 키** (stop-hook이 워크플로우별로 fail-closed로 요구 — **기록 없음 = 미실행 = 불합격**):
-     - full-auto 계열: `specCompleteness` / `clarificationGate` / `docCompleteness`(pass) + `liveTesting` / `layerCoverage` / `docCodeCheck` / `serviceTestCheck`(pass|skip) + `codeReviewFindings`(pass)
-     - plan-docs-full 계열: `specCompleteness` / `clarificationGate` / `docCompleteness` / `specToTests` (모두 pass)
+     - full-auto 계열: `specCompleteness` / `clarificationGate` / `docCompleteness`(pass) + `liveTesting` / `layerCoverage` / `docCodeCheck` / `serviceTestCheck`(pass|skip) + `codeReviewFindings`(pass) + `acceptanceTests`(pass — `acceptance-gate` 실행 결과)
+     - plan-docs-full 계열: `specCompleteness` / `clarificationGate` / `docCompleteness` / `specToTests` / `acceptanceFreeze` (모두 pass — `acceptanceFreeze`는 `acceptance-freeze` 실행 결과)
      — 각 키는 대응 게이트 서브커맨드 실행 결과로만 기록된다 (모델 직접 기록 금지)
    - **통합 검증 게이트** (Phase 4 Step 4-6.5에서 실행, 모두 exit 0이어야 함):
      - `placeholder-check`: TODO/placeholder/FIXME 잔존 0건
@@ -48,8 +48,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 | 등급 | 강제 주체 | 항목 | 실패 시 |
 |------|----------|------|---------|
-| **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, smokeCheck(`soft_fail`=fail), specCompleteness, clarificationGate, docCompleteness, specToTests, docCodeCheck, serviceTestCheck, liveTesting, layerCoverage, codeReviewFindings | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
-| **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
+| **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, smokeCheck(`soft_fail`=fail), specCompleteness, clarificationGate, docCompleteness, specToTests, docCodeCheck, serviceTestCheck, liveTesting, layerCoverage, codeReviewFindings, acceptanceTests(full-auto 계열), acceptanceFreeze(plan-docs-full 계열) | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
+| **훅 강제 (하드)** | protect-files-guard | 동결된 `tests/acceptance/**` — `acceptance-freeze` 이후 Edit/Write 차단 (우회 수정도 `acceptance-gate` 해시 무결성이 감지) | 수정 시도 자체가 차단. 변경은 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user`로만 가능 |
+| **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check, acceptance-freeze, acceptance-gate | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
 | **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict), visualRegression | WARN 출력 후 진행 가능 (수정 권장) |
 
 directorOverride를 포함한 어떤 오버라이드도 "훅 강제" 등급을 우회할 수 없다.

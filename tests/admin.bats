@@ -44,10 +44,10 @@ teardown() { teardown_temp_dir; }
   [ "$result" = "5" ]
 }
 
-@test "init: full-auto has 13 DoD items" {
+@test "init: full-auto has 14 DoD items" {
   run_gate init --template full-auto "test" "req"
   result=$(jq '.dod | to_entries | length' .claude-full-auto-progress.json)
-  [ "$result" = "13" ]
+  [ "$result" = "14" ]
 }
 
 # ─── cmd_update_step tests ───

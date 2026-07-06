@@ -101,6 +101,7 @@ cmd_init() {
     "security_review": { "checked": false, "evidence": null },
     "secret_scan": { "checked": false, "evidence": null },
     "e2e_pass": { "checked": false, "evidence": null },
+    "acceptance_pass": { "checked": false, "evidence": null },
     "design_quality": { "checked": false, "evidence": null },
     "launch_ready": { "checked": false, "evidence": null }
   },

@@ -408,6 +408,8 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         _require_vgate "codeReviewFindings" "pass"      "shared-gate.sh code-review-findings"
         _require_vgate "docCodeCheck"       "pass skip" "shared-gate.sh doc-code-check"
         _require_vgate "serviceTestCheck"   "pass skip" "shared-gate.sh service-test-check"
+        # 인수 테스트 게이트: skip 불허 — full-auto는 SPEC 기반이므로 Phase 1이 반드시 tests/acceptance/를 생성
+        _require_vgate "acceptanceTests"    "pass"      "shared-gate.sh acceptance-gate"
         # layerCoverage(qualityDimensions 하위)는 위의 기존 하드 게이트가 pass|skip을 이미 강제
         # specToTests는 plan-docs-full 전용 (full-auto에서는 요구하지 않음)
       fi
@@ -418,6 +420,8 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         _require_vgate "clarificationGate" "pass" "shared-gate.sh clarification-gate"
         _require_vgate "docCompleteness"   "pass" "shared-gate.sh doc-completeness"
         _require_vgate "specToTests"       "pass" "shared-gate.sh spec-to-tests"
+        # 인수 테스트 동결: 기획 산출물에 동결된 인수 테스트가 반드시 포함되어야 함
+        _require_vgate "acceptanceFreeze"  "pass" "shared-gate.sh acceptance-freeze"
       fi
     fi
 

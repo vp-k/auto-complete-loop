@@ -146,6 +146,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 |---|---|
 | 모든 문서 공통 규칙 — Step 1-2 진입 시 1회 | `${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md` |
 | SPEC.md — 작성 시작 시점 | `${CLAUDE_PLUGIN_ROOT}/templates/SPEC.md` (구조 스켈레톤) |
+| 인수 테스트(tests/acceptance/) — Step 1-7.5 진입 시에만 | `${CLAUDE_PLUGIN_ROOT}/templates/acceptance-tests-guide.md` |
 | docs/security-authn-authz.md — 해당 문서 토론 시 | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지) |
 | docs/error-policy.md — 해당 문서 토론 시 | `docs/error-policy.md` 사본 (원본 템플릿 중복 Read 금지) |
 | docs/logging-standard.md — 해당 문서 토론 시 | `docs/logging-standard.md` 사본 (원본 템플릿 중복 Read 금지) |
@@ -231,6 +232,22 @@ Phase 1 완료 시 SPEC.md의 핵심 플로우를 기반으로 실행 가능한 
 US-* ID 필수화 규칙:
 - SPEC.md의 모든 User Story에 US-F-001, US-B-001 형식 ID를 반드시 부여
 - 이 ID가 테스트 커버리지 측정의 기준이 됨
+
+### Step 1-7.5: 인수 테스트 생성 + 동결 (Acceptance Tests)
+
+SPEC.md 완성 후, 기획 완료 전에 SPEC의 인수 조건(AC)으로부터 **실행 가능한** 인수 테스트를 생성하고 해시 동결합니다. 구현 Phase는 이 테스트를 수정할 수 없으며, 이 테스트를 green으로 만들어야만 완주됩니다.
+
+1. **가이드 로드** (이 시점에만 — lazy-load 규칙 표 참조):
+   ```
+   Read ${CLAUDE_PLUGIN_ROOT}/templates/acceptance-tests-guide.md
+   ```
+2. **인수 테스트 생성**: SPEC.md의 **모든 US**(US-F-*/US-B-*)에 대해, AC 1개당 최소 1개 테스트 + `tests/acceptance/run.sh`(러너)를 가이드 준수하여 생성. 의사코드/placeholder 금지 — 어서션이 실제로 실행되는 테스트여야 함.
+3. **동결 실행 — pass 확인**:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze
+   ```
+   결과가 verification.json의 `acceptanceFreeze`에 기록됨 (pass 확인).
+4. **red 상태가 정상**: 기획 시점에는 앱이 없으므로 테스트는 red — 그것이 정상 (TDD red→green). 동결 전 `bash tests/acceptance/run.sh`를 1회 실행하여 **"실행 가능하되 red"**인지 확인 권장 — 문법 오류로 실행조차 안 되는 테스트를 방지 (마지막 줄 `ACCEPTANCE_RESULT: total=N passed=N failed=N` 출력 확인).
 
 ### Step 1-8: Test Strategist Agent
 

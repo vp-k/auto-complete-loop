@@ -25,9 +25,14 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 3. `.claude-verification.json`의 모든 검증 항목이 통과:
    - build/typeCheck/lint/test: `exitCode: 0`
    - secretScan/artifactCheck/designPolish: `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`
-   - **smokeCheck**: `result: "pass"` 또는 `result: "skip"` (**`soft_fail`과 `fail`은 모두 불합격** — 서버가 기동되지 않으면 완주 불가)
+   - **smokeCheck**: `result: "pass"` 또는 `result: "skip"` (**`soft_fail`은 stop-hook이 `fail`로 처리** — `soft_fail`과 `fail` 모두 불합격, 서버가 기동되지 않으면 완주 불가)
      - `skip`은 서버가 불필요한 프로젝트(라이브러리, CLI, serverless)에서만 허용
      - `soft_fail`(서버 기동 실패) 및 `fail`(--strict 모드 하드 실패)은 반드시 해결 후 `pass`로 전환해야 함
+     - Phase 4에서는 `runtime-gate`가 서버 1회 기동으로 smoke 3종(smoke-check + integration-smoke + functional-flow)을 통합 실행
+   - **하드 게이트 키** (stop-hook이 워크플로우별로 fail-closed로 요구 — **기록 없음 = 미실행 = 불합격**):
+     - full-auto 계열: `specCompleteness` / `clarificationGate` / `docCompleteness`(pass) + `liveTesting` / `layerCoverage` / `docCodeCheck` / `serviceTestCheck`(pass|skip) + `codeReviewFindings`(pass)
+     - plan-docs-full 계열: `specCompleteness` / `clarificationGate` / `docCompleteness` / `specToTests` (모두 pass)
+     — 각 키는 대응 게이트 서브커맨드 실행 결과로만 기록된다 (모델 직접 기록 금지)
    - **통합 검증 게이트** (Phase 4 Step 4-6.5에서 실행, 모두 exit 0이어야 함):
      - `placeholder-check`: TODO/placeholder/FIXME 잔존 0건
      - `external-service-check`: SPEC.md 명시 외부 서비스의 SDK/config 존재
@@ -38,6 +43,16 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
    - `functional-flow`: smoke 스크립트 통과 (존재 시, SKIP 허용)
    - `test-quality`: assertion 비율 ≥ 70%, skip 비율 ≤ 20% (SOFT)
 5. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+
+### 게이트 등급 — 무엇이 진짜 차단인가
+
+| 등급 | 강제 주체 | 항목 | 실패 시 |
+|------|----------|------|---------|
+| **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, smokeCheck(`soft_fail`=fail), specCompleteness, clarificationGate, docCompleteness, specToTests, docCodeCheck, serviceTestCheck, liveTesting, layerCoverage, codeReviewFindings | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
+| **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
+| **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict), visualRegression | WARN 출력 후 진행 가능 (수정 권장) |
+
+directorOverride를 포함한 어떤 오버라이드도 "훅 강제" 등급을 우회할 수 없다.
 
 ### Iteration 단위 작업 규칙
 - 한 iteration에서 **한 Phase의 일부 작업**만 처리
@@ -72,7 +87,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-f
 | 게이트 | Phase 2 (문서별) | Phase 4 |
 |--------|-----------------|---------|
 | `implementation-depth` | 각 문서 구현 완료 후 | Step 4-1.7 |
-| `functional-flow` | — (smoke 스크립트 없을 수 있음) | Step 4-1.8 |
+| `functional-flow` | — (smoke 스크립트 없을 수 있음) | Step 4-6 (`runtime-gate`에 통합 실행) |
 | `test-quality` | — | Step 4-1.9 |
 | `page-render-check` | — | Step 4-5 (hasFrontend=true 시) |
 

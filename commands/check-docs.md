@@ -17,64 +17,42 @@ argument-hint: "[docs_dir (기본: docs/)]"
 
 ## 0단계: Ralph Loop 자동 설정 (최우선 실행)
 
-**이 단계를 가장 먼저, 다른 어떤 작업보다 우선하여 실행합니다.**
+`Read ${CLAUDE_PLUGIN_ROOT}/templates/ralph-loop-setup.md`를 읽고, 아래 파라미터로 치환하여 공통 절차(규칙 로드→인수 파싱→복구 감지→init→init-ralph→완료 조건/Iteration 규칙)를 수행합니다.
 
-먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/shared-rules.md`를 실행하여 공통 규칙을 로드합니다.
+| 파라미터 | 값 |
+|----------|-----|
+| PROMISE_TAG | `DOCS_CONSISTENT` |
+| PROGRESS_FILE | `.claude-doc-check-progress.json` |
+| INIT_TEMPLATE | `doc-check` |
+| MAX_ITERATIONS | (기본값) |
+| EXTRA_INIT | 아래 "EXTRA_INIT" 참조 |
 
-### 0-1. 인수 파싱
+### 인수 파싱
 
 `$ARGUMENTS`에서 문서 디렉토리 경로를 추출:
 - 인수 있으면 → `docsDir` = `$ARGUMENTS`
 - 인수 없으면 → `docsDir` = `docs/`
 
-### 0-2. 복구 감지
+### EXTRA_INIT
 
-`.claude-doc-check-progress.json` 파일 확인:
-
-**파일이 존재하는 경우 (재시작):**
-1. 파일 읽기
-2. `handoff` 필드를 최우선으로 확인 → 이전 iteration 맥락 복구
-3. 현재 단계의 진행 상태에 따라 재개
-4. 모든 steps가 `completed`면 → 3단계(최종 확인)로 이동
-
-**파일이 없는 경우 (신규):**
-- 1단계부터 정상 시작
-
-### 0-3. `.claude-doc-check-progress.json` 초기화
-
-새로 시작하는 경우, 스크립트로 초기화:
-
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template doc-check "프로젝트명"
-```
-
-생성 후 `docsDir`을 jq로 설정합니다:
+init 후 `docsDir`을 jq로 설정합니다:
 
 ```bash
 tmp=$(mktemp) && jq --arg dir "${docsDir}" '.docsDir = $dir' .claude-doc-check-progress.json > "$tmp" && mv "$tmp" .claude-doc-check-progress.json
 ```
 
-### 0-4. Ralph Loop 파일 생성
+### 복구 시 재개 규칙
 
-스크립트로 Ralph Loop 파일을 생성합니다:
+모든 steps가 `completed`면 → 3단계(최종 확인)로 이동.
 
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "DOCS_CONSISTENT" ".claude-doc-check-progress.json"
-```
+### 추가 완료 조건
 
-### Ralph Loop 완료 조건
+- 스크립트(doc-consistency / doc-code-check) exit code가 0
 
-`<promise>DOCS_CONSISTENT</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
-1. `.claude-doc-check-progress.json`의 모든 steps status가 `completed`
-2. `.claude-doc-check-progress.json`의 `dod` 체크리스트가 모두 checked
-3. 스크립트 exit code가 0
-4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+### Iteration 단위
 
-### Iteration 단위 작업 규칙
 - 1단계 + 2단계: 구조적 검사 + 의미적 검증 (1 iteration)
 - 3단계: 최종 확인 (1 iteration)
-- 처리 완료 후 진행 상태를 파일에 저장하고 세션을 자연스럽게 종료
-- Stop Hook이 완료 조건 미달을 감지하면 자동으로 다음 iteration 시작
 
 ---
 

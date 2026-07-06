@@ -1,5 +1,102 @@
 # gates/smoke.sh — 서버 기동 검증, 통합 스모크, 기능 흐름 검증
 
+# ─── _verify_spec_endpoints <port> [label] ───
+# SPEC.md의 GET 엔드포인트를 curl로 검증한다 (이미 기동된 서버 대상).
+# smoke-check와 runtime-gate가 공유하는 내부 함수.
+# 결과는 전역 변수로 반환: ENDPOINT_TOTAL / ENDPOINT_PASS / ENDPOINT_FAIL / ENDPOINT_RESULTS(JSON 배열)
+ENDPOINT_TOTAL=0
+ENDPOINT_PASS=0
+ENDPOINT_FAIL=0
+ENDPOINT_RESULTS="[]"
+_verify_spec_endpoints() {
+  local port="$1" label="${2:-endpoint-check}"
+  ENDPOINT_TOTAL=0; ENDPOINT_PASS=0; ENDPOINT_FAIL=0; ENDPOINT_RESULTS="[]"
+
+  # SPEC.md 또는 기획 문서에서 API 엔드포인트 추출
+  local spec_file=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    if [[ -f "$candidate" ]]; then
+      spec_file="$candidate"
+      break
+    fi
+  done
+  [[ -z "$spec_file" ]] && return 0
+
+  echo "[$label] Verifying API endpoints from $spec_file..."
+
+  # SPEC.md에서 GET 엔드포인트만 추출 (POST/PUT/PATCH/DELETE는 부작용 위험으로 제외)
+  local endpoints
+  endpoints=$(grep -oE 'GET\s+/[a-zA-Z0-9/_:{}.-]+' "$spec_file" 2>/dev/null | head -20 || true)
+
+  if [[ -z "$endpoints" ]]; then
+    echo "[$label] WARNING: No GET endpoints found in $spec_file — endpoint verification skipped"
+    echo "[$label] (mutating endpoints POST/PUT/PATCH/DELETE are excluded to avoid side effects)"
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    local method path
+    method=$(echo "$line" | awk '{print $1}')
+    path=$(echo "$line" | awk '{print $2}')
+
+    # 경로 파라미터 치환 ({id} → 1, {:id} → 1)
+    path=$(echo "$path" | sed -E 's/\{[^}]+\}/1/g; s/:([a-zA-Z_]+)/1/g')
+
+    ENDPOINT_TOTAL=$((ENDPOINT_TOTAL + 1))
+
+    # 단일 curl로 body + status code 동시 수집
+    local http_code resp_tmp
+    resp_tmp=$(mktemp)
+    http_code=$(curl -s -w "%{http_code}" --max-time 5 -o "$resp_tmp" "http://localhost:${port}${path}" 2>/dev/null || echo "000")
+
+    # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL
+    if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|401|403)$ ]]; then
+      # 응답 body 필드 검증 (2xx 응답만 — 빈 객체/빈 배열 탐지)
+      local body_check="ok"
+      if [[ "$http_code" =~ ^2 ]]; then
+        local resp_type resp_len
+        resp_type=$(jq -r 'type' "$resp_tmp" 2>/dev/null || echo "unknown")
+        if [[ "$resp_type" == "object" ]]; then
+          resp_len=$(jq 'keys | length' "$resp_tmp" 2>/dev/null || echo "0")
+          [[ "$resp_len" == "0" ]] && body_check="empty_object"
+        elif [[ "$resp_type" == "array" ]]; then
+          resp_len=$(jq 'length' "$resp_tmp" 2>/dev/null || echo "0")
+          [[ "$resp_len" == "0" ]] && body_check="empty_array"
+        fi
+      fi
+      rm -f "$resp_tmp"
+
+      if [[ "$body_check" == "empty_object" ]]; then
+        echo "  [WARN] GET $path → HTTP $http_code but response is empty object {}"
+        ENDPOINT_PASS=$((ENDPOINT_PASS + 1))
+        ENDPOINT_RESULTS=$(echo "$ENDPOINT_RESULTS" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "warn", "detail": "empty_object"}]')
+      elif [[ "$body_check" == "empty_array" ]]; then
+        echo "  [WARN] GET $path → HTTP $http_code response is empty array [] (may be no data)"
+        ENDPOINT_PASS=$((ENDPOINT_PASS + 1))
+        ENDPOINT_RESULTS=$(echo "$ENDPOINT_RESULTS" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "warn", "detail": "empty_array"}]')
+      else
+        echo "  [PASS] GET $path → HTTP $http_code"
+        ENDPOINT_PASS=$((ENDPOINT_PASS + 1))
+        ENDPOINT_RESULTS=$(echo "$ENDPOINT_RESULTS" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
+      fi
+    else
+      rm -f "$resp_tmp"
+      echo "  [FAIL] GET $path → HTTP $http_code"
+      ENDPOINT_FAIL=$((ENDPOINT_FAIL + 1))
+      ENDPOINT_RESULTS=$(echo "$ENDPOINT_RESULTS" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "fail"}]')
+    fi
+  done <<< "$endpoints"
+
+  # empty_object/empty_array 경고 수 집계
+  local endpoint_warn
+  endpoint_warn=$(echo "$ENDPOINT_RESULTS" | jq '[.[] | select(.result == "warn")] | length' 2>/dev/null || echo "0")
+  echo "[$label] Endpoints: $ENDPOINT_PASS/$ENDPOINT_TOTAL passed ($ENDPOINT_FAIL failed, $endpoint_warn warnings)"
+  if [[ "$endpoint_warn" -gt 0 ]] && [[ "$endpoint_warn" -eq "$ENDPOINT_PASS" ]] && [[ "$ENDPOINT_FAIL" -eq 0 ]]; then
+    echo "[$label] WARNING: ALL endpoints returned empty responses — likely stub implementation"
+  fi
+  return 0
+}
+
 cmd_smoke_check() {
   local port="3000"
   local timeout
@@ -154,92 +251,15 @@ cmd_smoke_check() {
     success=true
   fi
 
-  # ─── 엔드포인트 검증 (서버 기동 성공 시) ───
+  # ─── 엔드포인트 검증 (서버 기동 성공 시) — _verify_spec_endpoints 재사용 ───
   local endpoint_total=0 endpoint_pass=0 endpoint_fail=0 endpoint_results="[]"
 
   if [[ "$success" == "true" ]]; then
-    # SPEC.md 또는 기획 문서에서 API 엔드포인트 추출
-    local spec_file=""
-    for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
-      if [[ -f "$candidate" ]]; then
-        spec_file="$candidate"
-        break
-      fi
-    done
-
-    if [[ -n "$spec_file" ]]; then
-      echo "[smoke-check] Verifying API endpoints from $spec_file..."
-
-      # SPEC.md에서 GET 엔드포인트만 추출 (POST/PUT/PATCH/DELETE는 부작용 위험으로 제외)
-      local endpoints
-      endpoints=$(grep -oE 'GET\s+/[a-zA-Z0-9/_:{}.-]+' "$spec_file" 2>/dev/null | head -20 || true)
-
-      if [[ -n "$endpoints" ]]; then
-        while IFS= read -r line; do
-          local method path
-          method=$(echo "$line" | awk '{print $1}')
-          path=$(echo "$line" | awk '{print $2}')
-
-          # 경로 파라미터 치환 ({id} → 1, {:id} → 1)
-          path=$(echo "$path" | sed -E 's/\{[^}]+\}/1/g; s/:([a-zA-Z_]+)/1/g')
-
-          endpoint_total=$((endpoint_total + 1))
-
-          # 단일 curl로 body + status code 동시 수집
-          local http_code resp_tmp
-          resp_tmp=$(mktemp)
-          http_code=$(curl -s -w "%{http_code}" --max-time 5 -o "$resp_tmp" "http://localhost:${port}${path}" 2>/dev/null || echo "000")
-
-          # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL
-          if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|401|403)$ ]]; then
-            # 응답 body 필드 검증 (2xx 응답만 — 빈 객체/빈 배열 탐지)
-            local body_check="ok"
-            if [[ "$http_code" =~ ^2 ]]; then
-              local resp_type resp_len
-              resp_type=$(jq -r 'type' "$resp_tmp" 2>/dev/null || echo "unknown")
-              if [[ "$resp_type" == "object" ]]; then
-                resp_len=$(jq 'keys | length' "$resp_tmp" 2>/dev/null || echo "0")
-                [[ "$resp_len" == "0" ]] && body_check="empty_object"
-              elif [[ "$resp_type" == "array" ]]; then
-                resp_len=$(jq 'length' "$resp_tmp" 2>/dev/null || echo "0")
-                [[ "$resp_len" == "0" ]] && body_check="empty_array"
-              fi
-            fi
-            rm -f "$resp_tmp"
-
-            if [[ "$body_check" == "empty_object" ]]; then
-              echo "  [WARN] GET $path → HTTP $http_code but response is empty object {}"
-              endpoint_pass=$((endpoint_pass + 1))
-              endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "warn", "detail": "empty_object"}]')
-            elif [[ "$body_check" == "empty_array" ]]; then
-              echo "  [WARN] GET $path → HTTP $http_code response is empty array [] (may be no data)"
-              endpoint_pass=$((endpoint_pass + 1))
-              endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "warn", "detail": "empty_array"}]')
-            else
-              echo "  [PASS] GET $path → HTTP $http_code"
-              endpoint_pass=$((endpoint_pass + 1))
-              endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "pass"}]')
-            fi
-          else
-            rm -f "$resp_tmp"
-            echo "  [FAIL] GET $path → HTTP $http_code"
-            endpoint_fail=$((endpoint_fail + 1))
-            endpoint_results=$(echo "$endpoint_results" | jq --arg m "$method" --arg p "$path" --arg c "$http_code" '. + [{"method": $m, "path": $p, "status": ($c | tonumber), "result": "fail"}]')
-          fi
-        done <<< "$endpoints"
-
-        # empty_object/empty_array 경고 수 집계
-        local endpoint_warn
-        endpoint_warn=$(echo "$endpoint_results" | jq '[.[] | select(.result == "warn")] | length' 2>/dev/null || echo "0")
-        echo "[smoke-check] Endpoints: $endpoint_pass/$endpoint_total passed ($endpoint_fail failed, $endpoint_warn warnings)"
-        if [[ "$endpoint_warn" -gt 0 ]] && [[ "$endpoint_warn" -eq "$endpoint_pass" ]] && [[ "$endpoint_fail" -eq 0 ]]; then
-          echo "[smoke-check] WARNING: ALL endpoints returned empty responses — likely stub implementation"
-        fi
-      else
-        echo "[smoke-check] WARNING: No GET endpoints found in $spec_file — endpoint verification skipped"
-        echo "[smoke-check] (mutating endpoints POST/PUT/PATCH/DELETE are excluded from smoke-check to avoid side effects)"
-      fi
-    fi
+    _verify_spec_endpoints "$port" "smoke-check"
+    endpoint_total=$ENDPOINT_TOTAL
+    endpoint_pass=$ENDPOINT_PASS
+    endpoint_fail=$ENDPOINT_FAIL
+    endpoint_results=$ENDPOINT_RESULTS
   fi
 
   # 결과 판정
@@ -298,51 +318,57 @@ cmd_smoke_check() {
 
 # ─── integration-smoke: 프론트-백엔드 API 통합 스모크 ───
 
-cmd_integration_smoke() {
-  echo "=== Integration Smoke ==="
-  require_jq
-
-  # projectScope 확인 (fail-closed: progress 없으면 FAIL)
+# projectScope 적용성 판정 (integration-smoke/runtime-gate 공유)
+# 반환: 0=적용(FE+BE), 1=fail(progress/scope 미정 — fail-closed), 2=skip(FE+BE 아님)
+_integration_scope_applicable() {
+  local label="${1:-integration-smoke}"
   if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
-    echo "[integration-smoke] FAIL (progress file not found — cannot determine projectScope)"
-    echo "=== INTEGRATION SMOKE: FAIL ==="
+    echo "[$label] FAIL (progress file not found — cannot determine projectScope)"
     return 1
   fi
 
   local has_frontend has_backend
-  has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // "null"' "$PROGRESS_FILE" 2>/dev/null || echo "null")
-  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "null"' "$PROGRESS_FILE" 2>/dev/null || echo "null")
+  # 주의: jq의 `//`는 false를 falsy로 취급하므로 has() 기반으로 읽는다 (hasFrontend/hasBackend=false가 "null"로 오판되는 버그 방지)
+  has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope | if type == "object" and has("hasFrontend") then (.hasFrontend | tostring) else "null" end' "$PROGRESS_FILE" 2>/dev/null || echo "null")
+  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope | if type == "object" and has("hasBackend") then (.hasBackend | tostring) else "null" end' "$PROGRESS_FILE" 2>/dev/null || echo "null")
 
   if [[ "$has_frontend" == "null" ]] || [[ "$has_backend" == "null" ]]; then
-    echo "[integration-smoke] FAIL (projectScope not defined — run Phase 0 first)"
-    echo "=== INTEGRATION SMOKE: FAIL ==="
+    echo "[$label] FAIL (projectScope not defined — run Phase 0 first)"
     return 1
   fi
 
   if [[ "$has_frontend" != "true" ]] || [[ "$has_backend" != "true" ]]; then
-    echo "[integration-smoke] SKIP (requires hasFrontend=true AND hasBackend=true)"
-    return 0
+    echo "[$label] SKIP (requires hasFrontend=true AND hasBackend=true)"
+    return 2
   fi
+  return 0
+}
 
-  local checks_total=0 checks_pass=0 checks_fail=0
+# integration-smoke의 정적 검사 3종 (.env API URL / FE 호출 패턴 / 백엔드 CORS)
+# 서버 기동과 무관한 검사만 수행. 결과는 전역 변수: IS_TOTAL / IS_PASS / IS_FAIL
+IS_TOTAL=0
+IS_PASS=0
+IS_FAIL=0
+_integration_static_checks() {
+  IS_TOTAL=0; IS_PASS=0; IS_FAIL=0
 
   # 1. .env.example에 API URL 관련 환경 변수 존재 확인
-  checks_total=$((checks_total + 1))
+  IS_TOTAL=$((IS_TOTAL + 1))
   if [[ -f ".env.example" ]]; then
     if grep -qiE "(API_URL|BASE_URL|BACKEND_URL|SERVER_URL|NEXT_PUBLIC_API|VITE_API)" ".env.example" 2>/dev/null; then
       echo "  [PASS] .env.example contains API URL variable"
-      checks_pass=$((checks_pass + 1))
+      IS_PASS=$((IS_PASS + 1))
     else
       echo "  [FAIL] .env.example exists but no API URL variable (API_URL, BASE_URL, etc.)"
-      checks_fail=$((checks_fail + 1))
+      IS_FAIL=$((IS_FAIL + 1))
     fi
   else
     echo "  [FAIL] .env.example not found"
-    checks_fail=$((checks_fail + 1))
+    IS_FAIL=$((IS_FAIL + 1))
   fi
 
   # 2. 프론트엔드 코드에서 API 호출 패턴 존재 확인
-  checks_total=$((checks_total + 1))
+  IS_TOTAL=$((IS_TOTAL + 1))
   local api_call_found=false
   local fe_dirs=("src" "app" "pages" "components" "client")
   for d in "${fe_dirs[@]}"; do
@@ -357,14 +383,14 @@ cmd_integration_smoke() {
 
   if [[ "$api_call_found" == "true" ]]; then
     echo "  [PASS] Frontend API call patterns found"
-    checks_pass=$((checks_pass + 1))
+    IS_PASS=$((IS_PASS + 1))
   else
     echo "  [FAIL] No API call patterns found in frontend code"
-    checks_fail=$((checks_fail + 1))
+    IS_FAIL=$((IS_FAIL + 1))
   fi
 
   # 3. CORS 설정 확인 (백엔드)
-  checks_total=$((checks_total + 1))
+  IS_TOTAL=$((IS_TOTAL + 1))
   local cors_found=false
   local be_dirs=("src" "server" "lib" "app")
   for d in "${be_dirs[@]}"; do
@@ -379,13 +405,41 @@ cmd_integration_smoke() {
 
   if [[ "$cors_found" == "true" ]]; then
     echo "  [PASS] CORS configuration found in backend"
-    checks_pass=$((checks_pass + 1))
+    IS_PASS=$((IS_PASS + 1))
   else
     echo "  [FAIL] No CORS configuration found in backend code"
-    checks_fail=$((checks_fail + 1))
+    IS_FAIL=$((IS_FAIL + 1))
+  fi
+}
+
+# integrationSmoke 결과를 verification.json에 기록 (integration-smoke/runtime-gate 공유)
+_record_integration_smoke() {
+  local result="$1" total="$2" pass="$3" fail="$4"
+  record_verification "integrationSmoke" \
+    "$(jq -n --arg ts "$(timestamp)" --arg result "$result" \
+        --argjson total "$total" --argjson pass "$pass" --argjson fail "$fail" \
+        '{timestamp: $ts, result: $result, checks: {total: $total, pass: $pass, fail: $fail}}')"
+}
+
+cmd_integration_smoke() {
+  echo "=== Integration Smoke ==="
+  require_jq
+
+  # projectScope 확인 (fail-closed: progress 없으면 FAIL)
+  local scope_rc=0
+  _integration_scope_applicable "integration-smoke" || scope_rc=$?
+  if [[ $scope_rc -eq 1 ]]; then
+    echo "=== INTEGRATION SMOKE: FAIL ==="
+    return 1
+  elif [[ $scope_rc -eq 2 ]]; then
+    return 0
   fi
 
-  # 4. 백엔드 서버 기동 확인 (smoke-check 재사용)
+  # 정적 검사 3종 (공유 함수)
+  _integration_static_checks
+  local checks_total=$IS_TOTAL checks_pass=$IS_PASS checks_fail=$IS_FAIL
+
+  # 4. 백엔드 서버 기동 확인 (개별 호출 시 자체 기동/종료 — runtime-gate는 공유 서버 사용)
   checks_total=$((checks_total + 1))
   local start_cmd
   start_cmd=$(_detect_start_cmd)
@@ -406,22 +460,13 @@ cmd_integration_smoke() {
   fi
 
   # 결과 기록
-  local ts result
-  ts=$(timestamp)
+  local result
   if [[ "$checks_fail" -eq 0 ]]; then
     result="pass"
   else
     result="fail"
   fi
-
-  if [[ -f "$VERIFICATION_FILE" ]]; then
-    jq_inplace "$VERIFICATION_FILE" \
-      --arg ts "$ts" --arg result "$result" --argjson total "$checks_total" --argjson pass "$checks_pass" --argjson fail "$checks_fail" \
-      '.integrationSmoke = {"timestamp": $ts, "result": $result, "checks": {"total": $total, "pass": $pass, "fail": $fail}}'
-  else
-    jq -n --arg ts "$ts" --arg result "$result" --argjson total "$checks_total" --argjson pass "$checks_pass" --argjson fail "$checks_fail" \
-      '{"integrationSmoke": {"timestamp": $ts, "result": $result, "checks": {"total": $total, "pass": $pass, "fail": $fail}}}' > "$VERIFICATION_FILE"
-  fi
+  _record_integration_smoke "$result" "$checks_total" "$checks_pass" "$checks_fail"
 
   echo "[integration-smoke] Checks: $checks_pass/$checks_total passed"
   echo "=== INTEGRATION SMOKE: ${result^^} ==="
@@ -619,4 +664,150 @@ cmd_functional_flow() {
     append_gate_history "functional-flow" "fail" "$details"
     return 1
   fi
+}
+
+# ─── runtime-gate: 서버 1회 기동으로 smoke/integration/functional-flow 통합 실행 ───
+# smoke-check / integration-smoke / functional-flow를 각각 호출하면 서버가 3회 기동된다.
+# runtime-gate는 서버를 한 번만 기동해 세 검사를 순차 실행하고, 각 결과를
+# 기존 verification 키(smokeCheck / integrationSmoke / functionalFlow)에 그대로 기록한 뒤
+# 서버를 한 번만 종료한다. 기존 3개 서브커맨드는 하위 호환으로 유지된다.
+# 내부 공유 함수: _verify_spec_endpoints / _integration_static_checks / _record_integration_smoke
+
+cmd_runtime_gate() {
+  local port="3000"
+  local timeout
+  timeout=$(config_get '.smoke.timeout' '15')
+  local strict=false
+
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --strict) strict=true; shift ;;
+      --timeout) timeout="${2:?--timeout requires seconds}"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  port="${args[0]:-$port}"
+
+  if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+    die "runtime-gate: port must be 1-65535, got '$port'"
+  fi
+  if ! [[ "$timeout" =~ ^[0-9]+$ ]] || [[ "$timeout" -lt 1 ]]; then
+    die "runtime-gate: timeout must be a positive integer, got '$timeout'"
+  fi
+
+  local strict_label=""
+  [[ "$strict" == "true" ]] && strict_label=" [STRICT]"
+  echo "=== Runtime Gate (port: $port, timeout: ${timeout}s, single server lifecycle)${strict_label} ==="
+  require_jq
+
+  local overall=0
+
+  # ── 서버 1회 기동 ──
+  local start_cmd server_up=false
+  start_cmd=$(_detect_start_cmd)
+  if [[ -n "$start_cmd" ]]; then
+    echo "[runtime-gate] Starting server once: $start_cmd"
+    if _start_and_wait_server "$start_cmd" "$port" "$timeout" "runtime-gate"; then
+      server_up=true
+    else
+      echo "[runtime-gate] Server did not respond within ${timeout}s"
+      echo "Server log (last 5 lines):"
+      tail -5 "$SERVER_LOG" 2>/dev/null || true
+    fi
+  else
+    echo "[runtime-gate] No start/dev script detected (library/CLI/serverless project)"
+  fi
+
+  # ── (1/3) SPEC 엔드포인트 스모크 → smokeCheck 기록 ──
+  echo ""
+  echo "[runtime-gate] (1/3) Endpoint smoke check"
+  local smoke_result
+  local endpoint_json='{"total":0,"pass":0,"fail":0,"details":[]}'
+  if [[ -z "$start_cmd" ]]; then
+    smoke_result="skip"
+    echo "[runtime-gate] smokeCheck: SKIP (no start script)"
+  elif [[ "$server_up" != "true" ]]; then
+    smoke_result="soft_fail"
+    echo "[runtime-gate] smokeCheck: SOFT_FAIL (server did not start)"
+  else
+    _verify_spec_endpoints "$port" "runtime-gate"
+    endpoint_json=$(jq -n \
+      --argjson total "$ENDPOINT_TOTAL" --argjson pass "$ENDPOINT_PASS" \
+      --argjson fail "$ENDPOINT_FAIL" --argjson details "$ENDPOINT_RESULTS" \
+      '{total: $total, pass: $pass, fail: $fail, details: $details}')
+    if [[ "$ENDPOINT_FAIL" -gt 0 ]]; then
+      smoke_result="soft_fail"
+      echo "[runtime-gate] smokeCheck: SOFT_FAIL ($ENDPOINT_FAIL endpoint(s) failed)"
+    else
+      smoke_result="pass"
+      echo "[runtime-gate] smokeCheck: PASS"
+    fi
+  fi
+  if [[ "$strict" == "true" ]] && [[ "$smoke_result" == "soft_fail" ]]; then
+    smoke_result="fail"
+    echo "[runtime-gate] STRICT MODE: smokeCheck soft_fail upgraded to FAIL"
+  fi
+  record_verification "smokeCheck" \
+    "$(jq -n --arg ts "$(timestamp)" --arg cmd "${start_cmd:-}" --argjson port "$port" \
+        --arg result "$smoke_result" --argjson strict "$strict" --argjson endpoints "$endpoint_json" \
+        '{timestamp: $ts, command: (if $cmd == "" then null else $cmd end), port: $port,
+          result: $result, strict: $strict, method: "runtime-gate", endpoints: $endpoints}')"
+  if [[ "$smoke_result" == "soft_fail" ]] || [[ "$smoke_result" == "fail" ]]; then
+    append_gate_history "smoke-check" "fail" "{\"method\":\"runtime-gate\",\"result\":\"$smoke_result\"}"
+    overall=1
+  else
+    append_gate_history "smoke-check" "$smoke_result" '{"method":"runtime-gate"}'
+  fi
+
+  # ── (2/3) FE↔BE 연동 검증 (정적 3종 + 공유 서버 연결 확인) → integrationSmoke 기록 ──
+  echo ""
+  echo "[runtime-gate] (2/3) FE-BE integration checks"
+  local scope_rc=0
+  _integration_scope_applicable "runtime-gate" || scope_rc=$?
+  if [[ $scope_rc -eq 1 ]]; then
+    overall=1
+  elif [[ $scope_rc -eq 0 ]]; then
+    _integration_static_checks
+    local is_total=$IS_TOTAL is_pass=$IS_PASS is_fail=$IS_FAIL
+
+    # 연결 검사: 별도 기동 없이 공유 서버 상태 재사용
+    is_total=$((is_total + 1))
+    if [[ "$server_up" == "true" ]]; then
+      echo "  [PASS] Backend server is up (shared runtime-gate server)"
+      is_pass=$((is_pass + 1))
+    else
+      echo "  [FAIL] Backend server not running"
+      is_fail=$((is_fail + 1))
+    fi
+
+    local is_result="pass"
+    [[ "$is_fail" -gt 0 ]] && is_result="fail"
+    _record_integration_smoke "$is_result" "$is_total" "$is_pass" "$is_fail"
+    echo "[runtime-gate] integrationSmoke: ${is_result^^} ($is_pass/$is_total)"
+    [[ "$is_result" == "fail" ]] && overall=1
+  fi
+  # scope_rc=2 (skip)은 integration-smoke 단독 실행과 동일하게 기록 없이 통과
+
+  # ── (3/3) 기능 플로우 스크립트 (공유 서버가 살아있는 동안 실행) → functionalFlow 기록 ──
+  echo ""
+  echo "[runtime-gate] (3/3) Functional flow scripts"
+  local ff_rc=0
+  cmd_functional_flow || ff_rc=$?
+  if [[ $ff_rc -eq 1 ]]; then
+    overall=1
+  fi
+  # ff_rc=2 (skip: 스크립트 없음)는 차단하지 않음
+
+  # ── 서버 1회 종료 ──
+  _cleanup_server
+  trap - EXIT INT TERM
+
+  echo ""
+  if [[ $overall -eq 0 ]]; then
+    echo "=== RUNTIME GATE: PASS ==="
+  else
+    echo "=== RUNTIME GATE: FAIL (see individual check results above) ==="
+  fi
+  return $overall
 }

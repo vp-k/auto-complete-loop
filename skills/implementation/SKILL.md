@@ -51,6 +51,18 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
 
 **절대 금지**: 한 레이어만 구현하고 Phase 3으로 넘어가는 것. `hasFrontend: true`인데 프론트엔드 구현 없이 Phase 2를 완료할 수 없습니다.
 
+### Step 2-1.9: 스펙 공백 대응 절차 (임의 구현 금지)
+
+구현 중 SPEC/설계 문서에 없는 **동작 결정**(새 엔드포인트, 스키마 필드, UX 흐름, 외부 서비스 연동 등)이 필요해지면 **임의로 구현하지 않는다**. 반드시 다음 중 하나로 처리:
+
+- **(a) 자유 구현 허용 범위**: 사소하고 스펙과 모순 없는 구현 세부(변수명, 내부 구조, private 헬퍼 분리 등)는 자유롭게 결정. 단, **"동작 계약"에 영향을 주는 것(API 응답 형태, 저장 스키마, 사용자 가시 동작, 외부 연동)은 전부 (b) 또는 (c)로** 처리한다.
+- **(b) 보류 + 태깅**: 스펙 문서(SPEC.md 또는 해당 기획 문서)에 `[NEEDS-CLARIFICATION: 질문]` 태그를 추가하고, 해당 US 구현을 보류한 뒤 다른 태스크를 진행한다. clarification-gate가 잔존 태그를 차단하므로 질문이 조용히 묻히지 않는다.
+- **(c) 즉시 질의**: 즉답이 필요하면 AskUserQuestion으로 사용자에게 질문한다. 결정되면 **스펙 문서에 먼저 반영한 후** 구현한다 (스펙이 항상 코드보다 먼저 갱신된다).
+
+**Scope 추가 금지**: 스펙에 없는 기능을 "있으면 좋을 것 같아서" 추가하지 않는다. 리뷰에서 IMPL-* finding으로 잡히는 것과 별개로, 구현 단계에서 사전 차단한다.
+
+**e2e.applicable 기록 규칙**: 모델이 임의로 `phases.phase_2.e2e.applicable = false`를 기록하는 것 금지. 프로젝트 유형 감지 결과에 따라서만 기록한다 — 감지 로직/서브커맨드가 있으면 그 결과를 사용하고, 없으면 AskUserQuestion으로 사용자 확인 후 기록한다.
+
 ---
 
 ### Step 2-2: 프로젝트 구조 설계
@@ -89,6 +101,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh docker-build-check --progress-
 #### 적용성 판단
 - 순수 라이브러리/CLI 도구 → `phases.phase_2.e2e.applicable = false`, `dod.e2e_pass = {"checked": true, "evidence": "N/A: pure library"}`, 이후 E2E 스텝 전부 스킵
 - 나머지(web/API/flutter/mobile) → 진행
+- `applicable = false` 기록은 Step 2-1.9의 e2e.applicable 기록 규칙을 따른다 (프로젝트 유형 감지 결과 기반만 허용, 임의 기록 금지)
 
 #### E2E 스킬 로드 + 프로젝트 분석
 ```

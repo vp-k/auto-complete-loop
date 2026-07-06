@@ -607,23 +607,37 @@ cmd_service_test_check() {
   echo "=== Service Test Check ==="
   require_jq
 
+  # verification.json 기록 헬퍼 — 계약: serviceTestCheck {result: pass|fail|skip}
+  _stc_record() {
+    record_verification "serviceTestCheck" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --arg reason "${2:-}" \
+          '{timestamp:$ts,result:$r} + (if $reason != "" then {reason:$reason} else {} end)')"
+  }
+
   if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
     echo "[service-test-check] FAIL (progress file not found — cannot determine projectScope)"
+    append_gate_history "service-test-check" "fail" '{"reason":"no progress file"}'
+    _stc_record "fail" "no progress file"
     echo "=== SERVICE TEST CHECK: FAIL ==="
     return 1
   fi
 
   local has_backend
-  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "null"' "$PROGRESS_FILE" 2>/dev/null || echo "null")
+  # 주의: jq의 `//`는 false를 falsy로 취급하므로 has() 기반으로 읽는다 (hasBackend=false가 "null"로 오판되는 버그 방지)
+  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope | if type == "object" and has("hasBackend") then (.hasBackend | tostring) else "null" end' "$PROGRESS_FILE" 2>/dev/null || echo "null")
 
   if [[ "$has_backend" == "null" ]]; then
     echo "[service-test-check] FAIL (projectScope.hasBackend is not defined — run Phase 0 first)"
+    append_gate_history "service-test-check" "fail" '{"reason":"projectScope undefined"}'
+    _stc_record "fail" "projectScope.hasBackend undefined"
     echo "=== SERVICE TEST CHECK: FAIL ==="
     return 1
   fi
 
   if [[ "$has_backend" != "true" ]]; then
     echo "[service-test-check] SKIP (hasBackend is false)"
+    append_gate_history "service-test-check" "skip" '{"reason":"hasBackend=false"}'
+    _stc_record "skip" "hasBackend=false"
     return 0
   fi
 
@@ -642,7 +656,8 @@ cmd_service_test_check() {
   fi
 
   if [[ -n "$all_test_files" ]]; then
-    test_files=$(echo "$all_test_files" | sort -u | grep -iE "$search_pattern" | wc -l | tr -d ' ')
+    # grep 무매치(exit 1) 시 pipefail로 게이트가 기록 없이 즉사하는 것 방지
+    test_files=$(echo "$all_test_files" | sort -u | { grep -iE "$search_pattern" || true; } | wc -l | tr -d ' ')
   fi
 
   echo "[service-test-check] Found $test_files service/route test file(s)"
@@ -651,10 +666,238 @@ cmd_service_test_check() {
     echo "[service-test-check] WARNING: hasBackend=true but no service/route tests found"
     echo "  Expected: test files matching pattern *service*|*route*|*controller*|*handler*|*api*|*endpoint*"
     echo "  Searched: test/ tests/ __tests__/ src/**/*.test.* src/**/*.spec.*"
+    append_gate_history "service-test-check" "fail" '{"testFiles":0}'
+    _stc_record "fail" "hasBackend=true but no service/route tests"
     echo "=== SERVICE TEST CHECK: FAIL ==="
     return 1
   fi
 
+  append_gate_history "service-test-check" "pass" "{\"testFiles\":$test_files}"
+  _stc_record "pass"
   echo "=== SERVICE TEST CHECK: PASS ==="
+  return 0
+}
+
+# ─── live-testing-gate: progress의 live 테스트 finding에서 open LIVE-CRITICAL/HIGH 계수 (HARD_FAIL) ───
+# 스키마 근거:
+#   - commands/code-review-loop.md 7단계: 미해결 finding을 progress의 `live_testing_issues` 배열에 기록
+#   - findingHistory(최상위 또는 phases.phase_3.findingHistory)에 LIVE-{SEVERITY}-{번호} 항목 기록
+#   - dod.live_testing: live 테스트 수행/SKIP 증거
+# live 기록이 전혀 없으면 result=skip (라이브러리 프로젝트 등 live 테스트 비대상).
+
+cmd_live_testing_gate() {
+  echo "=== Live Testing Gate ==="
+  require_jq
+
+  # verification.json 기록 헬퍼 — 계약: liveTesting {result: pass|fail|skip, criticalOpen: N, highOpen: N}
+  _ltg_record() {
+    record_verification "liveTesting" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --argjson c "$2" --argjson h "$3" --arg reason "${4:-}" \
+          '{timestamp:$ts,result:$r,criticalOpen:$c,highOpen:$h} + (if $reason != "" then {reason:$reason} else {} end)')"
+  }
+
+  if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
+    echo "[live-testing-gate] SKIP (no progress file — cannot locate live testing records)"
+    append_gate_history "live-testing-gate" "skip" '{"reason":"no progress file"}'
+    _ltg_record "skip" 0 0 "no progress file"
+    return 0
+  fi
+
+  # live 테스트 기록 존재 여부 + open LIVE-CRITICAL/HIGH 계수 (단일 jq 패스)
+  local counts
+  counts=$(jq '
+    def norm: if type == "object" then . elif type == "string" then {id: .} else empty end;
+    def live_items:
+      [ ((.live_testing_issues // []) | .[] | norm),
+        ((.findingHistory // []) | .[] | norm | select((.id // "") | startswith("LIVE-"))),
+        ((.phases.phase_3.findingHistory // []) | .[] | norm | select((.id // "") | startswith("LIVE-"))) ];
+    (live_items) as $items
+    | ($items | map(select((.status // "open") == "open"))) as $open
+    | {
+        evidence: (has("live_testing_issues")
+                   or (($items | length) > 0)
+                   or ((.dod.live_testing // null) != null)),
+        critical: ($open | map(select(((.severity // "") == "CRITICAL")
+                                      or ((.id // "") | test("^LIVE-CRITICAL")))) | length),
+        high:     ($open | map(select(((.severity // "") == "HIGH")
+                                      or ((.id // "") | test("^LIVE-HIGH")))) | length)
+      }
+  ' "$PROGRESS_FILE" 2>/dev/null || echo '{"evidence":false,"critical":0,"high":0}')
+
+  local has_evidence critical_open high_open
+  has_evidence=$(echo "$counts" | jq -r '.evidence')
+  critical_open=$(echo "$counts" | jq -r '.critical')
+  high_open=$(echo "$counts" | jq -r '.high')
+  [[ "$critical_open" =~ ^[0-9]+$ ]] || critical_open=0
+  [[ "$high_open" =~ ^[0-9]+$ ]] || high_open=0
+
+  if [[ "$has_evidence" != "true" ]]; then
+    echo "[live-testing-gate] SKIP (no live testing records in $PROGRESS_FILE — library project or live testing not applicable)"
+    append_gate_history "live-testing-gate" "skip" '{"reason":"no live records"}'
+    _ltg_record "skip" 0 0 "no live testing records"
+    return 0
+  fi
+
+  echo "[live-testing-gate] Open LIVE findings: CRITICAL=$critical_open, HIGH=$high_open"
+
+  if [[ $((critical_open + high_open)) -gt 0 ]]; then
+    echo "[live-testing-gate] FAIL: unresolved LIVE-CRITICAL/HIGH finding(s) remain"
+    echo "  Fix open findings (live-testing SKILL Step 4.5) and mark them status=fixed in $PROGRESS_FILE"
+    append_gate_history "live-testing-gate" "fail" "{\"criticalOpen\":$critical_open,\"highOpen\":$high_open}"
+    _ltg_record "fail" "$critical_open" "$high_open"
+    echo "=== LIVE TESTING GATE: FAIL ==="
+    return 1
+  fi
+
+  append_gate_history "live-testing-gate" "pass" '{"criticalOpen":0,"highOpen":0}'
+  _ltg_record "pass" 0 0
+  # DoD 갱신: dod.live_testing은 이 게이트가 유일한 기록자 (모델 직접 세팅 금지)
+  jq_inplace "$PROGRESS_FILE" --arg ev "live-testing-gate PASS at $(timestamp) (open LIVE-CRITICAL/HIGH: 0)" '
+    if (.dod | has("live_testing")) then
+      .dod.live_testing = {checked: true, evidence: $ev}
+    else . end'
+  echo "=== LIVE TESTING GATE: PASS ==="
+  return 0
+}
+
+# ─── layer-coverage: projectScope 대비 실제 파일시스템 아티팩트 대조 (HARD_FAIL) ───
+# stop-hook이 .qualityDimensions.layerCoverage.result를 하드 게이트로 검사한다.
+# 이 서브커맨드가 해당 키의 유일한 스크립트 기록자 (자기신고 금지).
+# projectScope 정보가 없으면 result=skip.
+
+cmd_layer_coverage() {
+  echo "=== Layer Coverage Check ==="
+  require_jq
+
+  # 기록 헬퍼 — 계약: layerCoverage {result: pass|fail|skip, layers: {...}}
+  # stop-hook:295가 .qualityDimensions.layerCoverage를 읽으므로 qualityDimensions 하위에 기록.
+  _lc_record() {
+    record_verification_qd "layerCoverage" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --argjson layers "$2" --arg ev "$3" \
+          '{timestamp:$ts,result:$r,layers:$layers,evidence:$ev}')"
+  }
+
+  # projectScope 로드 — 정보 없으면 skip
+  local scope_valid="invalid"
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    scope_valid=$(jq -r '
+      .phases.phase_0.outputs.projectScope
+      | if type == "object" and has("hasFrontend") and has("hasBackend")
+           and (.hasFrontend | type == "boolean") and (.hasBackend | type == "boolean")
+        then "valid" else "invalid" end
+    ' "$PROGRESS_FILE" 2>/dev/null || echo "invalid")
+  fi
+
+  if [[ "$scope_valid" != "valid" ]]; then
+    echo "[layer-coverage] SKIP (projectScope not defined in progress file — cannot determine required layers)"
+    append_gate_history "layer-coverage" "skip" '{"reason":"no projectScope"}'
+    _lc_record "skip" '{"reason":"no projectScope"}' "projectScope missing"
+    return 0
+  fi
+
+  local has_frontend has_backend
+  has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend' "$PROGRESS_FILE")
+  has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend' "$PROGRESS_FILE")
+  echo "[layer-coverage] projectScope: hasFrontend=$has_frontend, hasBackend=$has_backend"
+
+  local fail=0 issues=""
+
+  # ── 프론트엔드: 페이지/컴포넌트 파일 계수 ──
+  local fe_count=0
+  local -a fe_dirs=()
+  for d in src app pages components client public views; do
+    [[ -d "$d" ]] && fe_dirs+=("$d")
+  done
+  if [[ ${#fe_dirs[@]} -gt 0 ]]; then
+    fe_count=$(find "${fe_dirs[@]}" -type f \
+      \( -name "*.tsx" -o -name "*.jsx" -o -name "*.vue" -o -name "*.svelte" -o -name "*.html" \
+         -o -name "page.*" -o -name "layout.*" \) \
+      ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" 2>/dev/null | wc -l | tr -d ' ')
+  fi
+  [[ -f "index.html" ]] && fe_count=$((fe_count + 1))
+  [[ "$fe_count" =~ ^[0-9]+$ ]] || fe_count=0
+
+  # ── 백엔드: 서버 진입점 + 라우트/컨트롤러/핸들러 파일 계수 ──
+  local be_entry="false" be_route_count=0
+  # 진입점: 관례적 파일명 또는 package.json start/dev 스크립트
+  for f in server.js server.ts server.mjs server.py app.js app.ts app.py main.py main.go main.rs \
+           src/server.js src/server.ts src/app.js src/app.ts src/main.ts src/main.js src/index.ts src/index.js \
+           server/index.js server/index.ts cmd/main.go; do
+    [[ -f "$f" ]] && { be_entry="true"; break; }
+  done
+  if [[ "$be_entry" == "false" ]] && [[ -f "package.json" ]]; then
+    jq -e '.scripts.start // .scripts.dev' package.json >/dev/null 2>&1 && be_entry="true"
+  fi
+  local -a be_dirs=()
+  for d in src app server api routes controllers handlers services lib; do
+    [[ -d "$d" ]] && be_dirs+=("$d")
+  done
+  if [[ ${#be_dirs[@]} -gt 0 ]]; then
+    be_route_count=$(find "${be_dirs[@]}" -type f \
+      \( -iname "*route*" -o -iname "*controller*" -o -iname "*handler*" -o -iname "*endpoint*" -o -iname "*service*" \) \
+      \( -name "*.ts" -o -name "*.js" -o -name "*.mjs" -o -name "*.py" -o -name "*.go" -o -name "*.java" -o -name "*.rb" -o -name "*.rs" \) \
+      ! -path "*/node_modules/*" ! -name "*.test.*" ! -name "*.spec.*" 2>/dev/null | wc -l | tr -d ' ')
+    [[ "$be_route_count" =~ ^[0-9]+$ ]] || be_route_count=0
+    # 파일명 관례가 없는 프레임워크(Flask 단일 app.py 등) 폴백: 라우트 등록 패턴 grep
+    if [[ "$be_route_count" -eq 0 ]]; then
+      local route_pattern_files
+      # grep 무매치(exit 1)가 pipefail로 게이트를 기록 없이 죽이지 않도록 가드
+      route_pattern_files=$({ grep -rlE '(app|router|r|e)\.(get|post|put|patch|delete|use)\(|@(app|router|bp)\.(get|post|put|patch|delete|route)|HandleFunc\(|@(Get|Post|Put|Patch|Delete)Mapping|@(Controller|RestController)' \
+        "${be_dirs[@]}" --include="*.ts" --include="*.js" --include="*.py" --include="*.go" --include="*.java" 2>/dev/null || true; } | head -50 | wc -l | tr -d ' ')
+      [[ "$route_pattern_files" =~ ^[0-9]+$ ]] || route_pattern_files=0
+      be_route_count=$route_pattern_files
+    fi
+  fi
+
+  # ── 테스트 디렉토리 존재 ──
+  local test_dir_count=0
+  for d in test tests __tests__ spec e2e; do
+    [[ -d "$d" ]] && test_dir_count=$((test_dir_count + 1))
+  done
+  if [[ -d "src" ]]; then
+    local src_tests
+    src_tests=$(find src -type f \( -name "*.test.*" -o -name "*.spec.*" \) 2>/dev/null | head -1 || true)
+    [[ -n "$src_tests" ]] && test_dir_count=$((test_dir_count + 1))
+  fi
+
+  # ── 판정 ──
+  if [[ "$has_frontend" == "true" ]] && [[ "$fe_count" -eq 0 ]]; then
+    fail=1
+    issues="${issues}  - hasFrontend=true but 0 page/component files found\n"
+  fi
+  if [[ "$has_backend" == "true" ]]; then
+    if [[ "$be_entry" != "true" ]]; then
+      fail=1
+      issues="${issues}  - hasBackend=true but no server entry point found (server.*/app.*/main.* or package.json start script)\n"
+    fi
+    if [[ "$be_route_count" -eq 0 ]]; then
+      fail=1
+      issues="${issues}  - hasBackend=true but 0 route/controller/handler files found\n"
+    fi
+  fi
+
+  local layers_json
+  layers_json=$(jq -n \
+    --argjson hf "$has_frontend" --argjson hb "$has_backend" \
+    --argjson fe "$fe_count" --argjson be_entry "$([[ "$be_entry" == "true" ]] && echo true || echo false)" \
+    --argjson be_routes "$be_route_count" --argjson tests "$test_dir_count" \
+    '{hasFrontend:$hf,hasBackend:$hb,frontendFiles:$fe,backendEntry:$be_entry,backendRouteFiles:$be_routes,testDirs:$tests}')
+
+  local evidence="frontend: $fe_count files, backend entry: $be_entry, backend routes: $be_route_count files, test dirs: $test_dir_count"
+  echo "[layer-coverage] $evidence"
+
+  if [[ "$fail" -eq 1 ]]; then
+    echo "[layer-coverage] FAIL: required layers missing:"
+    printf '%b' "$issues"
+    echo "  Return to Phase 2 and implement the missing layer(s)."
+    append_gate_history "layer-coverage" "fail" "$layers_json"
+    _lc_record "fail" "$layers_json" "$evidence"
+    echo "=== LAYER COVERAGE: FAIL ==="
+    return 1
+  fi
+
+  append_gate_history "layer-coverage" "pass" "$layers_json"
+  _lc_record "pass" "$layers_json" "$evidence"
+  echo "=== LAYER COVERAGE: PASS ==="
   return 0
 }

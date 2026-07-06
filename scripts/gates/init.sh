@@ -27,7 +27,9 @@ cmd_init() {
 
   require_jq
 
-  # 템플릿별 파일명 결정
+  # 템플릿별 파일명 결정 — 글로벌 --progress-file 지정 시 그것을 우선한다.
+  # (예: plan-docs-full은 plan 템플릿을 .claude-plan-docs-full-progress.json으로 생성해야
+  #  stop-hook의 파일명 기반 워크플로우 스코핑이 올바르게 동작한다)
   local target_file
   case "$template" in
     full-auto)  target_file=".claude-full-auto-progress.json" ;;
@@ -39,6 +41,14 @@ cmd_init() {
     doc-check)  target_file=".claude-doc-check-progress.json" ;;
     *)          die "Unknown template: $template. Valid: full-auto, plan, implement, review, polish, e2e, doc-check" ;;
   esac
+  if [[ -n "${PROGRESS_FILE:-}" ]]; then
+    # 안전 패턴 검증 (stop-hook의 frontmatter 검증과 동일 기준)
+    if [[ "$PROGRESS_FILE" =~ ^\.claude-.*progress.*\.json$ ]]; then
+      target_file="$PROGRESS_FILE"
+    else
+      echo "WARNING: --progress-file '$PROGRESS_FILE' rejected (must match .claude-*progress*.json); using template default $target_file"
+    fi
+  fi
 
   if [[ -f "$target_file" ]]; then
     echo "WARNING: $target_file already exists. Skipping init."

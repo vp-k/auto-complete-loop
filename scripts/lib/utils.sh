@@ -36,6 +36,41 @@ require_jq() {
 
 timestamp() { date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ"; }
 
+# ─── verification.json 기록 헬퍼 ───
+# 게이트 결과를 .claude-verification.json에 병합 기록한다 (stop-hook이 읽는 유일한 하드락 증거).
+# 파일이 없으면 생성. jq가 없으면 경고 후 무시 (게이트 자체 exit code 의미는 유지).
+
+# 최상위 키 기록
+# Usage: record_verification <key> <json_object>
+record_verification() {
+  local key="$1" json="$2"
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARNING: jq not found — cannot record '$key' to $VERIFICATION_FILE" >&2
+    return 0
+  fi
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --arg k "$key" --argjson v "$json" '.[$k] = $v'
+  else
+    jq -n --arg k "$key" --argjson v "$json" '{($k): $v}' > "$VERIFICATION_FILE"
+  fi
+}
+
+# qualityDimensions 하위 키 기록 (stop-hook이 .qualityDimensions.<key>를 읽는 게이트용 — layerCoverage 등)
+# Usage: record_verification_qd <key> <json_object>
+record_verification_qd() {
+  local key="$1" json="$2"
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "WARNING: jq not found — cannot record 'qualityDimensions.$key' to $VERIFICATION_FILE" >&2
+    return 0
+  fi
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    jq_inplace "$VERIFICATION_FILE" --arg k "$key" --argjson v "$json" \
+      '.qualityDimensions = ((.qualityDimensions // {}) + {($k): $v})'
+  else
+    jq -n --arg k "$key" --argjson v "$json" '{"qualityDimensions": {($k): $v}}' > "$VERIFICATION_FILE"
+  fi
+}
+
 # 안전한 jq 인플레이스 업데이트 (temp 파일 자동 정리 + 무결성 검증)
 jq_inplace() {
   local file="$1"; shift

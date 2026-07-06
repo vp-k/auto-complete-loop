@@ -30,25 +30,35 @@ $ARGUMENTS에서 `--mode` 값을 파싱합니다. 지정되지 않으면 `codex`
 - **`--mode codex`** (기본): 아래 3단계의 2자 토론 루프를 그대로 실행합니다.
 - **`--mode dual`**: 3단계에서 codex-cli를 **두 번 독립적으로 호출**하여 3자 토론을 수행합니다. codex 1차 -> codex 2차 -> Claude Code 순서로 순차 검토/반론하며, 두 codex 호출은 서로의 결과를 참조하지 않습니다. 합의 기준: 참여 중인 AI 모두 근거 있는 "수정 없음" 선언.
 
-## Ralph Loop 자동 설정 (최우선 실행)
+## 0단계: Ralph Loop 자동 설정 (최우선 실행)
 
-스킬 시작 시 스크립트로 Ralph Loop 파일을 생성합니다:
+`Read ${CLAUDE_PLUGIN_ROOT}/templates/ralph-loop-setup.md`를 읽고, 아래 파라미터로 치환하여 공통 절차(규칙 로드→인수 파싱→복구 감지→init→init-ralph→완료 조건/Iteration 규칙)를 수행합니다.
 
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "ALL_DOCS_REVIEWED" ".claude-plan-progress.json"
-```
+| 파라미터 | 값 |
+|----------|-----|
+| PROMISE_TAG | `ALL_DOCS_REVIEWED` |
+| PROGRESS_FILE | `.claude-plan-progress.json` |
+| INIT_TEMPLATE | (없음) — progress 파일은 2단계에서 생성 |
+| MAX_ITERATIONS | (기본값) |
+| EXTRA_INIT | (없음) |
 
-### Ralph Loop 완료 조건
+### 인수 파싱
 
-`<promise>ALL_DOCS_REVIEWED</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
-1. `.claude-plan-progress.json`의 모든 문서 status가 `completed`
-2. `.claude-plan-progress.json`의 `dod` 체크리스트가 모두 checked
-3. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+- 정의 문서 경로: $1
+- README 경로: $2
+- `--mode <solo|codex|dual>` 파싱 (위 "--mode 처리" 참조, 기본값: codex)
 
-### Iteration 단위 작업 규칙
+### 복구 시 재개 규칙 / 추가 복구 절차
+
+아래 "복구 감지 상세"를 따릅니다 (definitionDoc/readmePath 일치 확인, 파일이 없으면 README와 실제 파일 비교 복구 시도).
+
+### 추가 완료 조건
+
+- (없음 — 공통 조건만 적용)
+
+### Iteration 단위
+
 - 한 iteration에서 **1~2개 문서**만 처리
-- 처리 완료 후 진행 상태를 파일에 저장하고 세션을 자연스럽게 종료
-- Stop Hook이 완료 조건 미달을 감지하면 자동으로 다음 iteration 시작
 
 ## 진행 상태 파일 (`.claude-plan-progress.json`)
 
@@ -103,20 +113,16 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "ALL_DOCS_REVIEWED"
 | 문서 완료 | status -> `completed` |
 | Iteration 종료 전 | `handoff` 필드 업데이트 |
 
-## 0단계: 복구 감지
+## 복구 감지 상세 (0단계에서 사용)
 
-먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/shared-rules.md`를 실행하여 공통 규칙을 로드합니다.
+> 공통 분기(파일 존재/없음)는 ralph-loop-setup.md를 따르되, 이 명령은 아래 고유 규칙을 추가로 적용합니다.
 
-스킬 시작 시 프로젝트 루트에서 `.claude-plan-progress.json` 파일 확인:
+**파일이 존재하는 경우 (재시작) — 추가 확인:**
 
-**파일이 존재하는 경우 (재시작):**
-
-1. 파일 읽기
-2. `handoff` 필드를 최우선으로 확인 -> 이전 iteration 맥락 복구
-3. `definitionDoc`, `readmePath` 확인 (인수와 일치해야 함)
-4. `in_progress` 상태인 문서 찾기 -> 해당 문서부터 재개
-5. `in_progress`가 없으면 첫 번째 `pending` 문서부터 재개
-6. 모든 문서가 `completed`면 -> 4단계(완료 보고)로 이동
+1. `definitionDoc`, `readmePath` 확인 (인수와 일치해야 함)
+2. `in_progress` 상태인 문서 찾기 -> 해당 문서부터 재개
+3. `in_progress`가 없으면 첫 번째 `pending` 문서부터 재개
+4. 모든 문서가 `completed`면 -> 4단계(완료 보고)로 이동
 
 **파일이 없는 경우 (파일 비교 복구 시도):**
 

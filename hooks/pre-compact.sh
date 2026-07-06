@@ -8,18 +8,16 @@
 
 set -euo pipefail
 
-# progress 파일 찾기 (shared-gate.sh detect_progress_file과 동일 순서)
+# progress 파일 찾기 — scripts/lib/progress.sh의 detect_progress_file을 단일 출처로 사용
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
 PROGRESS_FILE=""
-for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
-         .claude-progress.json \
-         .claude-plan-progress.json .claude-polish-progress.json \
-         .claude-review-loop-progress.json .claude-e2e-progress.json \
-         .claude-doc-check-progress.json; do
-  if [ -f "$f" ]; then
-    PROGRESS_FILE="$f"
-    break
-  fi
-done
+if [ -f "${PLUGIN_ROOT}/scripts/lib/progress.sh" ]; then
+  # shellcheck source=../scripts/lib/progress.sh
+  . "${PLUGIN_ROOT}/scripts/lib/progress.sh"
+  PROGRESS_FILE=$(detect_progress_file || true)
+fi
 
 if [ -z "$PROGRESS_FILE" ]; then
   echo "PreCompact: progress 파일 없음 — 컨텍스트 출력 스킵"

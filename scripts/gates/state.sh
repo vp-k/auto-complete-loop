@@ -437,6 +437,104 @@ cmd_skip_phases() {
   echo "OK: Starting from Phase $start_phase ($target_phase)"
 }
 
+# ─── code-review-findings: progress의 findingHistory/roundResults에서 open CRITICAL/HIGH 계수 (HARD_FAIL) ───
+# 코드 리뷰 finding(비-LIVE)의 open CRITICAL/HIGH가 남아 있으면 fail.
+# LIVE-* finding은 live-testing-gate가 담당하므로 여기서 제외한다.
+
+cmd_code_review_findings() {
+  echo "=== Code Review Findings Gate ==="
+  require_jq
+  require_progress
+
+  # 기록 헬퍼 — 계약: codeReviewFindings {result: pass|fail, criticalOpen: N, highOpen: N}
+  _crf_record() {
+    record_verification "codeReviewFindings" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --argjson c "$2" --argjson h "$3" --arg note "${4:-}" \
+          '{timestamp:$ts,result:$r,criticalOpen:$c,highOpen:$h} + (if $note != "" then {note:$note} else {} end)')"
+  }
+
+  # findingHistory (최상위: review 템플릿 / phases.phase_3: full-auto 템플릿)에서 open 계수
+  # hasHistory는 "키 존재"가 아니라 "항목 존재" 기준 — init 템플릿이 빈 배열([])을
+  # 항상 생성하므로 키 존재 기준이면 리뷰 미수행 상태가 PASS로 통과(고무도장)된다.
+  local counts
+  counts=$(jq '
+    def rawitems:
+      [ ((.findingHistory // []) | .[]),
+        ((.phases.phase_3.findingHistory // []) | .[]) ]
+      | map(select(type == "object"));
+    def items:
+      rawitems | map(select((.id // "") | startswith("LIVE-") | not));
+    (items) as $all
+    | ($all | map(select((.status // "open") == "open"))) as $open
+    | {
+        hasHistory: ((rawitems | length) > 0),
+        total: ($all | length),
+        critical: ($open | map(select((.severity // "") == "CRITICAL"
+                                      or ((.id // "") | test("-CRITICAL-")))) | length),
+        high:     ($open | map(select((.severity // "") == "HIGH"
+                                      or ((.id // "") | test("-HIGH-")))) | length),
+        lastRound: ((.roundResults // (.phases.phase_3.roundResults // [])) | if length > 0 then .[-1] else null end)
+      }
+  ' "$PROGRESS_FILE" 2>/dev/null || echo '{"hasHistory":false,"total":0,"critical":0,"high":0,"lastRound":null}')
+
+  local has_history critical_open high_open note=""
+  has_history=$(echo "$counts" | jq -r '.hasHistory')
+  critical_open=$(echo "$counts" | jq -r '.critical')
+  high_open=$(echo "$counts" | jq -r '.high')
+  [[ "$critical_open" =~ ^[0-9]+$ ]] || critical_open=0
+  [[ "$high_open" =~ ^[0-9]+$ ]] || high_open=0
+
+  # findingHistory 항목이 없으면 roundResults의 마지막 라운드 집계로 폴백 (fail-closed 추정)
+  if [[ "$has_history" != "true" ]]; then
+    local has_round
+    has_round=$(echo "$counts" | jq '.lastRound != null' 2>/dev/null || echo "false")
+    if [[ "$has_round" != "true" ]]; then
+      # 리뷰 증거가 전혀 없음 (findingHistory 항목 0 + roundResults 0) = 리뷰 미수행 → fail-closed
+      note="no review evidence (empty findingHistory, no roundResults) — code review has not run"
+      echo "[code-review-findings] FAIL: $note"
+      append_gate_history "code-review-findings" "fail" '{"criticalOpen":0,"highOpen":0,"reason":"no evidence"}'
+      _crf_record "fail" 0 0 "$note"
+      echo "=== CODE REVIEW FINDINGS: FAIL ==="
+      return 1
+    fi
+    local rr_counts
+    rr_counts=$(echo "$counts" | jq '
+      .lastRound // {} | .findings.bySeverity // {} | {critical: (.CRITICAL // 0), high: (.HIGH // 0)}
+    ' 2>/dev/null || echo '{"critical":0,"high":0}')
+    critical_open=$(echo "$rr_counts" | jq -r '.critical')
+    high_open=$(echo "$rr_counts" | jq -r '.high')
+    [[ "$critical_open" =~ ^[0-9]+$ ]] || critical_open=0
+    [[ "$high_open" =~ ^[0-9]+$ ]] || high_open=0
+    if [[ $((critical_open + high_open)) -gt 0 ]]; then
+      note="no findingHistory entries — counted from last roundResults (per-finding status unknown, fail-closed)"
+      echo "[code-review-findings] WARNING: $note"
+    fi
+  fi
+
+  echo "[code-review-findings] Open code-review findings: CRITICAL=$critical_open, HIGH=$high_open"
+
+  if [[ $((critical_open + high_open)) -gt 0 ]]; then
+    echo "[code-review-findings] FAIL: open CRITICAL/HIGH finding(s) remain"
+    echo "  Fix them (or record dismissal with rationale) and set status=fixed in findingHistory."
+    append_gate_history "code-review-findings" "fail" "{\"criticalOpen\":$critical_open,\"highOpen\":$high_open}"
+    _crf_record "fail" "$critical_open" "$high_open" "$note"
+    echo "=== CODE REVIEW FINDINGS: FAIL ==="
+    return 1
+  fi
+
+  append_gate_history "code-review-findings" "pass" '{"criticalOpen":0,"highOpen":0}'
+  _crf_record "pass" 0 0 "$note"
+  # DoD 갱신: dod.code_review_pass는 이 게이트가 유일한 기록자 (모델 직접 세팅 금지)
+  if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg ev "code-review-findings PASS at $(timestamp) (open CRITICAL/HIGH: 0)" '
+      if (.dod | has("code_review_pass")) then
+        .dod.code_review_pass = {checked: true, evidence: $ev}
+      else . end'
+  fi
+  echo "=== CODE REVIEW FINDINGS: PASS ==="
+  return 0
+}
+
 # ─── add-dod-key: DoD 키 동적 추가 (idempotent) ───
 
 cmd_add_dod_key() {

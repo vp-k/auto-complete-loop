@@ -39,6 +39,10 @@
 #   external-service-check                             - SPEC.md 기반 외부 서비스 SDK/config 존재 확인 (HARD_FAIL)
 #   service-test-check                                 - 백엔드 서비스/라우트 통합 테스트 존재 확인 (HARD_FAIL)
 #   integration-smoke                                  - 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL)
+#   runtime-gate [port] [--strict]                      - 서버 1회 기동으로 엔드포인트/연동/기능플로우 통합 실행
+#   live-testing-gate                                   - progress의 open LIVE-CRITICAL/HIGH 계수 (HARD_FAIL, 기록 없으면 skip)
+#   layer-coverage                                      - projectScope 대비 레이어 아티팩트 검증 (HARD_FAIL, scope 없으면 skip)
+#   code-review-findings                                - progress의 open CRITICAL/HIGH 리뷰 finding 계수 (HARD_FAIL)
 #   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
 #   test-quality                                        - 테스트 assertion 비율/skip 비율/US 커버리지 (SOFT gate)
 #   page-render-check [--port N] [--strict]             - 프론트엔드 페이지 렌더링 검증 (빈 페이지/console.error/404 탐지)
@@ -95,6 +99,10 @@ main() {
     external-service-check) cmd_external_service_check "$@" ;;
     service-test-check) cmd_service_test_check "$@" ;;
     integration-smoke)  cmd_integration_smoke "$@" ;;
+    runtime-gate)      cmd_runtime_gate "$@" ;;
+    live-testing-gate) cmd_live_testing_gate "$@" ;;
+    layer-coverage)    cmd_layer_coverage "$@" ;;
+    code-review-findings) cmd_code_review_findings "$@" ;;
     implementation-depth) cmd_implementation_depth "$@" ;;
     test-quality)      cmd_test_quality "$@" ;;
     page-render-check) cmd_page_render_check "$@" ;;
@@ -152,6 +160,12 @@ main() {
       echo "  doc-completeness [docs_dir]                  - Quantitative API/section thresholds for plan-docs-full (HARD_FAIL)"
       echo "  definition-conflict [docs_dir]               - Detect Non-Goals violations across docs (SOFT_FAIL)"
       echo "  spec-to-tests                                - Verify SPEC.md endpoints map 1:1 to tests/api-smoke.sh (HARD_FAIL)"
+      echo "  runtime-gate [port] [--timeout S] [--strict] - Start server ONCE, run endpoint smoke + FE-BE integration + functional flows, stop once"
+      echo "                                               Records smokeCheck/integrationSmoke/functionalFlow in .claude-verification.json"
+      echo "  live-testing-gate                            - Count open LIVE-CRITICAL/HIGH findings in progress (HARD_FAIL; skip if no live records)"
+      echo "  layer-coverage                               - Verify projectScope layers exist on filesystem (HARD_FAIL; skip if no projectScope)"
+      echo "                                               Sole writer of qualityDimensions.layerCoverage (checked by stop-hook)"
+      echo "  code-review-findings                         - Count open CRITICAL/HIGH review findings in progress (HARD_FAIL)"
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
       echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"

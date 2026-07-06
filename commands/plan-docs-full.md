@@ -48,7 +48,8 @@ argument-hint: <요구사항 (자연어)>
     ├── skills/pm-planning/SKILL.md        (Phase 0 — 기존 재사용)
     └── {PHASE_1_SKILL}                    (Phase 1 — 모드별 스킬 재사용)
 
-→ [신규 게이트 4종 — 모두 PASS여야 promise 발행]
+→ [게이트 5종 — 모두 PASS여야 promise 발행]
+   0. spec-completeness    (HARD_FAIL: 필수 섹션 + 핵심 섹션 TBD 0건)
    1. doc-completeness     (HARD_FAIL: API 블록 정량 임계값)
    2. doc-consistency      (WARN: 모델/엔드포인트/네이밍 교차 검증)
    3. definition-conflict  (SOFT_FAIL: Non-Goals 침범 탐지 + Claude 판정 기록)
@@ -90,7 +91,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 1. `{PROGRESS_FILE}`의 `phases.phase_0` + `phases.phase_1` 모든 step status가 `completed`
 2. `{PROGRESS_FILE}`의 `dod`(아래 DoD 키 목록) 모두 `checked: true`
-3. **신규 게이트 4종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
+3. **게이트 5종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
+   - `spec-completeness` exit 0 (CRITICAL 0건)
    - `doc-completeness` exit 0
    - `doc-consistency` exit 0 (이슈 0건)
    - `definition-conflict` exit 0 + 매치가 있다면 progress의 `nonGoalsAudit`에 모든 매치 판정 기록 완료
@@ -187,11 +189,18 @@ Read ${PHASE_1_SKILL}
 
 스킬 내 Step 1-9에서 이미 `clarification-gate`가 호출됩니다. HARD_FAIL이면 사용자 질의로 모두 해소.
 
-## 3단계: 신규 게이트 4종 순차 검증 (Phase 1 종료 직후)
+## 3단계: 게이트 5종 순차 검증 (Phase 1 종료 직후)
 
 스킬 완료 후 오케스트레이터가 다음 게이트를 **순차** 실행합니다. 하나라도 실패하면 Phase 1 재진입(해당 이슈 수정).
 
+> 게이트 결과는 `.claude-verification.json`에 자동 기록되며, stop-hook이 `specCompleteness` · `clarificationGate` · `docCompleteness` · `specToTests` 키가 전부 `pass`인지 최종 검증합니다 (미실행 = 완주 불가, fail-closed).
+
 ```bash
+# 게이트 0: spec-completeness (HARD_FAIL: CRITICAL 이슈 0건 — 핵심 섹션 TBD 포함)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness \
+  --progress-file {PROGRESS_FILE}
+# 실패 → overview/SPEC의 누락 섹션·핵심 섹션 내 TBD를 구체 결정으로 교체 후 재실행
+
 # 게이트 1: doc-completeness (HARD_FAIL)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-completeness docs/ \
   --progress-file {PROGRESS_FILE}
@@ -219,7 +228,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-to-tests \
 
 ```bash
 jq_inplace {PROGRESS_FILE} \
-  '.dod.doc_completeness_passed = {checked:true, evidence:"shared-gate.sh doc-completeness PASS"}
+  '.dod.spec_completeness_passed = {checked:true, evidence:"shared-gate.sh spec-completeness PASS"}
+   | .dod.doc_completeness_passed = {checked:true, evidence:"shared-gate.sh doc-completeness PASS"}
    | .dod.doc_consistency_passed = {checked:true, evidence:"shared-gate.sh doc-consistency PASS (0 issues)"}
    | .dod.definition_conflict_resolved = {checked:true, evidence:"N matches reviewed, all recorded in nonGoalsAudit"}
    | .dod.spec_to_tests_passed = {checked:true, evidence:"shared-gate.sh spec-to-tests PASS"}

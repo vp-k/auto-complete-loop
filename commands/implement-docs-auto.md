@@ -18,30 +18,36 @@ argument-hint: <definition(overview.md)> <doclist(README.md)>
 - 정의 문서 경로: $1
 - README 경로: $2
 
-## Ralph Loop 자동 설정 (최우선 실행)
+## 0단계: Ralph Loop 자동 설정 (최우선 실행)
 
-스킬 시작 시 스크립트로 Ralph Loop 파일을 생성합니다:
+`Read ${CLAUDE_PLUGIN_ROOT}/templates/ralph-loop-setup.md`를 읽고, 아래 파라미터로 치환하여 공통 절차(규칙 로드→인수 파싱→복구 감지→init→init-ralph→완료 조건/Iteration 규칙)를 수행합니다.
 
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "ALL_DOCS_VERIFIED" ".claude-progress.json"
-```
+| 파라미터 | 값 |
+|----------|-----|
+| PROMISE_TAG | `ALL_DOCS_VERIFIED` |
+| PROGRESS_FILE | `.claude-progress.json` |
+| INIT_TEMPLATE | (없음) — progress 파일은 2단계에서 생성 |
+| MAX_ITERATIONS | (기본값) |
+| EXTRA_INIT | (없음) |
 
-### Ralph Loop 완료 조건
+### 인수 파싱
 
-`<promise>ALL_DOCS_VERIFIED</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
-1. `.claude-progress.json`의 모든 문서 status가 `completed`
-2. `.claude-verification.json`의 모든 검증 항목이 통과 (build/typeCheck/lint/test는 `exitCode: 0`, secretScan/artifactCheck/smokeCheck/designPolish는 `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`)
-3. `.claude-progress.json`의 `dod` 체크리스트가 모두 checked
-4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+- 정의 문서 경로: $1
+- README 경로: $2
 
-### Iteration 단위 작업 규칙
+### 복구 시 재개 규칙
+
+`.claude-progress.json`이 존재하면 아래 "프로세스 완전 종료 후 복구 > Claude 동작 규칙" 절차를 따릅니다 (handoff → context → documentSummaries → completed 스킵 → in_progress 문서 처음부터 재구현).
+
+### 추가 완료 조건
+
+- `.claude-verification.json`의 모든 검증 항목이 통과 (build/typeCheck/lint/test는 `exitCode: 0`, secretScan/artifactCheck/smokeCheck/designPolish는 `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`)
+
+### Iteration 단위
+
 - 한 iteration에서 **1~2개 문서(또는 3~5개 티켓)**만 처리
-- 처리 완료 후 진행 상태를 파일에 저장하고 세션을 자연스럽게 종료
-- Stop Hook이 완료 조건 미달을 감지하면 자동으로 다음 iteration 시작
 
-## 0단계: 맥락 파악
-
-먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/shared-rules.md`를 실행하여 공통 규칙을 로드합니다.
+## 0.5단계: 맥락 파악
 
 정의 문서($1)를 읽고:
 

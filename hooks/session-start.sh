@@ -20,18 +20,13 @@ for _orphan in .claude-*-progress.json.tmp .claude-*.tmp; do
   fi
 done
 
-# progress 파일 탐지 (shared-gate.sh detect_progress_file와 동일 목록)
+# progress 파일 탐지 — scripts/lib/progress.sh의 detect_progress_file을 단일 출처로 사용
 PROGRESS_FILE=""
-for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
-         .claude-progress.json \
-         .claude-plan-progress.json .claude-polish-progress.json \
-         .claude-review-loop-progress.json .claude-e2e-progress.json \
-         .claude-doc-check-progress.json; do
-  if [[ -f "$f" ]]; then
-    PROGRESS_FILE="$f"
-    break
-  fi
-done
+if [[ -f "${PLUGIN_ROOT}/scripts/lib/progress.sh" ]]; then
+  # shellcheck source=../scripts/lib/progress.sh
+  source "${PLUGIN_ROOT}/scripts/lib/progress.sh"
+  PROGRESS_FILE=$(detect_progress_file || true)
+fi
 
 # progress 파일 없으면 복구 불필요 — 단, 프로젝트 컨텍스트 주입 (A5)
 if [[ -z "$PROGRESS_FILE" ]]; then

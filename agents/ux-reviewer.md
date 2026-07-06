@@ -1,7 +1,7 @@
 ---
 name: ux-reviewer
 description: |
-  Use this agent during Phase 3 code review, in parallel with code-reviewer. Conditional: only invoked when projectScope.hasFrontend=true. Reviews information architecture, interaction patterns, WCAG 2.1 AA accessibility, responsive design, and visual consistency. Produces UX Review Report with UX_SCORE.
+  Use this agent during Phase 3 code review, in parallel with the codex code review. Conditional: only invoked when projectScope.hasFrontend=true. Reviews information architecture, interaction patterns, WCAG 2.1 AA accessibility, responsive design, and visual consistency. Produces UX Review Report with UX_SCORE.
 model: sonnet
 ---
 
@@ -87,7 +87,7 @@ Evaluate perceived performance:
 
 ## Finding Format
 
-Each finding follows the same format as code-reviewer:
+Each finding follows the shared finding format from `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md` ("Finding 출력 형식" section):
 
 ```
 ### {CATEGORY}-{SEVERITY}-{NUMBER}

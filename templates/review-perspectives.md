@@ -1,6 +1,6 @@
 # 코드 리뷰 공통 규칙 (단일 출처)
 
-모든 코드 리뷰 워크플로우(code-review, code-review-solo, team-code-review, code-review-loop, code-reviewer 에이전트)가 공유하는 규칙입니다.
+모든 코드 리뷰 워크플로우(code-review, code-review-solo, team-code-review, code-review-loop)가 공유하는 규칙입니다.
 리뷰 관점(카테고리/서브카테고리 정의), 리뷰 원칙, 심각도 기준, Few-shot 예시, 출력 형식은 **이 파일에만** 정의합니다. 다른 파일에 복사하지 말고 이 파일을 참조하거나, 외부 CLI(codex 등) 프롬프트에는 해당 섹션 내용을 읽어 삽입하세요.
 
 ## 리뷰 관점 (전체)
@@ -143,7 +143,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .
 
 ## 라운드 결과 기록
 
-progress 파일에 라운드 결과 기록:
+progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHistory 배열
+(full-auto: `phases.phase_3.findingHistory` / standalone review: 최상위 `findingHistory`)에도
+개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"dismissed", ...}`) —
+`code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 완료를 차단한다
+(빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail):
 ```json
 "phase_3": {
   "currentRound": 2,
@@ -201,7 +205,10 @@ progress 파일에 라운드 결과 기록:
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-progress.json
    ```
-2. DoD 업데이트: `code_review_pass.checked = true`, evidence에 "N라운드 리뷰 완료, CRITICAL/HIGH/MEDIUM: 0"
+2. 리뷰 finding 게이트 실행 — `dod.code_review_pass`는 이 게이트가 PASS 시 직접 기록한다 (모델이 직접 세팅 금지):
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file .claude-full-auto-progress.json
+   ```
 3. Phase 전이는 오케스트레이터가 수행
 
 ## Iteration 관리

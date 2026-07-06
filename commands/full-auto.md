@@ -103,5 +103,6 @@ Read ${CLAUDE_PLUGIN_ROOT}/rules/orchestration-rules.md
 Read ${CLAUDE_PLUGIN_ROOT}/rules/phase-transition-rules.md
 ```
 
-위 두 파일에 정의된 파라미터(`{PROMISE_TAG}`, `{PROGRESS_FILE}`, `{PHASE_3_SKILL}`)는
+위 두 파일 및 **Read로 로드하는 모든 Phase 스킬**(pm-planning, doc-planning, implementation,
+code-review, verification 등)에 등장하는 파라미터(`{PROMISE_TAG}`, `{PROGRESS_FILE}`, `{PHASE_3_SKILL}`)는
 이 파일 상단의 "파라미터" 섹션 값으로 치환하여 적용합니다.

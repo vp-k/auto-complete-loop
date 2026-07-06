@@ -69,6 +69,8 @@ if [[ ! -f "$RALPH_STATE_FILE" ]]; then
   # A1: 비-Ralph 워크플로우에서도 미완료 progress 파일 경고
   for _pf in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
              .claude-progress.json .claude-plan-progress.json .claude-polish-progress.json \
+             .claude-plan-docs-full-progress.json .claude-plan-docs-full-teams-progress.json \
+             .claude-plan-docs-full-dual-progress.json \
              .claude-review-loop-progress.json .claude-e2e-progress.json .claude-doc-check-progress.json; do
     if [[ -f "$_pf" ]]; then
       _status=$(jq -r '.status // "unknown"' "$_pf" 2>/dev/null || echo "unknown")
@@ -251,12 +253,36 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       fi
     done
 
+    # 워크플로우 판별 (파일명 기반) — 아래 검사들의 스코핑에 사용
+    WF_FULL_AUTO="false"
+    WF_PLAN_DOCS_FULL="false"
+    DOCS_ONLY="false"
+    _docs_only_all="true"
+    _wf_count=0
+    for _wf_pf in "${PROGRESS_FILES_TO_CHECK[@]+"${PROGRESS_FILES_TO_CHECK[@]}"}"; do
+      _wf_count=$((_wf_count + 1))
+      case "$_wf_pf" in
+        .claude-full-auto*progress*.json)      WF_FULL_AUTO="true"; _docs_only_all="false" ;;
+        .claude-plan-docs-full*progress*.json) WF_PLAN_DOCS_FULL="true" ;;
+        .claude-plan-progress.json)            : ;;  # plan-docs-auto (문서 전용)
+        .claude-doc-check-progress.json)       : ;;  # check-docs (문서 전용)
+        *)                                     _docs_only_all="false" ;;
+      esac
+    done
+    # 문서 전용 워크플로우만 실행 중이면 빌드/레이어 게이트를 요구하지 않는다
+    # (기획 전용 런에는 빌드 대상 코드가 없음 — 대신 기획 게이트 키를 아래에서 요구)
+    if [[ "$_docs_only_all" == "true" ]] && [[ "$_wf_count" -gt 0 ]]; then
+      DOCS_ONLY="true"
+    fi
+
     # 2. .claude-verification.json 검증 (필수)
     if [[ ! -f ".claude-verification.json" ]]; then
       VERIFICATION_PASSED="false"
       FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json not found (quality gate evidence required). "
     elif [[ -f ".claude-verification.json" ]]; then
       # exitCode 기반 게이트 (build/typeCheck/lint/test): exitCode == 0
+      # 문서 전용 워크플로우(plan-docs-*, doc-check)는 빌드 대상이 없으므로 이 검사를 면제
+      if [[ "$DOCS_ONLY" != "true" ]]; then
       ALL_EXITCODES_OK=$(jq '
         [to_entries[] | select(.value | type == "object" and has("exitCode") and .exitCode != null) | .value.exitCode]
         | if length == 0 then false
@@ -268,8 +294,10 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         VERIFICATION_PASSED="false"
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: exitCode-based gates not all 0. "
       fi
+      fi
 
-      # result 기반 게이트 (secretScan/artifactCheck/smokeCheck/designPolish): result != "fail"
+      # result 기반 게이트 (secretScan/artifactCheck/designPolish 등): result != "fail"
+      # (smokeCheck는 아래에서 soft_fail도 불합격으로 별도 검사 — H3)
       ALL_RESULTS_OK=$(jq '
         [to_entries[] | select(.value | type == "object" and has("result") and .result != null) | .value.result]
         | if length == 0 then true
@@ -277,29 +305,41 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
           end
       ' .claude-verification.json 2>/dev/null || echo "false")
 
+      # H3: smokeCheck는 soft_fail도 불합격 (orchestration-rules.md: 서버 미기동 = 완주 불가)
+      # 키가 없거나 skip(라이브러리/CLI 프로젝트)이면 통과 유지. 다른 게이트의 soft_fail 허용은 유지.
+      SMOKE_RESULT=$(jq -r '.smokeCheck.result // "missing"' .claude-verification.json 2>/dev/null || echo "missing")
+      if [[ "$SMOKE_RESULT" == "soft_fail" ]] || [[ "$SMOKE_RESULT" == "fail" ]]; then
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: smokeCheck=${SMOKE_RESULT} (soft_fail is a failure — server must start; fix and re-run 'shared-gate.sh smoke-check' or 'runtime-gate'). "
+      fi
+
       # fail-closed: verification.json에 exitCode 기반 게이트가 하나도 없으면 검증 불충분
-      if [[ "$ALL_EXITCODES_OK" = "false" ]]; then
+      # (문서 전용 워크플로우는 면제 — 기획 게이트 키가 아래 스코프 검증에서 요구됨)
+      if [[ "$DOCS_ONLY" != "true" ]] && [[ "${ALL_EXITCODES_OK:-false}" = "false" ]]; then
         HAS_ANY_GATE=$(jq '[to_entries[] | select(.value | type == "object" and has("exitCode"))] | length' .claude-verification.json 2>/dev/null || echo "0")
         if [[ "$HAS_ANY_GATE" = "0" ]]; then
           FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: no quality gate entries found (empty verification). "
         fi
       fi
 
-      # qualityDimensions 필수 검사
+      # qualityDimensions 필수 검사 (문서 전용 워크플로우는 면제 — Phase 4 검증 대상 코드 없음)
       QD_EXISTS=$(jq 'has("qualityDimensions")' .claude-verification.json 2>/dev/null || echo "false")
-      if [[ "$QD_EXISTS" != "true" ]]; then
+      if [[ "$DOCS_ONLY" == "true" ]]; then
+        : # 면제
+      elif [[ "$QD_EXISTS" != "true" ]]; then
         VERIFICATION_PASSED="false"
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: qualityDimensions missing (Phase 4 verification required). "
       else
-        # layerCoverage 하드 게이트: 필수 존재 + result=pass 필요
+        # layerCoverage 하드 게이트: 필수 존재 + result=pass|skip 필요
+        # (skip = projectScope 미정의 프로젝트 — 'shared-gate.sh layer-coverage'가 유일한 기록자)
         LC_RESULT=$(jq -r '.qualityDimensions.layerCoverage.result // "missing"' .claude-verification.json 2>/dev/null || echo "missing")
-        if [[ "$LC_RESULT" != "pass" ]]; then
+        if [[ "$LC_RESULT" != "pass" ]] && [[ "$LC_RESULT" != "skip" ]]; then
           VERIFICATION_PASSED="false"
-          FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: layerCoverage ${LC_RESULT} (must be pass). "
+          FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: layerCoverage=${LC_RESULT} (must be pass or skip — run 'shared-gate.sh layer-coverage'). "
         fi
 
         # 나머지 차원은 소프트 — fail 시 경고만 (차단 안 함)
-        QD_SOFT_FAIL=$(jq '
+        QD_SOFT_FAIL=$(jq -r '
           [.qualityDimensions | to_entries[]
            | select(.key != "layerCoverage")
            | select(.value | type == "object" and has("result") and .result == "fail")
@@ -327,6 +367,57 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       if [[ "$ALL_RESULTS_OK" != "true" ]]; then
         VERIFICATION_PASSED="false"
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: result-based gates have failures (fail). "
+      fi
+
+      # ─── 워크플로우 스코프 게이트 검증 (fail-closed: 키 부재 = 게이트 미실행 = 미검증) ───
+      # progress 파일명으로 워크플로우를 판별해 해당 워크플로우가 요구하는
+      # verification.json 게이트 결과 키를 검사한다. standalone 워크플로우(review 등)에는
+      # 신규 요구를 추가하지 않는다 (과차단 방지).
+
+      # _require_vgate <key> <허용 result 목록(공백 구분)> <해결 명령>
+      # 키 부재("missing") 포함, 허용 목록 밖이면 차단 사유 추가.
+      _require_vgate() {
+        local _key="$1" _allowed="$2" _remedy="$3"
+        local _res _detail
+        _res=$(jq -r --arg k "$_key" '.[$k].result // "missing"' .claude-verification.json 2>/dev/null || echo "missing")
+        case " $_allowed " in
+          *" $_res "*) return 0 ;;
+        esac
+        # 수치 상세 (critical/remaining/criticalOpen/highOpen 등) 첨부
+        _detail=$(jq -r --arg k "$_key" '
+          .[$k] // {}
+          | [ (if has("critical") then "critical=\(.critical)" else empty end),
+              (if has("remaining") then "remaining=\(.remaining)" else empty end),
+              (if has("criticalOpen") then "criticalOpen=\(.criticalOpen)" else empty end),
+              (if has("highOpen") then "highOpen=\(.highOpen)" else empty end),
+              (if has("blocking") then "blocking=\(.blocking)" else empty end) ]
+          | join(", ")
+        ' .claude-verification.json 2>/dev/null || echo "")
+        [[ -n "$_detail" ]] && _detail=" (${_detail})"
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: ${_key}=${_res}${_detail} — need ${_allowed// /|}; run '${_remedy}'. "
+      }
+
+      # (WF_FULL_AUTO / WF_PLAN_DOCS_FULL은 위 워크플로우 판별에서 계산됨)
+      if [[ "$WF_FULL_AUTO" == "true" ]]; then
+        # full-auto: 기획 게이트(pass) + live/layer/일관성(pass|skip) + 코드리뷰 finding(pass)
+        _require_vgate "specCompleteness"   "pass"      "shared-gate.sh spec-completeness"
+        _require_vgate "clarificationGate"  "pass"      "shared-gate.sh clarification-gate"
+        _require_vgate "docCompleteness"    "pass"      "shared-gate.sh doc-completeness"
+        _require_vgate "liveTesting"        "pass skip" "shared-gate.sh live-testing-gate"
+        _require_vgate "codeReviewFindings" "pass"      "shared-gate.sh code-review-findings"
+        _require_vgate "docCodeCheck"       "pass skip" "shared-gate.sh doc-code-check"
+        _require_vgate "serviceTestCheck"   "pass skip" "shared-gate.sh service-test-check"
+        # layerCoverage(qualityDimensions 하위)는 위의 기존 하드 게이트가 pass|skip을 이미 강제
+        # specToTests는 plan-docs-full 전용 (full-auto에서는 요구하지 않음)
+      fi
+
+      if [[ "$WF_PLAN_DOCS_FULL" == "true" ]]; then
+        # plan-docs-full: 4대 기획 게이트 모두 pass
+        _require_vgate "specCompleteness"  "pass" "shared-gate.sh spec-completeness"
+        _require_vgate "clarificationGate" "pass" "shared-gate.sh clarification-gate"
+        _require_vgate "docCompleteness"   "pass" "shared-gate.sh doc-completeness"
+        _require_vgate "specToTests"       "pass" "shared-gate.sh spec-to-tests"
       fi
     fi
 
@@ -393,7 +484,9 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       fi
       REPEAT_COUNT=0
       if [[ -f "$FAILURE_HISTORY_FILE" ]]; then
-        REPEAT_COUNT=$(grep -c "^${CURRENT_FAILURE_HASH}$" "$FAILURE_HISTORY_FILE" 2>/dev/null || echo "0")
+        # grep -c는 무매치에도 "0"을 출력하므로 || echo를 붙이면 "0\n0"이 되어 산술 에러 — || true로 가드
+        REPEAT_COUNT=$(grep -c "^${CURRENT_FAILURE_HASH}$" "$FAILURE_HISTORY_FILE" 2>/dev/null || true)
+        [[ "$REPEAT_COUNT" =~ ^[0-9]+$ ]] || REPEAT_COUNT=0
       fi
       echo "$CURRENT_FAILURE_HASH" >> "$FAILURE_HISTORY_FILE"
       REPEAT_COUNT=$((REPEAT_COUNT + 1))

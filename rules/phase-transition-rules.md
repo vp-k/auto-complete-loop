@@ -16,6 +16,7 @@
   2. **수동 해결**: 사용자가 직접 블로커를 해결한 후 재시도
   3. **중단**: 워크플로우를 중단하고 현재 상태 저장
 - 사용자가 강제 진행을 선택하면 progress에 `"directorOverride": true` 기록
+- **오버라이드는 최종 락을 우회하지 않는다**: `directorOverride`가 기록돼도 stop-hook의 하드 게이트(open CRITICAL/HIGH = 0, 기획 게이트 pass, verification.json의 fail-closed 필수 키 등)는 그대로 적용된다. 오버라이드는 "다음 Phase로 이동"만 허용할 뿐, "미해결 상태로 완주"를 허용하지 않는다 — 미해결 항목은 이후 iteration에서 반드시 해소해야 promise 출력이 가능하다.
 - GO 또는 CONDITIONAL GO 시 `directorNoGoCount`를 0으로 리셋
 
 ### CONDITIONAL GO 추적
@@ -120,11 +121,23 @@ Phase 1 완료 시:
      - 0건이면 → WARN (차단하지 않지만 경고: "US-* ID 없음, test-quality 커버리지 측정 불가")
   4. 통과 시 아래로 진행
 
-  *** Spec 완전성 게이트 (검증 스크립트 가드 통과 후, Director 전 필수) ***
-  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness --progress-file {PROGRESS_FILE}
-  - CRITICAL > 0 → Phase 2 전이 차단 (HARD gate). CRITICAL 이슈 해결 후 재시도.
-  - MAJOR > 0 → 경고 출력 (차단하지 않지만 Director가 참고)
-  - MINOR → 정보성 (Phase 2에서 결정 가능)
+  *** 기획 게이트 3종 (검증 스크립트 가드 통과 후, Director 전 필수) ***
+  1. Spec 완전성:
+     bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness --progress-file {PROGRESS_FILE}
+     - CRITICAL > 0 → Phase 2 전이 차단 (HARD gate). CRITICAL 이슈 해결 후 재시도.
+     - MAJOR > 0 → 경고 출력 (차단하지 않지만 Director가 참고)
+     - MINOR → 정보성 (Phase 2에서 결정 가능)
+  2. Clarification 게이트:
+     bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate --progress-file {PROGRESS_FILE}
+     - 스펙 문서에 [NEEDS-CLARIFICATION: ...] 태그 잔존 시 → Phase 2 전이 차단 (질문 해소 + 스펙 반영 후 재시도)
+  3. 문서 완전성:
+     bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-completeness --progress-file {PROGRESS_FILE}
+     - 필수 기획 문서 미비 시 → Phase 2 전이 차단
+
+  *** 전이 조건 (fail-closed) ***
+  위 3개 게이트의 실행 결과가 verification.json에 각각 specCompleteness / clarificationGate / docCompleteness = pass로
+  기록되어 있어야 Phase 2 전이 가능. **미실행 = 기록 없음 = 전이 불가** (stop-hook이 full-auto 계열 progress에서
+  이 키들을 fail-closed로 요구). 모델이 이 키들을 직접 기록하는 것 금지 — 게이트 실행 결과로만 세팅된다.
 
   *** Director Agent 전이 게이트 (Phase 1 → 2) ***
   Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
@@ -174,6 +187,12 @@ DoD: `"dod.all_code_implemented": { "checked": true, "evidence": "모든 문서 
 Phase 3 진입 → Read ${CLAUDE_PLUGIN_ROOT}/{PHASE_3_SKILL}
 Phase 3 스킬의 지정된 Step 범위 수행 (오케스트레이터에서 PHASE_3_STEPS로 정의)
 Phase 3 완료 시:
+  *** Code Review Findings 게이트 (Director 전 필수 — HARD gate) ***
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}
+  - open CRITICAL/HIGH finding을 집계하여 1건 이상이면 FAIL → Phase 4 전이 차단 (수정 후 재실행)
+  - PASS 결과가 verification.json의 codeReviewFindings에 기록되어야 전이 가능 (미실행 = 전이 불가, fail-closed)
+  - dod.code_review_pass는 이 게이트의 PASS 결과로만 세팅한다 (모델 직접 기록 금지)
+
   *** Director Agent 전이 게이트 (Phase 3 → 4) ***
   Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
   - progress 파일 + 코드 리뷰 결과 (findings 목록) 제공
@@ -186,6 +205,7 @@ Phase 3 완료 시:
 ```
 
 DoD: `"dod.code_review_pass": { "checked": true, "evidence": "N라운드 리뷰 완료, CRITICAL/HIGH/MEDIUM: 0" }`
+(이 DoD는 `code-review-findings` 게이트의 PASS 결과로만 세팅 — 모델이 직접 checked:true를 쓰지 않는다)
 
 ## Phase 4 → 완료
 

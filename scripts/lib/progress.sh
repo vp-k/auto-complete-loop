@@ -188,6 +188,8 @@ append_gate_history() {
 detect_progress_file() {
   for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \
            .claude-progress.json \
+           .claude-plan-docs-full-progress.json .claude-plan-docs-full-teams-progress.json \
+           .claude-plan-docs-full-dual-progress.json \
            .claude-plan-progress.json .claude-polish-progress.json \
            .claude-review-loop-progress.json .claude-e2e-progress.json \
            .claude-doc-check-progress.json; do

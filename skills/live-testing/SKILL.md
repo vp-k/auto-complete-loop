@@ -147,6 +147,7 @@ curl -s -X POST http://localhost:3000/api/posts -d '{}'  # 잘못된 입력
 
 progress 파일의 `acceptanceCriteria` 또는 `phases.phase_0.outputs.acceptanceCriteria` 필드를 확인:
 - **필드 존재 시**: 각 기준에 대해 pass/fail 판정 → fail인 항목은 LIVE finding으로 보고
+- **pass 판정에도 관찰 결과 필수**: 각 AC마다 **실제 관찰 결과**(curl 응답 원문, 스크린샷 파일 경로, 화면 상태의 구체적 서술)를 기록한다. 자연어 요약("잘 됨", "정상 동작")만으로 pass 판정 금지.
 - **필드 없음 (code-review-loop 등 standalone 워크플로우)**: `scope` 기반 주요 user flow를 추론하여 검증
   - scope가 디렉토리/파일이면 → 해당 모듈의 핵심 CRUD/인증/네비게이션 플로우 검증
   - scope가 자연어이면 → 그 기능 범위의 주요 동작 검증
@@ -160,9 +161,12 @@ progress 파일의 `acceptanceCriteria` 또는 `phases.phase_0.outputs.acceptanc
 - 시나리오: {수행한 user flow 단계별 설명}
 - 기대 동작: {문서/상식 기반 기대}
 - 실제 동작: {실제로 관찰된 결과}
+- 증거: {스크린샷 파일 경로 또는 curl 응답 원문 — 필수}
 - 원인 추정: {에러 로그/스택트레이스 기반으로 의심되는 모듈/엔드포인트}
 - 재현 방법: {다른 사람이 재현할 수 있는 구체적 단계}
 ```
+
+**증거 필수**: 모든 finding에는 실제 관찰 증거(스크린샷 파일 경로 또는 curl 응답 원문)를 첨부한다. **증거 없는 finding은 기록 금지** — 증거를 수집할 수 없었다면 해당 flow를 재실행하여 수집한 후 보고한다.
 
 ### Severity 기준
 
@@ -210,7 +214,18 @@ LIVE-CRITICAL 및 LIVE-HIGH finding을 자동 수정합니다.
    # lsof -ti :3000 | xargs kill 2>/dev/null || true
    ```
 2. 테스트 데이터 정리 (해당 시)
-3. 임시 파일 삭제 (flow.yaml 등)
+3. 임시 파일 삭제 (flow.yaml 등 — 증거로 참조한 스크린샷/응답 로그는 삭제하지 않는다)
+
+## Step 6: Live Testing Gate (종료 전 필수)
+
+앱 종료·정리 후 반드시 실행 (호출자가 전달한 PROGRESS_FILE 사용, 미전달 시 `--progress-file` 생략):
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh live-testing-gate --progress-file "${PROGRESS_FILE}"
+```
+
+- progress의 open LIVE-CRITICAL/HIGH finding을 집계하여 **1건 이상이면 FAIL** → Step 4.5 수정 루프로 돌아가 해결 후 게이트 재실행
+- `dod.live_testing`은 이 게이트의 PASS 결과로만 세팅된다 — 모델이 직접 checked:true를 기록하지 않는다
 
 ## 제한사항
 

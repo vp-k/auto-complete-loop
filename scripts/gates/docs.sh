@@ -138,15 +138,28 @@ cmd_doc_code_check() {
 
   local issues=0
 
-  # 1. 라우트/엔드포인트 매칭
-  echo ""
-  echo "[1] Route Matching"
-  local doc_routes
   # SPEC 파일 후보 탐색 (다양한 경로 지원)
   local spec_for_check=""
   for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
     [[ -f "$candidate" ]] && { spec_for_check="$candidate"; break; }
   done
+
+  # 검사할 문서가 전혀 없으면 SKIP (라이브러리/문서 없는 프로젝트 — 계약: result skip)
+  local _dcc_has_docs=false
+  compgen -G "$docs_dir/*.md" > /dev/null 2>&1 && _dcc_has_docs=true
+  [[ -n "$spec_for_check" ]] && _dcc_has_docs=true
+  if [[ "$_dcc_has_docs" == "false" ]]; then
+    echo "[doc-code-check] SKIP (no documentation files found in $docs_dir and no SPEC.md)"
+    append_gate_history "doc-code-check" "skip" '{"reason":"no docs"}'
+    record_verification "docCodeCheck" \
+      "$(jq -n --arg ts "$(timestamp)" '{timestamp:$ts,result:"skip",reason:"no docs"}')"
+    return 0
+  fi
+
+  # 1. 라우트/엔드포인트 매칭
+  echo ""
+  echo "[1] Route Matching"
+  local doc_routes
   doc_routes=$(grep -rhoE '(GET|POST|PUT|PATCH|DELETE)\s+/[A-Za-z0-9_/{}\:.-]+' "$docs_dir"/*.md ${spec_for_check:+"$spec_for_check"} 2>/dev/null | sort -u || true)
   if [[ -n "$doc_routes" ]]; then
     while IFS= read -r route; do
@@ -211,6 +224,11 @@ cmd_doc_code_check() {
 
   echo ""
   echo "=== Issues found: $issues ==="
+  local _dcc_result="pass"
+  [[ "$issues" -gt 0 ]] && _dcc_result="fail"
+  append_gate_history "doc-code-check" "$_dcc_result" "{\"issues\":$issues}"
+  record_verification "docCodeCheck" \
+    "$(jq -n --arg ts "$(timestamp)" --arg r "$_dcc_result" --argjson n "$issues" '{timestamp:$ts,result:$r,issues:$n}')"
   [[ "$issues" -eq 0 ]] && return 0 || return 1
 }
 
@@ -222,6 +240,8 @@ cmd_clarification_gate() {
 
   local scan_files=()
   for f in overview.md SPEC.md spec.md README.md; do
+    # 대소문자 무시 파일시스템에서 SPEC.md/spec.md 이중 집계 방지
+    [[ "$f" == "spec.md" && -f "SPEC.md" ]] && continue
     [[ -f "$f" ]] && scan_files+=("$f")
   done
   if [[ -d "$docs_dir" ]]; then
@@ -231,8 +251,12 @@ cmd_clarification_gate() {
   fi
 
   if [[ ${#scan_files[@]} -eq 0 ]]; then
+    # 문서가 전혀 없으면 skip 기록 — full-auto/plan-docs-full의 stop-hook은 pass만 허용하므로
+    # 기획 문서 부재 상태의 완주를 fail-closed로 차단한다 (docCodeCheck의 skip 계약과 대칭)
     echo "[clarification-gate] SKIP (no documentation files found)"
     append_gate_history "clarification-gate" "skip" '{"reason":"no docs"}'
+    record_verification "clarificationGate" \
+      "$(jq -n --arg ts "$(timestamp)" '{timestamp:$ts,result:"skip",remaining:0,reason:"no docs"}')"
     return 0
   fi
 
@@ -258,12 +282,16 @@ cmd_clarification_gate() {
     echo "  Phase 2 진입 차단. 모든 태그를 사용자 답변으로 치환해야 한다."
     echo "  프로토콜: templates/doc-planning-common.md → [NEEDS-CLARIFICATION] 태그 프로토콜"
     append_gate_history "clarification-gate" "$result" "{\"unresolved\":$total}"
+    record_verification "clarificationGate" \
+      "$(jq -n --arg ts "$(timestamp)" --argjson n "$total" '{timestamp:$ts,result:"fail",remaining:$n}')"
     echo "=== CLARIFICATION GATE: HARD_FAIL ==="
     return 1
   fi
 
   echo "[clarification-gate] All [NEEDS-CLARIFICATION] tags resolved"
   append_gate_history "clarification-gate" "$result" '{"unresolved":0}'
+  record_verification "clarificationGate" \
+    "$(jq -n --arg ts "$(timestamp)" '{timestamp:$ts,result:"pass",remaining:0}')"
   echo "=== CLARIFICATION GATE: PASS ==="
   return 0
 }
@@ -323,7 +351,8 @@ cmd_spec_completeness() {
   else
     # US-* ID 존재
     local us_count
-    us_count=$(grep -oE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null | wc -l | tr -d ' ')
+    # grep 무매치(exit 1)가 pipefail로 게이트를 기록 없이 죽이지 않도록 가드
+    us_count=$({ grep -oE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null || true; } | wc -l | tr -d ' ')
     if [[ "$us_count" -eq 0 ]]; then
       major=$((major + 1))
       issues="${issues}MAJOR: No User Story IDs (US-F-*/US-B-*) in $spec_file\n"
@@ -350,11 +379,14 @@ cmd_spec_completeness() {
     issues="${issues}MAJOR: test-plan.md not found (Test Strategist output required)\n"
   fi
 
-  # TBD/모호 표현 (ambiguity-check 직접 스캔 — cmd 호출 대신 인라인으로 결과 수집)
-  local ambiguity_matches=0
+  # TBD/모호 표현 검사 — 별도 서브커맨드 없이 여기서 직접 인라인 스캔 (코드 블록 제외)
+  # H8: 핵심 섹션(API Contract / Data Model / 유저스토리·AC) 내부의 모호 표현은 CRITICAL로 승격
+  local ambiguity_matches=0 core_matches=0
   local ambiguity_pattern='TBD|TODO|FIXME|to be decided|to be determined|미정|추후 결정|추후|as needed|if appropriate|적절한|등등|나중에|optionally|필요 시|Phase [0-9]에서 추가|later phase'
   local ambiguity_files=()
   for af in overview.md SPEC.md spec.md; do
+    # 대소문자 무시 파일시스템(Windows/macOS)에서 SPEC.md와 spec.md가 같은 파일로 이중 집계되는 것 방지
+    [[ "$af" == "spec.md" && -f "SPEC.md" ]] && continue
     [[ -f "$af" ]] && ambiguity_files+=("$af")
   done
   if [[ -d "docs" ]]; then
@@ -371,9 +403,38 @@ cmd_spec_completeness() {
     ambiguity_matches=$(echo "$ambiguity_matches" | tr -d '[:space:]')
     [[ -z "$ambiguity_matches" || ! "$ambiguity_matches" =~ ^[0-9]+$ ]] && ambiguity_matches=0
   fi
-  if [[ "$ambiguity_matches" -gt 0 ]]; then
+
+  # 핵심 섹션 내부 모호 표현 계상 (spec 파일 대상):
+  # 핵심 헤딩(API Contract/Data Model/유저스토리/AC)부터 같은/상위 레벨의 비-핵심 헤딩 전까지 캡처.
+  # '### GET /path' 형태의 엔드포인트 서브헤딩은 API Contract의 일부로 간주하여 캡처를 끊지 않는다.
+  if [[ -n "$spec_file" ]]; then
+    local core_section_re='API Contract|API 계약|엔드포인트|Endpoint|Data Model|데이터 모델|DB Schema|스키마|User Stor|유저 ?스토리|사용자 스토리|Acceptance Criteria|인수 기준|완료 조건'
+    core_matches=$(awk -v core_re="$core_section_re" '
+      /^```/ { inblock = !inblock; next }
+      inblock { next }
+      /^#+[ \t]/ {
+        match($0, /^#+/); lvl = RLENGTH
+        if (capture && lvl <= cap_lvl) capture = 0
+        if ($0 ~ core_re || $0 ~ /^#+[ \t]+(GET|POST|PUT|PATCH|DELETE)[ \t]+\//) {
+          capture = 1; cap_lvl = lvl
+        }
+        next
+      }
+      capture { print }
+    ' "$spec_file" 2>/dev/null | grep -icE "$ambiguity_pattern" || true)
+    core_matches=$(echo "$core_matches" | tr -d '[:space:]')
+    [[ -z "$core_matches" || ! "$core_matches" =~ ^[0-9]+$ ]] && core_matches=0
+  fi
+
+  if [[ "$core_matches" -gt 0 ]]; then
+    critical=$((critical + 1))
+    issues="${issues}CRITICAL: $core_matches TBD/ambiguous expression(s) inside core sections (API Contract / Data Model / User Stories / AC) of ${spec_file}\n"
+  fi
+  local non_core_matches=$((ambiguity_matches - core_matches))
+  [[ "$non_core_matches" -lt 0 ]] && non_core_matches=0
+  if [[ "$non_core_matches" -gt 0 ]]; then
     major=$((major + 1))
-    issues="${issues}MAJOR: $ambiguity_matches TBD/ambiguous expressions in documentation\n"
+    issues="${issues}MAJOR: $non_core_matches TBD/ambiguous expressions in documentation (outside core sections)\n"
   fi
 
   # ── hasBackend 검사 ──
@@ -450,6 +511,14 @@ cmd_spec_completeness() {
 
   append_gate_history "spec-completeness" "$result" \
     "{\"critical\":$critical,\"major\":$major,\"minor\":$minor}"
+
+  # verification.json 기록 (stop-hook 하드락 증거) — 계약: result pass|fail, critical N
+  local v_result="pass"
+  [[ "$critical" -gt 0 ]] && v_result="fail"
+  record_verification "specCompleteness" \
+    "$(jq -n --arg ts "$(timestamp)" --arg r "$v_result" \
+        --argjson c "$critical" --argjson mj "$major" --argjson mn "$minor" \
+        '{timestamp:$ts,result:$r,critical:$c,major:$mj,minor:$mn}')"
 
   echo "=== SPEC COMPLETENESS: ${result^^} ==="
 
@@ -608,12 +677,16 @@ cmd_doc_completeness() {
     echo "[doc-completeness] HARD_FAIL: $hard_fail blocking issue(s)"
     echo "  All issues must be resolved — implementer cannot proceed without these."
     append_gate_history "doc-completeness" "$result" "{\"blocking\":$hard_fail}"
+    record_verification "docCompleteness" \
+      "$(jq -n --arg ts "$(timestamp)" --argjson n "$hard_fail" '{timestamp:$ts,result:"fail",blocking:$n}')"
     echo "=== DOC COMPLETENESS: HARD_FAIL ==="
     return 1
   fi
 
   echo "[doc-completeness] All planning documents pass quantitative thresholds"
   append_gate_history "doc-completeness" "$result" '{"blocking":0}'
+  record_verification "docCompleteness" \
+    "$(jq -n --arg ts "$(timestamp)" '{timestamp:$ts,result:"pass",blocking:0}')"
   echo "=== DOC COMPLETENESS: PASS ==="
   return 0
 }
@@ -721,6 +794,13 @@ cmd_definition_conflict() {
 cmd_spec_to_tests() {
   echo "=== Spec-to-Tests Mapping Check ==="
 
+  # verification.json 기록 헬퍼 — 계약: specToTests {result: pass|fail|skip}
+  _stt_record() {
+    record_verification "specToTests" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --arg reason "${2:-}" \
+          '{timestamp:$ts,result:$r} + (if $reason != "" then {reason:$reason} else {} end)')"
+  }
+
   # progress 파일에서 projectScope 로드 — 잘못된 형식이면 fail-closed (HARD_FAIL)
   local has_frontend="false" has_backend="false"
   if [[ -n "${PROGRESS_FILE:-}" && -f "$PROGRESS_FILE" ]] && command -v jq >/dev/null 2>&1; then
@@ -735,6 +815,7 @@ cmd_spec_to_tests() {
       echo "[spec-to-tests] HARD_FAIL: projectScope missing or malformed in $PROGRESS_FILE"
       echo "  Need {hasFrontend: bool, hasBackend: bool}"
       append_gate_history "spec-to-tests" "hard_fail" '{"reason":"invalid projectScope"}'
+      _stt_record "fail" "invalid projectScope"
       echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
       return 1
     fi
@@ -748,6 +829,7 @@ cmd_spec_to_tests() {
       if [[ ! -f tests/ui-smoke.sh && ! -f tests/ui-smoke.spec.ts && ! -f tests/ui-smoke.spec.js ]]; then
         echo "[spec-to-tests] HARD_FAIL: hasFrontend=true but no tests/ui-smoke.*"
         append_gate_history "spec-to-tests" "hard_fail" '{"reason":"missing ui-smoke"}'
+        _stt_record "fail" "missing ui-smoke"
         echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
         return 1
       fi
@@ -756,12 +838,14 @@ cmd_spec_to_tests() {
       if [[ ! -f tests/lib-smoke.sh ]]; then
         echo "[spec-to-tests] HARD_FAIL: library/CLI but no tests/lib-smoke.sh"
         append_gate_history "spec-to-tests" "hard_fail" '{"reason":"missing lib-smoke"}'
+        _stt_record "fail" "missing lib-smoke"
         echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
         return 1
       fi
       echo "[spec-to-tests] library/CLI lib-smoke present"
     fi
     append_gate_history "spec-to-tests" "pass" '{"hasBackend":false}'
+    _stt_record "pass"
     echo "=== SPEC-TO-TESTS: PASS ==="
     return 0
   fi
@@ -775,6 +859,7 @@ cmd_spec_to_tests() {
   if [[ -z "$spec_file" ]]; then
     echo "[spec-to-tests] HARD_FAIL: SPEC.md not found"
     append_gate_history "spec-to-tests" "hard_fail" '{"reason":"no spec"}'
+    _stt_record "fail" "no spec"
     echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
     return 1
   fi
@@ -782,6 +867,7 @@ cmd_spec_to_tests() {
   if [[ ! -f tests/api-smoke.sh ]]; then
     echo "[spec-to-tests] HARD_FAIL: hasBackend=true but tests/api-smoke.sh missing"
     append_gate_history "spec-to-tests" "hard_fail" '{"reason":"missing api-smoke"}'
+    _stt_record "fail" "missing api-smoke"
     echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
     return 1
   fi
@@ -794,6 +880,7 @@ cmd_spec_to_tests() {
   if [[ -z "$spec_endpoints" ]]; then
     echo "[spec-to-tests] HARD_FAIL: no '### METHOD /path' endpoints in $spec_file"
     append_gate_history "spec-to-tests" "hard_fail" '{"reason":"no endpoints"}'
+    _stt_record "fail" "no endpoints"
     echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
     return 1
   fi
@@ -880,6 +967,7 @@ cmd_spec_to_tests() {
     printf '%b' "$missing_list"
     echo "[spec-to-tests] HARD_FAIL: $missing endpoint(s) lack smoke coverage"
     append_gate_history "spec-to-tests" "hard_fail" "{\"missing\":$missing}"
+    _stt_record "fail" "$missing endpoint(s) lack smoke coverage"
     echo "=== SPEC-TO-TESTS: HARD_FAIL ==="
     return 1
   fi
@@ -888,6 +976,7 @@ cmd_spec_to_tests() {
   total_eps=$(echo "$spec_endpoints" | wc -l | tr -d ' ')
   echo "[spec-to-tests] All $total_eps SPEC endpoints covered by tests/api-smoke.sh"
   append_gate_history "spec-to-tests" "pass" "{\"endpoints\":$total_eps}"
+  _stt_record "pass"
   echo "=== SPEC-TO-TESTS: PASS ==="
   return 0
 }

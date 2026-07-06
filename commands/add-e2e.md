@@ -33,29 +33,36 @@ Phase 4: 테스트 검증 ───── e2e-gate + quality-gate 최종 확인
 <promise>E2E_TESTS_COMPLETE</promise>
 ```
 
-## Ralph Loop 자동 설정 (최우선 실행)
+## 0단계: Ralph Loop 자동 설정 (최우선 실행)
 
-스킬 시작 시 스크립트로 Ralph Loop 파일을 생성합니다:
+`Read ${CLAUDE_PLUGIN_ROOT}/templates/ralph-loop-setup.md`를 읽고, 아래 파라미터로 치환하여 공통 절차(규칙 로드→인수 파싱→복구 감지→init→init-ralph→완료 조건/Iteration 규칙)를 수행합니다.
 
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "E2E_TESTS_COMPLETE" ".claude-e2e-progress.json"
-```
+| 파라미터 | 값 |
+|----------|-----|
+| PROMISE_TAG | `E2E_TESTS_COMPLETE` |
+| PROGRESS_FILE | `.claude-e2e-progress.json` |
+| INIT_TEMPLATE | `e2e` |
+| MAX_ITERATIONS | (기본값) |
+| EXTRA_INIT | (없음) |
 
-### Ralph Loop 완료 조건
+### 인수 파싱
 
-`<promise>E2E_TESTS_COMPLETE</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
-1. `.claude-e2e-progress.json`의 모든 steps status가 `completed`
-2. `.claude-e2e-progress.json`의 `dod` 체크리스트가 모두 checked
-3. `.claude-verification.json`의 e2e 검증 항목 exitCode가 0
-4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+- `$ARGUMENTS` 있으면 → 문서 디렉토리 경로 (docs 모드 후보), 없으면 코드 분석 모드 후보 (Phase 0에서 최종 결정)
 
-### Iteration 단위 작업 규칙
+### 복구 시 재개 규칙
+
+모든 steps가 `completed`면 → Phase 4(테스트 검증)로 이동.
+
+### 추가 완료 조건
+
+- `.claude-verification.json`의 e2e 검증 항목 exitCode가 0
+
+### Iteration 단위
+
 - Phase 0+1: 분석 + 시나리오 도출 (1 iteration)
 - Phase 2: 프레임워크 설정 (1 iteration)
 - Phase 3: 테스트 작성 (2-3개 시나리오/iteration)
 - Phase 4: 검증 (1 iteration)
-- 처리 완료 후 진행 상태를 파일에 저장하고 세션을 자연스럽게 종료
-- Stop Hook이 완료 조건 미달을 감지하면 자동으로 다음 iteration 시작
 
 ## 토큰 절약 스크립트 활용
 
@@ -92,32 +99,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-code-check docs/
 Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md
 ```
 
-## 복구 감지 (0단계 전 실행)
-
-먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/shared-rules.md`를 실행하여 공통 규칙을 로드합니다.
-
-스킬 시작 시 `.claude-e2e-progress.json` 파일 확인:
-
-**파일이 존재하는 경우 (재시작):**
-1. 파일 읽기
-2. `handoff` 필드를 최우선으로 확인 → 이전 iteration 맥락 복구
-3. 현재 단계의 진행 상태에 따라 재개
-4. 모든 steps가 `completed`면 → Phase 4(테스트 검증)로 이동
-
-**파일이 없는 경우 (신규):**
-- Phase 0부터 정상 시작
-
----
-
 ## Phase 0: 프로젝트 분석 (`analyze_project`)
 
 **출력**: 프로젝트 유형, 모드 결정, 데이터 전략, 기존 E2E 현황 파악
 
-### Step 0-1: Progress 초기화
-
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template e2e "프로젝트명"
-```
+> Progress 초기화(`init --template e2e`)와 복구 감지는 0단계(ralph-loop-setup)에서 이미 수행되었습니다.
 
 ### Step 0-2: 프로젝트 유형 감지
 

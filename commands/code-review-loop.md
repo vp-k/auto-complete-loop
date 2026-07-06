@@ -53,11 +53,17 @@ argument-hint: "[--mode <solo|codex|dual>] [--rounds N | --goal \"조건\"] <sco
 
 ## 0단계: Ralph Loop 자동 설정 (최우선 실행)
 
-**이 단계를 가장 먼저, 다른 어떤 작업보다 우선하여 실행합니다.**
+`Read ${CLAUDE_PLUGIN_ROOT}/templates/ralph-loop-setup.md`를 읽고, 아래 파라미터로 치환하여 공통 절차(규칙 로드→인수 파싱→복구 감지→init→init-ralph→완료 조건/Iteration 규칙)를 수행합니다.
 
-먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/shared-rules.md`를 실행하여 공통 규칙을 로드합니다.
+| 파라미터 | 값 |
+|----------|-----|
+| PROMISE_TAG | `REVIEW_LOOP_COMPLETE` |
+| PROGRESS_FILE | `.claude-review-loop-progress.json` |
+| INIT_TEMPLATE | `review` — init 명령: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template review "" "자연어 scope 원문"` |
+| MAX_ITERATIONS | rounds 모드: `$targetRounds` / goal 모드: `10` |
+| EXTRA_INIT | 아래 "EXTRA_INIT" 참조 |
 
-### 0-1. 인수 파싱
+### 인수 파싱
 
 `$ARGUMENTS`에서 다음을 추출:
 
@@ -70,22 +76,13 @@ argument-hint: "[--mode <solo|codex|dual>] [--rounds N | --goal \"조건\"] <sco
    - `--interactive` 있으면 → interactive 모드 활성화 (다른 모드와 조합 가능)
 3. **scope**: 나머지 인수를 scope로 사용 (없으면 `src/`)
 
-### 0-2. 복구 감지
+### 복구 시 재개 규칙
 
-`.claude-review-loop-progress.json` 파일이 이미 존재하면:
-- `status`가 `in_progress`면 → `currentRound`와 `handoff`를 읽고 이어서 진행
-- `status`가 `completed`면 → `.claude-review-loop-progress.json` 파일 삭제 후 "이미 완료된 리뷰입니다" 안내 후 종료
-- 존재하지 않으면 → 새로 시작
+`status`가 `in_progress`면 `currentRound`와 `handoff`를 읽고 해당 라운드부터 이어서 진행.
 
-### 0-3. `.claude-review-loop-progress.json` 초기화
+### EXTRA_INIT
 
-새로 시작하는 경우, 스크립트로 초기화:
-
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template review "" "자연어 scope 원문"
-```
-
-생성 후 다음 필드를 jq로 설정합니다:
+init 후 다음 필드를 jq로 설정합니다:
 - `reviewMode`: `"solo"` | `"codex"` | `"dual"` (--mode 파라미터)
 - `loopMode`: `"rounds"` | `"goal"` (반복 방식)
 - `targetRounds`, `goal` 등
@@ -102,15 +99,13 @@ findingHistory 각 항목 스키마:
 - `status`: "open" | "fixed" | "regressed" | "deferred"
 - `fixedInRound`: 수정된 라운드 (null이면 미수정)
 
-### 0-4. Ralph Loop 파일 생성
+### 추가 완료 조건
 
-스크립트로 Ralph Loop 파일을 생성합니다:
+- 6단계의 종료 조건 = (rounds 또는 goal 조건 충족) && (빌드/테스트 통과) && 7단계(Live App Testing) 통과
 
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "REVIEW_LOOP_COMPLETE" ".claude-review-loop-progress.json" $targetRounds
-```
+### Iteration 단위
 
-**주의**: `max_iterations`는 rounds 모드면 `targetRounds`, goal 모드면 `10`으로 설정.
+- 한 iteration = 리뷰 1라운드 (2~6단계). 종료 조건 충족 후 7단계 수행.
 
 ---
 

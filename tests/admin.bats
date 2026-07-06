@@ -44,10 +44,22 @@ teardown() { teardown_temp_dir; }
   [ "$result" = "5" ]
 }
 
-@test "init: full-auto has 14 DoD items" {
+@test "init: full-auto has 15 DoD items" {
   run_gate init --template full-auto "test" "req"
   result=$(jq '.dod | to_entries | length' .claude-full-auto-progress.json)
-  [ "$result" = "14" ]
+  [ "$result" = "15" ]
+}
+
+@test "init: full-auto DoD includes live_testing" {
+  run_gate init --template full-auto "test" "req"
+  result=$(jq '.dod | has("live_testing")' .claude-full-auto-progress.json)
+  [ "$result" = "true" ]
+}
+
+@test "init: implement DoD uses code_review_pass key (not code_review)" {
+  run_gate init --template implement "test"
+  result=$(jq '.dod | has("code_review_pass") and (has("code_review") | not)' .claude-progress.json)
+  [ "$result" = "true" ]
 }
 
 # ─── cmd_update_step tests ───

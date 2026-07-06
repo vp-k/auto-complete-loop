@@ -29,10 +29,12 @@
 에러 기록:
 ```bash
 # 일반 기록
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L4> --action "시도한 행동"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L5> --action "시도한 행동"
 # 레벨 전환 시 카운터 리셋
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L4> --reset-count
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L5> --reset-count
 ```
+
+`--level`은 에스컬레이션 레벨 `L0`~`L5`를 받는다 (L5 = 사용자 개입 단계).
 
 record-error exit code:
 - `exit 0`: 현재 레벨 예산 내 → 계속 시도

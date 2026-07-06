@@ -25,8 +25,15 @@ _verify_spec_endpoints() {
   echo "[$label] Verifying API endpoints from $spec_file..."
 
   # SPEC.md에서 GET 엔드포인트만 추출 (POST/PUT/PATCH/DELETE는 부작용 위험으로 제외)
+  # 부정 케이스 트랩 방지: "GET /api/x/999 → 404" 같은 에러 시나리오 예시 줄의 엔드포인트를
+  # 검증 대상으로 삼으면 정상 구현이 FAIL로 오판된다. 추출된 엔드포인트와 같은 줄에
+  # 4xx/에러/invalid/unknown/않(다)/실패 류 문구가 있으면 검증 대상에서 제외한다.
+  local negative_case_re='4[0-9][0-9]|5[0-9][0-9]|error|invalid|unknown|not found|fail|에러|오류|실패|않|안 됨|안됨|없는|존재하지'
   local endpoints
-  endpoints=$(grep -oE 'GET\s+/[a-zA-Z0-9/_:{}.-]+' "$spec_file" 2>/dev/null | head -20 || true)
+  endpoints=$(grep -E 'GET\s+/[a-zA-Z0-9/_:{}.-]+' "$spec_file" 2>/dev/null \
+    | { grep -ivE "$negative_case_re" || true; } \
+    | grep -oE 'GET\s+/[a-zA-Z0-9/_:{}.-]+' \
+    | sort -u | head -20 || true)
 
   if [[ -z "$endpoints" ]]; then
     echo "[$label] WARNING: No GET endpoints found in $spec_file — endpoint verification skipped"
@@ -49,8 +56,10 @@ _verify_spec_endpoints() {
     resp_tmp=$(mktemp)
     http_code=$(curl -s -w "%{http_code}" --max-time 5 -o "$resp_tmp" "http://localhost:${port}${path}" 2>/dev/null || echo "000")
 
-    # 2xx/3xx/401/403 = PASS (서버 응답 정상), 404/405/5xx/000 = FAIL
-    if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|401|403)$ ]]; then
+    # 2xx/3xx = PASS. 400/401/403/422도 PASS — 엔드포인트가 존재하며 인증/입력 검증이
+    # 동작한다는 증거 (인증 요구 API를 FAIL로 오판하던 트랩 해소).
+    # 404/405/5xx/000(무응답)만 FAIL.
+    if [[ "$http_code" =~ ^(2[0-9]{2}|3[0-9]{2}|400|401|403|422)$ ]]; then
       # 응답 body 필드 검증 (2xx 응답만 — 빈 객체/빈 배열 탐지)
       local body_check="ok"
       if [[ "$http_code" =~ ^2 ]]; then
@@ -236,7 +245,7 @@ cmd_smoke_check() {
         '.smokeCheck = {"timestamp": $ts, "result": "skip", "reason": "no start script"}'
     else
       jq -n --arg ts "$ts" \
-        '{"smokeCheck": {"timestamp": $ts, "result": "skip", "reason": "no start script"}}' > "$VERIFICATION_FILE"
+        '{"smokeCheck": {"timestamp": $ts, "result": "skip", "reason": "no start script"}}' | write_json_atomic "$VERIFICATION_FILE"
     fi
     echo "=== SMOKE CHECK: SKIP ==="
     append_gate_history "smoke-check" "skip" '{"reason":"no start script"}'
@@ -304,7 +313,7 @@ cmd_smoke_check() {
   else
     jq -n --arg ts "$ts" --arg cmd "$start_cmd" --argjson port "$port" --arg result "$result" \
       --argjson strict "$strict" --argjson endpoints "$endpoint_json" \
-      '{"smokeCheck": {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result, "strict": $strict, "endpoints": $endpoints}}' > "$VERIFICATION_FILE"
+      '{"smokeCheck": {"timestamp": $ts, "command": $cmd, "port": $port, "result": $result, "strict": $strict, "endpoints": $endpoints}}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   echo "=== SMOKE CHECK: ${result^^} ==="
@@ -605,18 +614,19 @@ cmd_functional_flow() {
   if [[ $flows_executed -eq 0 ]]; then
     local details
     details=$(jq -n --arg pt "$project_type" '{"projectType":$pt,"flows":"none","result":"skip"}')
-    # SKIP 시 DoD는 checked=false로 기록
+    # SKIP 시 DoD: 키를 새로 만들지 않는다 (자가 생성된 checked=false 키는 아무 게이트도
+    # 다시 채우지 않아 소프트 데드락이 됐었다). 키가 이미 존재하는 경우에만
+    # checked=true + "N/A" 증거로 기록 — 스모크 스크립트 부재는 비차단 사유다.
     if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
-      local has_dod
-      has_dod=$(jq 'has("dod")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
-      if [[ "$has_dod" == "true" ]]; then
-        jq_inplace "$PROGRESS_FILE" '.dod.functional_flow_pass //= {"checked":false,"evidence":null} | .dod.functional_flow_pass.checked = false | .dod.functional_flow_pass.evidence = "skip: no smoke scripts"'
-      fi
+      jq_inplace "$PROGRESS_FILE" --arg ev "N/A: no smoke scripts (functional-flow skip at $(timestamp))" '
+        if (((.dod // {}) | objects | has("functional_flow_pass")) // false)
+        then .dod.functional_flow_pass = {checked: true, evidence: $ev}
+        else . end'
     fi
     if [[ -f "$VERIFICATION_FILE" ]]; then
       jq_inplace "$VERIFICATION_FILE" --arg pt "$project_type" '.functionalFlow = {"result": "skip", "projectType": $pt, "details": "no smoke scripts"}'
     else
-      jq -n --arg pt "$project_type" '{"functionalFlow": {"result": "skip", "projectType": $pt, "details": "no smoke scripts"}}' > "$VERIFICATION_FILE"
+      jq -n --arg pt "$project_type" '{"functionalFlow": {"result": "skip", "projectType": $pt, "details": "no smoke scripts"}}' | write_json_atomic "$VERIFICATION_FILE"
     fi
     echo ""
     echo "[FLOW] SKIP: No smoke scripts found for project type '$project_type'"
@@ -635,7 +645,7 @@ cmd_functional_flow() {
   else
     jq -n --arg r "$result_str" --arg fr "$flow_results" --arg pt "$project_type" '
       {"functionalFlow": {"result": $r, "projectType": $pt, "details": $fr}}
-    ' > "$VERIFICATION_FILE"
+    ' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then

@@ -46,14 +46,21 @@ _start_and_wait_server() {
       return 1
     fi
 
-    local http_code
-    http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
-    if [[ "$http_code" != "000" ]] && [[ "$http_code" =~ ^[23] ]]; then
-      echo "[${log_prefix}] Got HTTP $http_code after ${elapsed}s"
-      return 0
-    fi
+    # 기동 판정: "어떤 HTTP 응답이든 오면" 성공 (404 포함).
+    # 루트가 2xx/3xx여야 한다는 이전 판정은 루트 경로가 없는 순수 API 서버(루트 404)를
+    # 기동 실패로 오판하는 하드 트랩이었다. connection refused/timeout(000)만 실패로 본다.
+    # 시도 순서: /health → / 폴백.
+    local probe http_code
+    for probe in "/health" "/"; do
+      http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://localhost:${port}${probe}" 2>/dev/null || echo "000")
+      if [[ "$http_code" != "000" ]]; then
+        echo "[${log_prefix}] Server is up: HTTP $http_code on ${probe} after ${elapsed}s"
+        return 0
+      fi
+    done
   done
 
+  echo "[${log_prefix}] FAIL: 서버가 어떤 HTTP 응답도 반환하지 않음 (connection refused/timeout, ${timeout}s 대기)"
   return 1
 }
 

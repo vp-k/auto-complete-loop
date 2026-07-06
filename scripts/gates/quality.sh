@@ -229,7 +229,7 @@ cmd_quality_gate() {
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" --argjson qg "$parsed_results" '. * {"build": $qg.build, "typeCheck": $qg.typeCheck, "lint": $qg.lint, "test": $qg.test}'
   else
-    echo "$parsed_results" > "$VERIFICATION_FILE"
+    write_json_atomic "$VERIFICATION_FILE" "$parsed_results"
   fi
   echo ""
   echo "Results saved to $VERIFICATION_FILE"
@@ -345,7 +345,7 @@ cmd_quality_gate() {
     --argjson typ "$s_typ" \
     --argjson cov "$coverage" \
     '{"healthScore": $score, "timestamp": $ts, "coverage": $cov, "breakdown": {"build": $bld, "test": $tst, "lint": $lnt, "typeCheck": $typ}}' \
-    > "$baseline_file"
+    | write_json_atomic "$baseline_file"
 
   # verification.json에 health score 추가
   if [[ -f "$VERIFICATION_FILE" ]]; then
@@ -368,7 +368,7 @@ cmd_quality_gate() {
     fingerprint=$(quality_fingerprint) || fingerprint=""
     if [[ -n "$fingerprint" ]]; then
       jq -n --arg fp "$fingerprint" --arg ts "$(timestamp)" \
-        '{"fingerprint": $fp, "timestamp": $ts, "result": "pass"}' > "$cache_file"
+        '{"fingerprint": $fp, "timestamp": $ts, "result": "pass"}' | write_json_atomic "$cache_file"
     fi
     echo "=== ALL GATES PASSED ==="
     return 0

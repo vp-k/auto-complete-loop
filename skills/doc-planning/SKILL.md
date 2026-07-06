@@ -3,6 +3,10 @@
 Loaded by the full-auto orchestrator at Phase 1 entry via Read.
 No Ralph/progress/promise code — managed by the orchestrator.
 
+> `{PROGRESS_FILE}`은 오케스트레이터(full-auto.md / plan-docs-full.md의 "파라미터" 표)가 정한 값으로 치환한다
+> (예: full-auto codex/solo: `.claude-full-auto-progress.json`, teams: `.claude-full-auto-teams-progress.json`,
+> plan-docs-full: `.claude-plan-docs-full-progress.json`).
+
 ## 전제 조건
 
 - Phase 0 완료 (overview.md, README.md 존재)
@@ -290,8 +294,8 @@ else
 fi
 
 # 검증 스크립트 존재 체크 (projectScope 기반 — progress 파일에서 로드)
-has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "false"' "$PROGRESS_FILE" 2>/dev/null || echo "false")
-has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // "false"' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+has_backend=$(jq -r '.phases.phase_0.outputs.projectScope.hasBackend // "false"' {PROGRESS_FILE} 2>/dev/null || echo "false")
+has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // "false"' {PROGRESS_FILE} 2>/dev/null || echo "false")
 # hasBackend=true → api-smoke.sh 필수
 if [[ "$has_backend" == "true" ]] && [[ ! -f tests/api-smoke.sh ]]; then
   echo "FAIL: hasBackend=true이지만 tests/api-smoke.sh 미생성"

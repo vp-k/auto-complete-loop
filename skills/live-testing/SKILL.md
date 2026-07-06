@@ -3,6 +3,10 @@
 Runs the actual app and validates user flows from the user perspective.
 Finds runtime bugs that code review (static analysis) cannot detect.
 
+> `{PROGRESS_FILE}`은 호출자(워크플로우 커맨드)가 정한 progress 파일명으로 치환한다
+> (예: full-auto: `.claude-full-auto-progress.json`, implement-docs-auto: `.claude-progress.json`).
+> 호출자가 전달하지 않은 경우 `--progress-file` 플래그를 생략한다 (shared-gate.sh 자동 탐지).
+
 ## 핵심 원칙
 
 - **코드를 읽지 말고 앱을 사용하라**: 코드 리뷰가 아닌 실행 테스트
@@ -168,6 +172,15 @@ progress 파일의 `acceptanceCriteria` 또는 `phases.phase_0.outputs.acceptanc
 
 **증거 필수**: 모든 finding에는 실제 관찰 증거(스크린샷 파일 경로 또는 curl 응답 원문)를 첨부한다. **증거 없는 finding은 기록 금지** — 증거를 수집할 수 없었다면 해당 flow를 재실행하여 수집한 후 보고한다.
 
+**클린 런(발견 0건)도 반드시 evidence를 남긴다**: 테스트 수행 후 finding이 0건이면 progress에 `live_testing_issues: []` 를 기록한다 (jq):
+
+```bash
+_tmp=$(mktemp)
+jq '.live_testing_issues = []' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
+```
+
+이것이 live-testing-gate의 **수행 증거**가 되어 `pass`가 기록된다. 기록하지 않으면 게이트가 "live 테스트 미수행"으로 간주해 `skip`을 기록한다 — `skip`은 live 테스트가 원천 비대상인 프로젝트(라이브러리 등)에만 허용되는 값이므로, 실제로 테스트를 수행했다면 반드시 이 기록으로 `pass`를 남긴다.
+
 ### Severity 기준
 
 - **CRITICAL**: 앱이 크래시, 데이터 손실, 핵심 기능 완전 불능
@@ -182,17 +195,16 @@ LIVE-CRITICAL 및 LIVE-HIGH finding을 자동 수정합니다.
 1. Finding 목록에서 CRITICAL/HIGH만 필터링
 2. 각 finding에 대해:
    a. 원인 추정과 에러 로그를 기반으로 해당 파일 코드 수정 (Edit 도구)
-   b. 품질 게이트 재실행 (호출자가 전달한 PROGRESS_FILE 사용):
+   b. 품질 게이트 재실행 (파일 상단 치환 주석 참조):
       ```bash
-      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file "${PROGRESS_FILE}"
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file {PROGRESS_FILE}
       ```
-      PROGRESS_FILE이 전달되지 않은 경우 `--progress-file` 플래그 생략 (shared-gate.sh 자동 탐지).
    c. 앱 재기동 → 해당 user flow 재테스트 (Step 2~3의 해당 시나리오만)
    d. 통과 시 finding status = "fixed"
    e. 실패 시 최대 3회 재시도 → 3회 후에도 실패 시 handoff에 기록하고 다음 finding으로 진행 (포기 금지)
 3. 모든 CRITICAL/HIGH finding 처리 후 전체 품질 게이트 재실행:
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file "${PROGRESS_FILE:-}"
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file {PROGRESS_FILE}
    ```
 4. 수정 결과 요약 출력:
    - Fixed: N건 (CRITICAL: A, HIGH: B)
@@ -218,13 +230,14 @@ LIVE-CRITICAL 및 LIVE-HIGH finding을 자동 수정합니다.
 
 ## Step 6: Live Testing Gate (종료 전 필수)
 
-앱 종료·정리 후 반드시 실행 (호출자가 전달한 PROGRESS_FILE 사용, 미전달 시 `--progress-file` 생략):
+앱 종료·정리 후 반드시 실행 (파일 상단 치환 주석 참조, 미전달 시 `--progress-file` 생략):
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh live-testing-gate --progress-file "${PROGRESS_FILE}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh live-testing-gate --progress-file {PROGRESS_FILE}
 ```
 
 - progress의 open LIVE-CRITICAL/HIGH finding을 집계하여 **1건 이상이면 FAIL** → Step 4.5 수정 루프로 돌아가 해결 후 게이트 재실행
+- 게이트는 `pass`/`skip` 결과를 모두 verification.json의 `liveTesting`에 기록한다 (`skip` = live 테스트 기록이 전혀 없는 비대상 프로젝트)
 - `dod.live_testing`은 이 게이트의 PASS 결과로만 세팅된다 — 모델이 직접 checked:true를 기록하지 않는다
 
 ## 제한사항

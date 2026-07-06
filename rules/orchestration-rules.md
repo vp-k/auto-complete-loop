@@ -24,10 +24,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 2. `{PROGRESS_FILE}`의 `dod` 체크리스트가 모두 checked
 3. `.claude-verification.json`의 모든 검증 항목이 통과:
    - build/typeCheck/lint/test: `exitCode: 0`
-   - secretScan/artifactCheck/designPolish: `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`
+   - secretScan/artifactCheck/designPolish/functionalFlow/integrationSmoke 등 result 기반 게이트: `result: "pass"` 또는 `"skip"` 또는 `"warn"` 또는 `"soft_fail"` (**`fail`은 하드 차단** — 특히 functionalFlow/integrationSmoke가 fail이면 완주 불가. `page-render-check` non-strict의 `soft_fail` 기록은 허용됨)
    - **smokeCheck**: `result: "pass"` 또는 `result: "skip"` (**`soft_fail`은 stop-hook이 `fail`로 처리** — `soft_fail`과 `fail` 모두 불합격, 서버가 기동되지 않으면 완주 불가)
-     - `skip`은 서버가 불필요한 프로젝트(라이브러리, CLI, serverless)에서만 허용
+     - `skip`은 start 스크립트가 없는 프로젝트(라이브러리, CLI, serverless)에서 smoke-check가 기록. **키 부재**(smoke-check 자체가 실행되지 않은 워크플로우)도 차단하지 않음 — smokeCheck는 기록된 경우에만 강제된다
      - `soft_fail`(서버 기동 실패) 및 `fail`(--strict 모드 하드 실패)은 반드시 해결 후 `pass`로 전환해야 함
+     - 서버 기동 판정 기준은 **"HTTP 응답 존재"** — 404 응답도 서버 기동으로 인정. SPEC의 부정 케이스 줄(4xx 기대 테스트)은 엔드포인트 검증 대상에서 제외됨
      - Phase 4에서는 `runtime-gate`가 서버 1회 기동으로 smoke 3종(smoke-check + integration-smoke + functional-flow)을 통합 실행
    - **하드 게이트 키** (stop-hook이 워크플로우별로 fail-closed로 요구 — **기록 없음 = 미실행 = 불합격**):
      - full-auto 계열: `specCompleteness` / `clarificationGate` / `docCompleteness`(pass) + `liveTesting` / `layerCoverage` / `docCodeCheck` / `serviceTestCheck`(pass|skip) + `codeReviewFindings`(pass) + `acceptanceTests`(pass — `acceptance-gate` 실행 결과)
@@ -48,10 +49,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 | 등급 | 강제 주체 | 항목 | 실패 시 |
 |------|----------|------|---------|
-| **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, smokeCheck(`soft_fail`=fail), specCompleteness, clarificationGate, docCompleteness, specToTests, docCodeCheck, serviceTestCheck, liveTesting, layerCoverage, codeReviewFindings, acceptanceTests(full-auto 계열), acceptanceFreeze(plan-docs-full 계열) | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
+| **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, **functionalFlow/integrationSmoke (`fail` 시 하드 차단)**, smokeCheck(`soft_fail`=fail), **secretScan(`fail` 차단)**, specCompleteness, clarificationGate, docCompleteness, liveTesting, layerCoverage, codeReviewFindings — 워크플로우 스코프 키: **specToTests(plan-docs-full 전용)**, **docCodeCheck/serviceTestCheck(full-auto 전용)**, **acceptanceTests(full-auto 계열 — `skip`은 미통과, `tests/acceptance/` 필수, `pass`만 인정)**, acceptanceFreeze(plan-docs-full 계열) | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
 | **훅 강제 (하드)** | protect-files-guard | 동결된 `tests/acceptance/**` — `acceptance-freeze` 이후 Edit/Write 차단 (우회 수정도 `acceptance-gate` 해시 무결성이 감지) | 수정 시도 자체가 차단. 변경은 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user`로만 가능 |
-| **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check, acceptance-freeze, acceptance-gate | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
-| **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict), visualRegression | WARN 출력 후 진행 가능 (수정 권장). 단, **연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1** — pass가 나오면 warn 등급으로 복귀 |
+| **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check, acceptance-freeze, acceptance-gate, secret-scan(HARD) | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
+| **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict — `soft_fail`로 기록, 차단 없음), artifact-check(`soft_fail` 기록), visualRegression | WARN 출력 후 진행 가능 (수정 권장). **SOFT→HARD 자동 승격은 implementation-depth · test-quality에만 적용**: 연속 2회 실패(직전 fail/warn 포함) 시 HARD로 승격되어 exit 1, pass가 나오면 warn 등급으로 복귀. 단 test-quality의 "테스트 0건" warn은 승격 대상에서 제외. page-render-check(non-strict)/artifact-check/visualRegression은 승격 없음 |
 
 directorOverride를 포함한 어떤 오버라이드도 "훅 강제" 등급을 우회할 수 없다.
 
@@ -98,7 +99,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-f
 
 **Phase 4 규칙**: Step 4-1 (quality-gate) 직후 Step 4-1.7/4-1.8/4-1.9 순서로 실행. SOFT gate이므로 WARN은 진행 가능, FAIL은 수정 필요.
 
-**SOFT→HARD 승격**: SOFT 게이트는 **연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1** — pass가 나오면 warn 등급으로 복귀한다. 즉 SOFT 실패를 방치한 채 재실행만 반복할 수 없다.
+**SOFT→HARD 승격**: `implementation-depth` · `test-quality` 두 게이트만 **연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1** — pass가 나오면 warn 등급으로 복귀한다. 즉 SOFT 실패를 방치한 채 재실행만 반복할 수 없다. 예외: test-quality의 "테스트 0건(no tests)" warn은 승격 대상이 아니다. `page-render-check`(non-strict)는 승격 없이 `soft_fail`만 기록한다.
 
 ## 복구 감지 (0단계 전 실행)
 

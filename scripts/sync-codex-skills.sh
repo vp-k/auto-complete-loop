@@ -36,7 +36,8 @@ for SKILL_NAME in "${MIRROR_SKILLS[@]}"; do
 
   if [[ ! -f "$SRC" ]]; then
     echo "SKIP: ${SKILL_NAME} — source not found"
-    ((SKIPPED++))
+    # 주의: ((VAR++))는 VAR=0일 때 exit 1 → set -e에서 즉사. 산술 확장으로 대체.
+    SKIPPED=$((SKIPPED + 1))
     continue
   fi
 
@@ -51,7 +52,7 @@ for SKILL_NAME in "${MIRROR_SKILLS[@]}"; do
     "$SRC" > "$DST"
 
   echo "OK:   ${SKILL_NAME} → .agents/skills/${SKILL_NAME}/SKILL.md"
-  ((MIRRORED++))
+  MIRRORED=$((MIRRORED + 1))
 done
 
 echo ""

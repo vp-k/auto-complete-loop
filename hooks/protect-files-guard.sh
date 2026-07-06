@@ -26,9 +26,8 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook
   exit 0
 }
 
-# 파일 경로가 비어있으면 통과 (도구가 file_path를 사용하지 않는 경우)
+# 파일 경로가 비어있으면 통과 (도구가 file_path를 사용하지 않는 경우) — 무출력 (권한 판정 유보)
 if [[ -z "$FILE_PATH" ]]; then
-  echo '{"decision": "approve"}'
   exit 0
 fi
 
@@ -45,15 +44,16 @@ if [[ "$FILENAME" == ".claude-verification.json" ]]; then
   exit 0
 fi
 
+# 경고 경로: decision 없이 systemMessage만 출력 (권한 판정 유보 — approve로 프롬프트 우회 금지)
 case "$FILENAME" in
   .claude-quality-baseline.json)
-    echo "{\"decision\": \"approve\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 품질 게이트 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
+    jq -n --arg m "WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 품질 게이트 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요." '{"systemMessage": $m}'
     exit 0
     ;;
 esac
 
 if [[ "$FILENAME" =~ ^\.claude-.*-progress\.json$ ]]; then
-  echo "{\"decision\": \"approve\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 워크플로우 진행 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
+  jq -n --arg m "WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 워크플로우 진행 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요." '{"systemMessage": $m}'
   exit 0
 fi
 
@@ -67,10 +67,15 @@ fi
 if [[ "$FILE_PATH" == *"/tests/acceptance/"* ]] || [[ "$FILE_PATH" == "tests/acceptance/"* ]] \
 || [[ "$FILE_PATH" == *"\\tests\\acceptance\\"* ]] || [[ "$FILE_PATH" == "tests\\acceptance\\"* ]]; then
   if [[ -f "tests/acceptance/.manifest.json" ]]; then
-    echo '{"decision": "block", "reason": "인수 테스트는 동결됨(선작성+동결 원칙). 스펙 변경이 필요하면 (1) 사용자 승인(AskUserQuestion) → (2) SPEC 갱신 → (3) shared-gate.sh acceptance-freeze --approved-by-user 재동결 후 수정하라."}'
-    exit 0
+    # 타 도구 오탐 방지: 우리 동결 manifest 스키마(hashAlgo + files)인지 검증.
+    # 다른 도구가 만든 .manifest.json이면 이 가드는 관여하지 않는다.
+    _OURS_MANIFEST=$(jq 'has("hashAlgo") and has("files")' "tests/acceptance/.manifest.json" 2>/dev/null || echo "false")
+    if [[ "$_OURS_MANIFEST" == "true" ]]; then
+      echo '{"decision": "block", "reason": "인수 테스트는 동결됨(선작성+동결 원칙). 스펙 변경이 필요하면 (1) 사용자 승인(AskUserQuestion) → (2) SPEC 갱신 → (3) shared-gate.sh acceptance-freeze --approved-by-user 재동결 후 수정하라."}'
+      exit 0
+    fi
   fi
-  # 동결 전(manifest 부재) → 이 가드는 통과 (Phase 1에서 인수 테스트 생성 중).
+  # 동결 전(manifest 부재/타 도구 manifest) → 이 가드는 통과 (Phase 1에서 인수 테스트 생성 중).
   # 아래 기존 가드(기획 문서/CLAUDE.md)는 계속 적용된다 (회귀 방지).
 fi
 
@@ -100,9 +105,8 @@ if [[ -z "$PROTECTION_TYPE" ]]; then
   fi
 fi
 
-# 보호 대상이 아니면 통과
+# 보호 대상이 아니면 통과 — 무출력 (권한 판정 유보)
 if [[ -z "$PROTECTION_TYPE" ]]; then
-  echo '{"decision": "approve"}'
   exit 0
 fi
 
@@ -110,8 +114,7 @@ fi
 
 PROGRESS_FILE=".claude-full-auto-progress.json"
 if [[ ! -f "$PROGRESS_FILE" ]]; then
-  # full-auto 워크플로우가 아님 → allow
-  echo '{"decision": "approve"}'
+  # full-auto 워크플로우가 아님 → 통과 (무출력)
   exit 0
 fi
 
@@ -144,4 +147,5 @@ case "$CURRENT_PHASE" in
     ;;
 esac
 
-echo '{"decision": "approve"}'
+# Phase 0~1 → 통과 (무출력, 권한 판정 유보)
+exit 0

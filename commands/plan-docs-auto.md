@@ -38,7 +38,7 @@ $ARGUMENTS에서 `--mode` 값을 파싱합니다. 지정되지 않으면 `codex`
 |----------|-----|
 | PROMISE_TAG | `ALL_DOCS_REVIEWED` |
 | PROGRESS_FILE | `.claude-plan-progress.json` |
-| INIT_TEMPLATE | (없음) — progress 파일은 2단계에서 생성 |
+| INIT_TEMPLATE | (없음) — progress 파일은 2단계에서 `shared-gate.sh init --template plan`으로 생성 |
 | MAX_ITERATIONS | (기본값) |
 | EXTRA_INIT | (없음) |
 
@@ -54,7 +54,14 @@ $ARGUMENTS에서 `--mode` 값을 파싱합니다. 지정되지 않으면 `codex`
 
 ### 추가 완료 조건
 
-- (없음 — 공통 조건만 적용)
+`<promise>ALL_DOCS_REVIEWED</promise>` 출력 전 다음 게이트를 **직전에 실행**하여 모두 통과해야 합니다 (3단계 종료 후 게이트 섹션 참조):
+
+- `spec-completeness` exit 0 — PASS 시 dod `user_story`/`data_model`/`api_contract`/`error_scenarios` 자동 기록
+- `definition-conflict` exit 0 — PASS 시 dod `no_definition_conflict` 자동 기록
+- `clarification-gate` exit 0 — `[NEEDS-CLARIFICATION]` 잔존 0건
+- `doc-consistency` 이슈 0건
+
+dod 5키가 모두 `checked: true`가 되는 유일한 경로는 위 게이트 실행입니다 (모델 직접 세팅 금지).
 
 ### Iteration 단위
 
@@ -96,6 +103,13 @@ $ARGUMENTS에서 `--mode` 값을 파싱합니다. 지정되지 않으면 `codex`
   }
 }
 ```
+
+**dod 5키의 기록 주체 (게이트 자동 기록 — 모델 직접 세팅 금지):**
+
+| dod 키 | 기록 주체 |
+|--------|----------|
+| `user_story` / `data_model` / `api_contract` / `error_scenarios` | `shared-gate.sh spec-completeness` PASS 시 자동 기록 |
+| `no_definition_conflict` | `shared-gate.sh definition-conflict` PASS 시 자동 기록 |
 
 **상태 전이:**
 
@@ -180,33 +194,26 @@ README($2)에서:
 - 각 문서의 현재 상태 (완료/미작성) 확인
 - AskUserQuestion으로 작업할 문서 범위 질문 (새로 시작할 때만)
 
-**진행 상태 파일 생성** (새로 시작하는 경우):
+**진행 상태 파일 생성** (새로 시작하는 경우) — 직접 JSON을 작성하지 않고 `init --template plan`을 사용합니다:
 
-```json
-{
-  "project": "프로젝트명 (README에서 추출)",
-  "created": "현재시간",
-  "status": "in_progress",
-  "definitionDoc": "$1",
-  "readmePath": "$2",
-  "documents": [
-    {"name": "선택된문서1.md", "status": "pending"},
-    {"name": "선택된문서2.md", "status": "pending"}
-  ],
-  "currentDocument": null,
-  "turnCount": 0,
-  "lastCompactAt": 0,
-  "dod": {},
-  "handoff": {
-    "lastIteration": null,
-    "completedInThisIteration": "",
-    "nextSteps": "",
-    "keyDecisions": [],
-    "warnings": "",
-    "currentApproach": ""
-  }
-}
+```bash
+# 1. plan 템플릿으로 progress 파일 생성 (dod 5키 포함 — "진행 상태 파일" 섹션의 구조와 동일)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template plan \
+  "<프로젝트명 (README에서 추출)>" "" --progress-file .claude-plan-progress.json
+
+# 2. 인수/문서 목록 반영 (definitionDoc, readmePath, documents)
+_tmp=$(mktemp)
+jq --arg def "$1" --arg readme "$2" \
+  '.definitionDoc = $def | .readmePath = $readme
+   | .documents = [
+       {"name": "선택된문서1.md", "status": "pending"},
+       {"name": "선택된문서2.md", "status": "pending"}
+     ]' .claude-plan-progress.json > "$_tmp" && mv "$_tmp" .claude-plan-progress.json
 ```
+
+템플릿이 생성하는 dod 5키(`user_story`/`data_model`/`api_contract`/`error_scenarios`/`no_definition_conflict`)는
+**spec-completeness · definition-conflict 게이트가 PASS 시 자동 기록**합니다 (위 "dod 5키의 기록 주체" 표 참조).
+`"dod": {}`처럼 빈 dod로 파일을 직접 만들거나, 모델이 jq로 dod를 직접 세팅하지 않습니다.
 
 **복구 시**: 이 단계는 건너뛰고 `.claude-plan-progress.json`에서 문서 목록 사용
 
@@ -409,15 +416,28 @@ codex exec --skip-git-repo-check '## 역할
 
 > `shared-rules.md`의 컨텍스트 관리 + 외부 AI 자체 탐색 규칙을 따릅니다.
 
-### 3단계 종료 후: 문서 일관성 검사
+### 3단계 종료 후: 완료 게이트 실행 (promise 발행 전 필수)
 
-모든 문서 토론 완료 후, 스크립트로 구조적 일관성을 검사합니다:
+모든 문서 토론 완료 후, 아래 게이트를 **순차 실행**합니다. 하나라도 실패하면 해당 이슈를 수정하고 재실행합니다.
 
 ```bash
+# 1. 문서 일관성 검사 (이슈 0건이어야 통과)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
+# 발견된 구조적 불일치(모델 용어, API 엔드포인트, 네이밍 혼용, 상호참조 깨짐 등)를 Claude가 수정
+
+# 2. 스펙 완전성 (PASS 시 dod user_story/data_model/api_contract/error_scenarios 자동 기록)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness \
+  --progress-file .claude-plan-progress.json
+
+# 3. 정의 문서 충돌 탐지 (PASS 시 dod no_definition_conflict 자동 기록)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh definition-conflict docs/ \
+  --progress-file .claude-plan-progress.json
+
+# 4. [NEEDS-CLARIFICATION] 태그 잔존 게이트
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
 ```
 
-스크립트가 발견한 구조적 불일치(모델 용어, API 엔드포인트, 네이밍 혼용, 상호참조 깨짐 등)를 Claude가 수정합니다.
+dod 5키는 위 게이트의 PASS로만 `checked: true`가 됩니다. 게이트를 실행하지 않으면 dod가 영원히 미충족 상태로 남아 완주할 수 없습니다 (데드락 방지).
 
 ## 4단계: 전체 완료 후 보고
 

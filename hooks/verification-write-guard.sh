@@ -16,7 +16,7 @@
 # 남기는 목적이다.
 #
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
-# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "approve"}
+# 출력: 차단 시 {"decision": "block", "reason": "..."} / 통과 시 무출력 (approve 금지)
 
 set -euo pipefail
 
@@ -40,7 +40,7 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || {
 
 # ── 규칙 1: 파일명이 없으면 무조건 통과 ──
 if ! printf '%s' "$COMMAND" | grep -qF "$TARGET"; then
-  echo '{"decision": "approve"}'
+  exit 0 # 통과 → 무출력
   exit 0
 fi
 
@@ -64,4 +64,4 @@ fi
 
 # ── 규칙 3: 리다이렉트 없음 + 쓰기 명령 없음 = 읽기 전용 참조 → 허용 ──
 # 예: jq '.build' .claude-verification.json / cat .claude-verification.json / diff a .claude-verification.json
-echo '{"decision": "approve"}'
+exit 0 # 통과 → 무출력

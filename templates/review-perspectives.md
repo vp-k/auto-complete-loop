@@ -147,7 +147,9 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
 (full-auto: `phases.phase_3.findingHistory` / standalone review: 최상위 `findingHistory`)에도
 개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"dismissed", ...}`) —
 `code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 완료를 차단한다
-(빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail):
+(빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail).
+**finding 0건 리뷰도 반드시 `roundResults`에 해당 라운드 1항목(critical/high/medium/low 모두 0)을 기록한다** —
+이것이 리뷰 수행 증거가 되어 `code-review-findings`가 통과한다. 기록을 생략하면 리뷰 미수행 fail로 처리된다:
 ```json
 "phase_3": {
   "currentRound": 2,

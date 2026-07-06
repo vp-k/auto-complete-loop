@@ -173,7 +173,7 @@ cmd_vuln_scan() {
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" --argjson vs "$(echo "$vuln_json" | jq '.vulnScan')" '.vulnScan = $vs'
   else
-    echo "$vuln_json" > "$VERIFICATION_FILE"
+    write_json_atomic "$VERIFICATION_FILE" "$vuln_json"
   fi
 
   if [[ "$scan_ran" == "false" ]]; then
@@ -244,7 +244,7 @@ cmd_secret_scan() {
         '.secretScan = {"timestamp": $ts, "found": $count, "result": $result, "tool": $tool}'
     else
       jq -n --arg ts "$ts" --argjson count "$scan_found" --arg result "$scan_result" --arg tool "$scan_tool" \
-        '{"secretScan": {"timestamp": $ts, "found": $count, "result": $result, "tool": $tool}}' > "$VERIFICATION_FILE"
+        '{"secretScan": {"timestamp": $ts, "found": $count, "result": $result, "tool": $tool}}' | write_json_atomic "$VERIFICATION_FILE"
     fi
   }
 
@@ -358,7 +358,7 @@ $masked_matches
       '.secretScan = {"timestamp": $ts, "found": $count, "result": $result}'
   else
     jq -n --arg ts "$ts" --argjson count "$found" --arg result "$scan_result" \
-      '{"secretScan": {"timestamp": $ts, "found": $count, "result": $result}}' > "$VERIFICATION_FILE"
+      '{"secretScan": {"timestamp": $ts, "found": $count, "result": $result}}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   if [[ "$found" -gt 0 ]]; then
@@ -446,7 +446,7 @@ cmd_placeholder_check() {
       '.placeholderCheck = {"timestamp": $ts, "result": $result, "count": $count}'
   elif [[ -n "$VERIFICATION_FILE" ]]; then
     jq -n --arg ts "$ts" --arg result "$result" --argjson count "$count" \
-      '{"placeholderCheck": {"timestamp": $ts, "result": $result, "count": $count}}' > "$VERIFICATION_FILE"
+      '{"placeholderCheck": {"timestamp": $ts, "result": $result, "count": $count}}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   echo "=== PLACEHOLDER CHECK: ${result^^} ==="
@@ -551,7 +551,7 @@ cmd_external_service_check() {
       '.externalServiceCheck = {"timestamp": $ts, "result": $result, "totalServices": $total, "missingServices": $missing}'
   elif [[ -n "$VERIFICATION_FILE" ]]; then
     jq -n --arg ts "$ts" --arg result "$result" --argjson total "$total_services" --argjson missing "$missing_services" \
-      '{"externalServiceCheck": {"timestamp": $ts, "result": $result, "totalServices": $total, "missingServices": $missing}}' > "$VERIFICATION_FILE"
+      '{"externalServiceCheck": {"timestamp": $ts, "result": $result, "totalServices": $total, "missingServices": $missing}}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   echo "=== EXTERNAL SERVICE CHECK: ${result^^} ==="

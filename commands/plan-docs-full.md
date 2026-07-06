@@ -120,7 +120,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 ```bash
 for key in pm_approved assumptions_documented premortem_done all_docs_complete \
-           spec_md_generated smoke_scripts_generated doc_completeness_passed \
+           spec_md_generated smoke_scripts_generated spec_completeness_passed \
+           doc_completeness_passed \
            doc_consistency_passed definition_conflict_resolved spec_to_tests_passed \
            acceptance_frozen clarification_resolved; do
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key "$key" --progress-file {PROGRESS_FILE}
@@ -193,11 +194,24 @@ Read ${PHASE_1_SKILL}
 
 스킬 내 Step 1-9에서 이미 `clarification-gate`가 호출됩니다. HARD_FAIL이면 사용자 질의로 모두 해소.
 
+**Phase 1 산출 확인 직후 DoD 기록** (`spec_md_generated` · `smoke_scripts_generated`의 기록 시점은 여기 — 각 파일의 실존을 확인한 후에만 세팅):
+
+```bash
+# SPEC.md + smoke 스크립트 실존 확인 후 즉시 기록
+jq_inplace {PROGRESS_FILE} \
+  '.dod.spec_md_generated = {checked:true, evidence:"SPEC.md 생성 확인 (경로: <SPEC.md 또는 docs/SPEC.md>)"}
+   | .dod.smoke_scripts_generated = {checked:true, evidence:"projectScope 기준 smoke 스크립트 존재 확인 (tests/api-smoke.sh 등)"}'
+```
+
+파일이 없으면 기록하지 말고 Phase 1(Step 1-7)을 재수행합니다.
+
 ## 3단계: 게이트 6종 순차 검증 (Phase 1 종료 직후)
 
 스킬 완료 후 오케스트레이터가 다음 게이트를 **순차** 실행합니다. 하나라도 실패하면 Phase 1 재진입(해당 이슈 수정).
 
 > 게이트 결과는 `.claude-verification.json`에 자동 기록되며, stop-hook이 `specCompleteness` · `clarificationGate` · `docCompleteness` · `specToTests` · `acceptanceFreeze` 키가 전부 `pass`인지 최종 검증합니다 (미실행 = 완주 불가, fail-closed).
+>
+> plan 템플릿 기본 dod 5키(`user_story`/`data_model`/`api_contract`/`error_scenarios`/`no_definition_conflict`)는 spec-completeness · definition-conflict 게이트가 PASS 시 **자동 기록**합니다 (모델 직접 세팅 금지).
 
 ```bash
 # 게이트 0: spec-completeness (HARD_FAIL: CRITICAL 이슈 0건 — 핵심 섹션 TBD 포함)

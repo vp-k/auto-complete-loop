@@ -15,6 +15,14 @@
 
 set -euo pipefail
 
+# ─── 훅 입력 읽기 ───
+# Claude Code는 훅 입력(JSON)을 stdin으로 전달한다. stdin을 우선 읽고,
+# 비어 있으면 CLAUDE_HOOK_INPUT 환경변수로 폴백 (기존 목업/테스트 호환).
+HOOK_INPUT=$(cat 2>/dev/null || true)
+if [[ -z "$HOOK_INPUT" ]]; then
+  HOOK_INPUT="${CLAUDE_HOOK_INPUT:-}"
+fi
+
 # jq 의존성 사전 검증
 # fail-open: jq가 없으면 검증 불가 → 경고 후 stop을 승인(approve)하여 루프를 끝낸다.
 # (fail-closed로 block하면 jq 없는 환경에서 사용자가 무한 루프에 갇히므로 의도적으로 fail-open)
@@ -154,6 +162,13 @@ if ! [[ "$ITERATION" =~ ^[0-9]+$ ]] || ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; th
   exit 0
 fi
 
+# max_iterations==0(무제한) 방어: 내부 상한 50으로 간주 (무한 루프 방지)
+# (init 기본값 자체의 수정은 scripts/ 소관 — 훅은 방어만 수행)
+if [[ $MAX_ITERATIONS -eq 0 ]]; then
+  echo "Auto Complete Loop: WARNING - max_iterations=0 (unlimited) detected; applying internal safety cap of 50 iterations."
+  MAX_ITERATIONS=50
+fi
+
 # max_iterations 도달 확인
 if [[ $MAX_ITERATIONS -gt 0 ]] && [[ $ITERATION -ge $MAX_ITERATIONS ]]; then
   echo "Ralph loop: Max iterations ($MAX_ITERATIONS) reached."
@@ -161,10 +176,10 @@ if [[ $MAX_ITERATIONS -gt 0 ]] && [[ $ITERATION -ge $MAX_ITERATIONS ]]; then
   exit 0
 fi
 
-# 트랜스크립트에서 마지막 assistant 메시지 추출
+# 트랜스크립트에서 마지막 assistant 메시지 추출 (훅 입력은 상단에서 stdin 우선으로 읽음)
 TRANSCRIPT_PATH=""
-if [[ -n "${CLAUDE_HOOK_INPUT:-}" ]]; then
-  TRANSCRIPT_PATH=$(echo "$CLAUDE_HOOK_INPUT" | jq -r '.transcript_path // empty' 2>/dev/null || true)
+if [[ -n "$HOOK_INPUT" ]]; then
+  TRANSCRIPT_PATH=$(printf '%s' "$HOOK_INPUT" | jq -r '.transcript_path // empty' 2>/dev/null || true)
 fi
 
 LAST_OUTPUT=""
@@ -327,7 +342,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       ALL_RESULTS_OK=$(jq '
         [to_entries[] | select(.value | type == "object" and has("result") and .result != null) | .value.result]
         | if length == 0 then true
-          else all(. == "pass" or . == "skip" or . == "soft_fail")
+          else all(. == "pass" or . == "skip" or . == "soft_fail" or . == "warn")
           end
       ' .claude-verification.json 2>/dev/null || echo "false")
 
@@ -563,6 +578,9 @@ SYSTEM_MSG="Auto Complete Loop iteration $NEXT_ITERATION | $(date '+%H:%M:%S')"
 if [[ -n "${FAILURE_REASONS:-}" ]]; then
   SYSTEM_MSG="${SYSTEM_MSG} | Verification failed: ${FAILURE_REASONS}"
 fi
+
+# 수동 탈출 안내 (block reason 끝에 1줄)
+PROMPT_TEXT="${PROMPT_TEXT}"$'\n\n'"루프를 강제 종료하려면 .claude/ralph-loop.local.md 를 삭제하세요."
 
 jq -n \
   --arg prompt "$PROMPT_TEXT" \

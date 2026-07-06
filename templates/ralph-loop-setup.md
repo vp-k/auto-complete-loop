@@ -8,7 +8,7 @@ auto-complete-loop 명령들이 공유하는 **0단계(Ralph Loop 자동 설정)
 | `{PROMISE_TAG}` | 완료 promise 태그 (예: `DOCS_CONSISTENT`) |
 | `{PROGRESS_FILE}` | 진행 상태 파일명 (예: `.claude-doc-check-progress.json`) |
 | `{INIT_TEMPLATE}` | `shared-gate.sh init --template` 값. `(없음)`이면 init 생략 |
-| `{MAX_ITERATIONS}` | `init-ralph` 최대 반복 수. `(기본값)`이면 인수 생략 |
+| `{MAX_ITERATIONS}` | `init-ralph` 최대 반복 수. `(기본값)`이면 인수 생략 (init-ralph 기본값: 30 — 무한 루프 방지) |
 | `{EXTRA_INIT}` | init 직후 수행할 명령 고유 초기화. `(없음)`이면 생략 |
 
 **이 절차를 명령의 다른 어떤 작업보다 먼저 실행합니다.**
@@ -52,7 +52,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template {INIT_TEMPLATE
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{PROGRESS_FILE}" {MAX_ITERATIONS}
 ```
 
-`{MAX_ITERATIONS}`가 `(기본값)`이면 세 번째 인수를 생략합니다.
+`{MAX_ITERATIONS}`가 `(기본값)`이면 세 번째 인수를 생략합니다 (init-ralph가 기본값 30을 적용).
 
 ## 5. Ralph Loop 완료 조건 + Iteration 규칙 숙지
 

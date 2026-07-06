@@ -75,7 +75,7 @@ cmd_artifact_check() {
       '.artifactCheck = {"timestamp": $ts, "projectType": $type, "artifactPath": $path, "result": $result}'
   else
     jq -n --arg ts "$ts" --arg type "$artifact_type" --arg path "$artifact_path" --arg result "$result" \
-      '{"artifactCheck": {"timestamp": $ts, "projectType": $type, "artifactPath": $path, "result": $result}}' > "$VERIFICATION_FILE"
+      '{"artifactCheck": {"timestamp": $ts, "projectType": $type, "artifactPath": $path, "result": $result}}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   echo "=== ARTIFACT CHECK: ${result^^} ==="

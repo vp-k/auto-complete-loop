@@ -80,7 +80,7 @@ cmd_e2e_gate() {
     if [[ -f "$VERIFICATION_FILE" ]]; then
       jq_inplace "$VERIFICATION_FILE" '.e2e = {"command": null, "framework": null, "exitCode": null, "summary": "no_e2e_framework"}'
     else
-      echo '{"e2e": {"command": null, "framework": null, "exitCode": null, "summary": "no_e2e_framework"}}' | jq '.' > "$VERIFICATION_FILE"
+      write_json_atomic "$VERIFICATION_FILE" '{"e2e": {"command": null, "framework": null, "exitCode": null, "summary": "no_e2e_framework"}}'
     fi
 
     if [[ "$strict_mode" == "true" ]]; then
@@ -122,7 +122,7 @@ cmd_e2e_gate() {
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" --argjson e2e "$e2e_result" '.e2e = $e2e'
   else
-    echo "{}" | jq --argjson e2e "$e2e_result" '.e2e = $e2e' > "$VERIFICATION_FILE"
+    jq -n --argjson e2e "$e2e_result" '{"e2e": $e2e}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   echo ""
@@ -354,7 +354,7 @@ cmd_implementation_depth() {
   else
     jq -n --argjson sc "$src_count" --argjson tc "$test_count" --argjson th "$threshold" --arg r "$_impl_result" '
       {"implementationDepth": {"srcStubs": $sc, "testIssues": $tc, "threshold": $th, "result": $r}}
-    ' > "$VERIFICATION_FILE"
+    ' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   # DoD 업데이트
@@ -526,12 +526,9 @@ cmd_test_quality() {
   esac
 
   if [[ $total_tests -eq 0 ]]; then
-    # SOFT → HARD 승격: 직전 실행도 fail/warn이면 이번엔 하드 실패
-    if soft_gate_escalation "test-quality" "warn"; then
-      echo "[test-quality] ESCALATED: 연속 실패 → HARD 승격, pass까지 유지 (규칙은 적는 게 아니라 강제되어야 한다)"
-      append_gate_history "test-quality" "fail" '{"totalTests":0,"escalated":true}'
-      return 1
-    fi
+    # "no tests" warn 경로는 soft_gate_escalation 대상에서 제외 —
+    # 테스트 함수 패턴이 감지되지 않는 프로젝트(라이브러리 등)가 2회째 실행에서
+    # 영구 HARD로 굳는 회귀 방지. 실제 품질 이슈(assertion/skip 비율) warn 경로만 승격 유지.
     echo "[TEST-QUALITY] WARN: No test functions found"
     append_gate_history "test-quality" "warn" '{"totalTests":0}'
     return 0
@@ -587,7 +584,7 @@ cmd_test_quality() {
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" --argjson tq "$_tq_json" '.testQuality = $tq'
   else
-    jq -n --argjson tq "$_tq_json" '{"testQuality": $tq}' > "$VERIFICATION_FILE"
+    jq -n --argjson tq "$_tq_json" '{"testQuality": $tq}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   # 판정 (SOFT gate) — 임계값을 설정 파일에서 로드
@@ -737,7 +734,10 @@ cmd_live_testing_gate() {
     | {
         evidence: (has("live_testing_issues")
                    or (($items | length) > 0)
-                   or ((.dod.live_testing // null) != null)),
+                   # dod.live_testing은 "기록된 증거"가 있을 때만 evidence로 인정 —
+                   # full-auto 템플릿이 기본값({checked:false, evidence:null})으로 키를
+                   # 항상 생성하므로 키 존재만으로는 live 테스트 수행 증거가 아니다.
+                   or ((.dod.live_testing // {}) | ((.checked // false) == true or (.evidence // null) != null))),
         critical: ($open | map(select(((.severity // "") == "CRITICAL")
                                       or ((.id // "") | test("^LIVE-CRITICAL")))) | length),
         high:     ($open | map(select(((.severity // "") == "HIGH")
@@ -756,6 +756,12 @@ cmd_live_testing_gate() {
     echo "[live-testing-gate] SKIP (no live testing records in $PROGRESS_FILE — library project or live testing not applicable)"
     append_gate_history "live-testing-gate" "skip" '{"reason":"no live records"}'
     _ltg_record "skip" 0 0 "no live testing records"
+    # SKIP 경로에서도 dod.live_testing(존재 시)을 N/A 증거로 checked 처리 —
+    # 미기록 시 full-auto 템플릿의 live_testing 키가 영구 미충족(소프트 데드락)이 된다.
+    jq_inplace "$PROGRESS_FILE" --arg ev "N/A: no live testing records — live-testing-gate SKIP at $(timestamp)" '
+      if (((.dod // {}) | objects | has("live_testing")) // false)
+      then .dod.live_testing = {checked: true, evidence: $ev}
+      else . end'
     return 0
   fi
 

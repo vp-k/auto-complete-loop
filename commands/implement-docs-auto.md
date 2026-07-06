@@ -41,7 +41,10 @@ argument-hint: <definition(overview.md)> <doclist(README.md)>
 
 ### 추가 완료 조건
 
-- `.claude-verification.json`의 모든 검증 항목이 통과 (build/typeCheck/lint/test는 `exitCode: 0`, secretScan/artifactCheck/smokeCheck/designPolish는 `result: "pass"` 또는 `result: "skip"` 또는 `result: "soft_fail"`)
+- `.claude-verification.json`의 모든 검증 항목이 통과:
+  - build/typeCheck/lint/test: `exitCode: 0`
+  - secretScan/artifactCheck/designPolish 등 result 기반 게이트: `result: "pass"` 또는 `"skip"` 또는 `"warn"` 또는 `"soft_fail"` (`fail`만 차단)
+  - **smokeCheck는 예외**: `result: "pass"` 또는 `"skip"`만 허용 — **stop-hook이 `soft_fail`도 `fail`로 처리하여 완주를 차단**한다 (서버 미기동 = 완주 불가). 키 부재(스모크 미실행)는 차단하지 않음
 
 ### Iteration 단위
 
@@ -60,16 +63,24 @@ argument-hint: <definition(overview.md)> <doclist(README.md)>
 - 파일 있음: 해당 DoD를 완료 기준으로 사용
 - 파일 없음: 내장 완료 기준 사용 (빌드/테스트/린트/리뷰 통과)
 
-DoD를 `.claude-progress.json`의 `dod` 필드에 기록:
+DoD를 `.claude-progress.json`의 `dod` 필드에 기록 (`shared-gate.sh init --template implement`가 생성하는 기본 키와 동일):
 ```json
 "dod": {
   "build_pass": { "checked": false, "evidence": null },
   "test_pass": { "checked": false, "evidence": null },
-  "code_review": { "checked": false, "evidence": null },
+  "code_review_pass": { "checked": false, "evidence": null },
   "e2e_pass": { "checked": false, "evidence": null }
 }
 ```
 각 항목의 `evidence`는 실제 실행 결과를 기록. evidence가 null이면 checked를 true로 설정 불가.
+
+**dod 키별 기록 주체:**
+
+| dod 키 | 기록 주체 |
+|--------|----------|
+| `build_pass` / `test_pass` | `shared-gate.sh quality-gate`가 실행 결과로 자동 기록 |
+| `e2e_pass` | `shared-gate.sh e2e-gate`가 실행 결과로 자동 기록 |
+| `code_review_pass` | codex 리뷰 통과(Critical/High/Medium 0건) 시 **명시적 jq 세팅**: `jq_inplace .claude-progress.json '.dod.code_review_pass = {checked:true, evidence:"codex 리뷰 N라운드 통과, CRITICAL/HIGH/MEDIUM: 0"}'` |
 
 ## 1단계: 문서 목록 파악
 
@@ -537,7 +548,12 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
     {"name": "문서1.md", "status": "pending", "phase": null, "tickets": []},
     {"name": "문서2.md", "status": "pending", "phase": null, "tickets": []}
   ],
-  "dod": {},
+  "dod": {
+    "build_pass": { "checked": false, "evidence": null },
+    "test_pass": { "checked": false, "evidence": null },
+    "code_review_pass": { "checked": false, "evidence": null },
+    "e2e_pass": { "checked": false, "evidence": null }
+  },
   "currentDocument": null,
   "lastCommitSha": null,
   "errorHistory": {
@@ -619,7 +635,7 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 2. 구현이 요구사항을 충족하는지 항목별 대조
 3. 빌드/테스트를 **지금** 실행 (이전 결과 재사용 금지) — `quality-gate` 서브커맨드가 결과를 `.claude-verification.json`에 자동 기록
 4. 소프트 품질 차원은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 로 기록 (verification.json 직접 편집은 가드가 차단함)
-5. `.claude-progress.json`의 dod 체크리스트 업데이트 (evidence 포함)
+5. `.claude-progress.json`의 dod 체크리스트 업데이트 (evidence 포함) — `build_pass`/`test_pass`는 quality-gate, `e2e_pass`는 e2e-gate가 자동 기록. `code_review_pass`만 리뷰 통과 시 jq로 직접 세팅 ("dod 키별 기록 주체" 표 참조)
 
 **5개 중 하나라도 미완료면 완료 불가. 미충족 항목부터 해결.**
 
@@ -763,7 +779,7 @@ codex exec --skip-git-repo-check '## 릴리즈 전 정리
 2. 테스트 재실행 -> 전체 통과
 3. 린트 재실행 -> 경고 없음
 4. 결과 기록 — `quality-gate` 서브커맨드가 자동 기록, 소프트 품질 차원은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 사용 (verification.json 직접 편집은 가드가 차단함)
-5. `.claude-progress.json`의 dod 체크리스트 최종 업데이트
+5. `.claude-progress.json`의 dod 체크리스트 최종 업데이트 — `build_pass`/`test_pass`(quality-gate)·`e2e_pass`(e2e-gate)는 자동 기록 확인만, `code_review_pass`는 최종 리뷰 통과 evidence와 함께 jq 세팅 확인
 
 ## 5단계: 완료 보고
 

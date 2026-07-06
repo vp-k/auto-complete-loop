@@ -330,8 +330,14 @@ cmd_spec_completeness() {
     critical=$((critical + 1))
     issues="${issues}CRITICAL: overview.md not found\n"
   else
+    # 빈 섹션 = 헤더 이후 다음 헤더(또는 EOF)까지 비어있지 않은 본문 라인이 하나도 없는 경우.
+    # 헤더 직후의 빈 줄은 표준 마크다운 관행이므로 다음 비어있지 않은 줄까지 확인한다 (오탐 방지).
     local empty_sections
-    empty_sections=$(awk '/^##/ {title=$0; getline; if (/^$/ || /^##/) print title}' overview.md 2>/dev/null | head -10 || true)
+    empty_sections=$(awk '
+      /^##/ { if (h != "" && !content) print h; h = $0; content = 0; next }
+      NF > 0 { content = 1 }
+      END { if (h != "" && !content) print h }
+    ' overview.md 2>/dev/null | head -10 || true)
     if [[ -n "$empty_sections" ]]; then
       local count
       count=$(echo "$empty_sections" | wc -l | tr -d ' ')
@@ -382,7 +388,9 @@ cmd_spec_completeness() {
   # TBD/모호 표현 검사 — 별도 서브커맨드 없이 여기서 직접 인라인 스캔 (코드 블록 제외)
   # H8: 핵심 섹션(API Contract / Data Model / 유저스토리·AC) 내부의 모호 표현은 CRITICAL로 승격
   local ambiguity_matches=0 core_matches=0
-  local ambiguity_pattern='TBD|TODO|FIXME|to be decided|to be determined|미정|추후 결정|추후|as needed|if appropriate|적절한|등등|나중에|optionally|필요 시|Phase [0-9]에서 추가|later phase'
+  # 주의: TBD/TODO/FIXME는 word-boundary 필수 — 'JTBD'(Jobs To Be Done) 등의 오탐 방지.
+  # '적절한'/'필요 시'는 일상 한국어에서 오탐이 다수라 패턴에서 제외.
+  local ambiguity_pattern='\bTBD\b|\bTODO\b|\bFIXME\b|to be decided|to be determined|미정|추후 결정|추후|as needed|if appropriate|등등|나중에|optionally|Phase [0-9]에서 추가|later phase'
   local ambiguity_files=()
   for af in overview.md SPEC.md spec.md; do
     # 대소문자 무시 파일시스템(Windows/macOS)에서 SPEC.md와 spec.md가 같은 파일로 이중 집계되는 것 방지
@@ -520,6 +528,16 @@ cmd_spec_completeness() {
         --argjson c "$critical" --argjson mj "$major" --argjson mn "$minor" \
         '{timestamp:$ts,result:$r,critical:$c,major:$mj,minor:$mn}')"
 
+  # DoD 자동 기록 (plan 템플릿 계약): 이 게이트가 user_story/data_model/api_contract/error_scenarios의
+  # 스크립트 기록자다 (code-review-findings의 dod.code_review_pass 기록 패턴 준수).
+  # PASS(critical=0) 시 존재하는 키만 checked:true — 미기록 시 plan 워크플로우가 소프트 데드락에 빠진다.
+  if [[ "$critical" -eq 0 ]] && [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    jq_inplace "$PROGRESS_FILE" \
+      --arg ev "spec-completeness PASS at $(timestamp) (critical: 0, major: $major, minor: $minor)" '
+      reduce ("user_story", "data_model", "api_contract", "error_scenarios") as $k (.;
+        if (((.dod // {}) | objects | has($k)) // false) then .dod[$k] = {checked: true, evidence: $ev} else . end)'
+  fi
+
   echo "=== SPEC COMPLETENESS: ${result^^} ==="
 
   if [[ "$critical" -gt 0 ]]; then
@@ -595,7 +613,7 @@ cmd_doc_completeness() {
       /^### +(GET|POST|PUT|PATCH|DELETE) +\// {
         if (current != "") {
           if (req==0)    print current "|missing Request:"
-          if (res200==0) print current "|missing Response 200:"
+          if (res200==0) print current "|missing Response 2xx:"
           if (res4xx==0) print current "|missing any Response 4xx"
           if (tc<3)      print current "|insufficient test cases (" tc "<3)"
         }
@@ -605,7 +623,7 @@ cmd_doc_completeness() {
       /^### / || /^## / {
         if (current != "") {
           if (req==0)    print current "|missing Request:"
-          if (res200==0) print current "|missing Response 200:"
+          if (res200==0) print current "|missing Response 2xx:"
           if (res4xx==0) print current "|missing any Response 4xx"
           if (tc<3)      print current "|insufficient test cases (" tc "<3)"
           current=""
@@ -615,7 +633,8 @@ cmd_doc_completeness() {
       }
       current != "" {
         if ($0 ~ /(^|[[:space:]])(- )?(Request|요청)( body)?:/)             req=1
-        if ($0 ~ /(^|[[:space:]])(- )?Response +200:/)                       res200=1
+        # 성공 응답은 200 리터럴 강제 대신 2xx 전체 허용 (201 Created, 204 No Content 등)
+        if ($0 ~ /(^|[[:space:]])(- )?Response +2[0-9][0-9]:/)               res200=1
         if ($0 ~ /(^|[[:space:]])(- )?Response +4[0-9][0-9]/)                res4xx=1
         # 테스트 케이스 라벨: 헤더 형식(#### 테스트 케이스), 리스트 형식(- 테스트 케이스:),
         # 줄 끝 단독 모두 지원. 옵셔널 콜론.
@@ -629,7 +648,7 @@ cmd_doc_completeness() {
       END {
         if (current != "") {
           if (req==0)    print current "|missing Request:"
-          if (res200==0) print current "|missing Response 200:"
+          if (res200==0) print current "|missing Response 2xx:"
           if (res4xx==0) print current "|missing any Response 4xx"
           if (tc<3)      print current "|insufficient test cases (" tc "<3)"
         }
@@ -647,7 +666,8 @@ cmd_doc_completeness() {
   # ── 4. SPEC.md US-* ID 존재 (hasFrontend 또는 hasBackend) ──
   if [[ -n "$spec_file" ]]; then
     local us_count
-    us_count=$(grep -coE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null || echo "0")
+    # 주의: `|| echo "0"`은 grep -c가 무매치 시 자체적으로 "0"을 출력하고 exit 1이라 "0\n0"이 됐었다
+    us_count=$(grep -coE 'US-(F|B)-[0-9]+' "$spec_file" 2>/dev/null || true)
     us_count=$(echo "$us_count" | tr -d '[:space:]')
     [[ -z "$us_count" || ! "$us_count" =~ ^[0-9]+$ ]] && us_count=0
     if [[ "$us_count" -eq 0 ]]; then
@@ -698,9 +718,24 @@ cmd_definition_conflict() {
   local docs_dir="${1:-docs}"
   echo "=== Definition Conflict Check ==="
 
+  # DoD 자동 기록 (plan 템플릿 계약): 이 게이트가 dod.no_definition_conflict의 스크립트 기록자다.
+  # SOFT 게이트라 pass/warn/skip 모두 exit 0 (통과) — 통과한 모든 종결 경로에서 기록해야
+  # plan 워크플로우의 dod.no_definition_conflict가 소프트 데드락에 빠지지 않는다.
+  # Usage: _dc_record_dod <evidence>
+  _dc_record_dod() {
+    local ev="$1"
+    if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]] && command -v jq >/dev/null 2>&1; then
+      jq_inplace "$PROGRESS_FILE" --arg ev "$ev (definition-conflict at $(timestamp))" '
+        if (((.dod // {}) | objects | has("no_definition_conflict")) // false)
+        then .dod.no_definition_conflict = {checked: true, evidence: $ev}
+        else . end'
+    fi
+  }
+
   if [[ ! -f "overview.md" ]]; then
     echo "[definition-conflict] SKIP (overview.md not found)"
     append_gate_history "definition-conflict" "skip" '{"reason":"no overview.md"}'
+    _dc_record_dod "N/A: overview.md not found"
     return 0
   fi
 
@@ -715,6 +750,7 @@ cmd_definition_conflict() {
   if [[ -z "$non_goals" ]]; then
     echo "[definition-conflict] No Non-Goals section content found in overview.md"
     append_gate_history "definition-conflict" "skip" '{"reason":"no non-goals"}'
+    _dc_record_dod "N/A: no Non-Goals section content in overview.md"
     return 0
   fi
 
@@ -733,6 +769,7 @@ cmd_definition_conflict() {
   if [[ -z "$keywords" ]]; then
     echo "[definition-conflict] No usable keywords extracted from Non-Goals"
     append_gate_history "definition-conflict" "skip" '{"reason":"no keywords"}'
+    _dc_record_dod "N/A: no usable keywords extracted from Non-Goals"
     return 0
   fi
 
@@ -750,6 +787,7 @@ cmd_definition_conflict() {
   if [[ ${#scan_files[@]} -eq 0 ]]; then
     echo "[definition-conflict] No documents to scan"
     append_gate_history "definition-conflict" "skip" '{"reason":"no docs"}'
+    _dc_record_dod "N/A: no documents to scan"
     return 0
   fi
 
@@ -785,6 +823,11 @@ cmd_definition_conflict() {
   fi
 
   append_gate_history "definition-conflict" "$result" "{\"matches\":$total_matches}"
+  if [[ "$result" == "pass" ]]; then
+    _dc_record_dod "definition-conflict PASS (0 Non-Goals violations)"
+  else
+    _dc_record_dod "definition-conflict SOFT PASS with WARN ($total_matches potential match(es) — manual review recorded under nonGoalsAudit)"
+  fi
   echo "=== DEFINITION CONFLICT: ${result^^} ==="
   return 0
 }
@@ -794,7 +837,7 @@ cmd_definition_conflict() {
 cmd_spec_to_tests() {
   echo "=== Spec-to-Tests Mapping Check ==="
 
-  # verification.json 기록 헬퍼 — 계약: specToTests {result: pass|fail|skip}
+  # verification.json 기록 헬퍼 — 계약: specToTests {result: pass|fail}
   _stt_record() {
     record_verification "specToTests" \
       "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --arg reason "${2:-}" \

@@ -29,7 +29,7 @@ cmd_design_polish_gate() {
         '.designPolish = {"timestamp": $ts, "result": "skip", "reason": $r}'
     else
       jq -n --arg ts "$ts" --arg r "$reason" \
-        '{"designPolish": {"timestamp": $ts, "result": "skip", "reason": $r}}' > "$VERIFICATION_FILE"
+        '{"designPolish": {"timestamp": $ts, "result": "skip", "reason": $r}}' | write_json_atomic "$VERIFICATION_FILE"
     fi
     # DoD에도 SKIP 기록
     if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
@@ -121,7 +121,7 @@ cmd_design_polish_gate() {
           '.designPolish = {"timestamp": $ts, "result": "fail", "reason": "server failed to start (strict mode)"}'
       else
         jq -n --arg ts "$ts" \
-          '{"designPolish": {"timestamp": $ts, "result": "fail", "reason": "server failed to start (strict mode)"}}' > "$VERIFICATION_FILE"
+          '{"designPolish": {"timestamp": $ts, "result": "fail", "reason": "server failed to start (strict mode)"}}' | write_json_atomic "$VERIFICATION_FILE"
       fi
       if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
         local has_dq
@@ -227,7 +227,7 @@ cmd_design_polish_gate() {
         "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
         "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
         "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": (if $has_after then ".design-polish/screenshots/current-main.png" else null end)}
-      }}' > "$VERIFICATION_FILE"
+      }}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   # DoD design_quality 갱신
@@ -446,8 +446,17 @@ PLAYWRIGHT_SCRIPT
   fi
 
   # verification.json 기록
+  # 문서 계약상 non-strict page-render-check는 SOFT 게이트 — non-strict 실패는 "soft_fail"로
+  # 기록해 stop-hook의 result 기반 하드 차단(result=="fail")과 모순되지 않게 한다.
+  # --strict일 때만 "fail" (하드 차단 의도).
   local result_str="pass"
-  [[ $fail_pages -gt 0 ]] && result_str="fail"
+  if [[ $fail_pages -gt 0 ]]; then
+    if [[ "$strict" == "true" ]]; then
+      result_str="fail"
+    else
+      result_str="soft_fail"
+    fi
+  fi
   [[ $total_pages -eq 0 && $exit_code -eq 0 ]] && result_str="skip"
   [[ $total_pages -eq 0 && $exit_code -ne 0 ]] && result_str="fail"
 
@@ -458,7 +467,7 @@ PLAYWRIGHT_SCRIPT
   else
     jq -n --arg r "$result_str" --argjson tp "$total_pages" --argjson pp "$pass_pages" --argjson fp "$fail_pages" '
       {"pageRender": {"result": $r, "totalPages": $tp, "passPages": $pp, "failPages": $fp}}
-    ' > "$VERIFICATION_FILE"
+    ' | write_json_atomic "$VERIFICATION_FILE"
   fi
 
   # 판정

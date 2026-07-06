@@ -7,7 +7,26 @@
 
 set -euo pipefail
 
-INPUT=$(cat)
+# 훅 입력: stdin 우선, 비어 있으면 CLAUDE_HOOK_INPUT 폴백
+# (stdin은 게이팅 판정 전에 소비 — 파이프 writer의 EPIPE 방지)
+INPUT=$(cat 2>/dev/null || true)
+if [ -z "$INPUT" ]; then
+  INPUT="${CLAUDE_HOOK_INPUT:-}"
+fi
+
+# ─── 워크플로우 활성 게이팅 ───
+# 플러그인 워크플로우 활성 시(.claude-*progress*.json 존재)에만 경고.
+# 비플러그인 프로젝트에서는 침묵 (오탐/노이즈 방지).
+_ACTIVE=0
+for _pf in .claude-*progress*.json; do
+  if [ -f "$_pf" ]; then
+    _ACTIVE=1
+    break
+  fi
+done
+if [ "$_ACTIVE" -ne 1 ]; then
+  exit 0
+fi
 FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null || echo "")
 
 # 파일이 없거나 바이너리면 스킵

@@ -103,6 +103,7 @@ cmd_init() {
     "e2e_pass": { "checked": false, "evidence": null },
     "acceptance_pass": { "checked": false, "evidence": null },
     "design_quality": { "checked": false, "evidence": null },
+    "live_testing": { "checked": false, "evidence": null },
     "launch_ready": { "checked": false, "evidence": null }
   },
   "handoff": {
@@ -157,7 +158,7 @@ ENDJSON
   "dod": {
     "build_pass": { "checked": false, "evidence": null },
     "test_pass": { "checked": false, "evidence": null },
-    "code_review": { "checked": false, "evidence": null },
+    "code_review_pass": { "checked": false, "evidence": null },
     "e2e_pass": { "checked": false, "evidence": null }
   },
   "currentDocument": null,
@@ -331,11 +332,15 @@ ENDJSON
 cmd_init_ralph() {
   local promise="${1:?Usage: init-ralph <promise> <progress_file> [max_iter]}"
   local progress_file="${2:?Usage: init-ralph <promise> <progress_file> [max_iter]}"
-  local max_iter="${3:-0}"
+  # 기본값 30 (무제한 0은 폭주 루프 위험 — 명시적으로 0을 지정한 경우만 경고 후 허용)
+  local max_iter="${3:-30}"
 
   # 입력 검증: max_iter는 반드시 정수
   if ! [[ "$max_iter" =~ ^[0-9]+$ ]]; then
     die "init-ralph: max_iter must be a non-negative integer, got '$max_iter'"
+  fi
+  if [[ "$max_iter" -eq 0 ]]; then
+    echo "WARNING: init-ralph: max_iterations=0 (unlimited) explicitly requested — runaway loop risk" >&2
   fi
 
   # 입력 검증: promise/progress_file에 개행/제어문자 금지

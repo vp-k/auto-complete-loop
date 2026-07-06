@@ -44,12 +44,27 @@ if [[ -f "$LEARNINGS_FILE" ]] && grep -q '^## LESSON |' "$LEARNINGS_FILE" 2>/dev
   fi
 fi
 
+# 우리 progress 스키마인지 판별 (타 도구의 .claude-*progress*.json 오탐 방지)
+# 실제 템플릿(scripts/gates/init.sh)은 schemaVersion/dod/handoff/documents 중
+# 최소 하나를 항상 포함한다. 아니면 우리 파일이 아님 → 건드리지 않는다.
+is_our_progress_file() {
+  local _f="$1" _ours
+  command -v jq &>/dev/null || return 1
+  _ours=$(jq 'has("schemaVersion") or has("dod") or has("handoff") or has("documents")' "$_f" 2>/dev/null || echo "false")
+  [[ "$_ours" == "true" ]]
+}
+
 # progress 파일 탐지 — scripts/lib/progress.sh의 detect_progress_file을 단일 출처로 사용
 PROGRESS_FILE=""
 if [[ -f "${PLUGIN_ROOT}/scripts/lib/progress.sh" ]]; then
   # shellcheck source=../scripts/lib/progress.sh
   source "${PLUGIN_ROOT}/scripts/lib/progress.sh"
   PROGRESS_FILE=$(detect_progress_file || true)
+fi
+
+# 탐지된 파일이 우리 스키마가 아니면 복구 대상에서 제외 (타 도구 파일 오탐 방지)
+if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]] && ! is_our_progress_file "$PROGRESS_FILE"; then
+  PROGRESS_FILE=""
 fi
 
 # progress 파일 없으면 복구 불필요 — 단, 프로젝트 컨텍스트 주입 (A5)
@@ -89,6 +104,10 @@ fi
 HAS_ACTIVE=0
 for f in .claude-*-progress.json .claude-progress.json; do
   [[ -f "$f" ]] || continue
+  # 타 도구가 만든 동명 패턴 파일은 삭제/정리 대상이 아님 — 스키마 검증 후 아니면 skip
+  if ! is_our_progress_file "$f"; then
+    continue
+  fi
   _status=$(jq -r '.status // "unknown"' "$f" 2>/dev/null || echo "unknown")
   case "$_status" in
     completed) rm -f "$f" ;;

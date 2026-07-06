@@ -2,8 +2,10 @@
 # PreToolUse:Bash - --no-verify 플래그 차단 (fail-closed)
 # git commit/push에서 --no-verify 및 -n 사용을 차단하여 pre-commit hook 보호
 #
+# NOTE: hooks.json에는 통합 디스패처(bash-guards.sh)만 등록된다. 이 파일은 잔존 유지본.
+#
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
-# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "approve"}
+# 출력: 차단 시 {"decision": "block", "reason": "..."} / 통과 시 무출력 (approve 금지)
 
 set -euo pipefail
 
@@ -39,4 +41,5 @@ if echo "$COMMAND" | grep -qE 'git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+
   fi
 fi
 
-echo '{"decision": "approve"}'
+# 통과 → 무출력 (권한 판정 유보)
+exit 0

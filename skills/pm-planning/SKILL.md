@@ -3,6 +3,10 @@
 Loaded by the full-auto orchestrator at Phase 0 entry via Read.
 No Ralph/progress/promise code — managed by the orchestrator.
 
+> `{PROGRESS_FILE}`은 오케스트레이터(full-auto.md / plan-docs-full.md의 "파라미터" 표)가 정한 값으로 치환한다
+> (예: full-auto codex/solo: `.claude-full-auto-progress.json`, teams: `.claude-full-auto-teams-progress.json`,
+> plan-docs-full: `.claude-plan-docs-full-progress.json`).
+
 ## 전제 조건
 
 - `shared-rules.md`가 이미 로드된 상태
@@ -35,7 +39,7 @@ jq '.phases.phase_0.outputs.projectSize = "Medium"' ...
 
 **Large로 판별된 경우 즉시 DoD 키 추가**:
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mapped --progress-file .claude-full-auto-progress.json
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mapped --progress-file {PROGRESS_FILE}
 ```
 
 ---
@@ -516,7 +520,7 @@ overview.md에 다음 섹션이 **반드시** 포함되어야 합니다:
 **1차와 다를 경우**:
 - Small/Medium → Large로 변경: `add-dod-key stakeholders_mapped` 호출
   ```bash
-  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mapped --progress-file .claude-full-auto-progress.json
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mapped --progress-file {PROGRESS_FILE}
   ```
 - Large → Medium/Small로 변경: Large 전용 DoD 키 삭제 (jq로 직접 제거)
 

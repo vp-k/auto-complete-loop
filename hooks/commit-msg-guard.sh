@@ -8,8 +8,10 @@
 # - Directive: / Rejected: / Consensus: / Scope-risk: 트레일러 포함 시 면제
 # - [auto] prefix가 없는 커밋은 모두 통과 (사용자 수동 커밋은 본 훅 관여 X)
 #
+# NOTE: hooks.json에는 통합 디스패처(bash-guards.sh)만 등록된다. 이 파일은 잔존 유지본.
+#
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
-# 출력: {"decision": "block", "reason": "..."} 또는 {"decision": "approve"}
+# 출력: 차단 시 {"decision": "block", "reason": "..."} / 통과 시 무출력 (approve 금지)
 
 set -euo pipefail
 
@@ -28,32 +30,32 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || {
 # git commit 커맨드가 아니면 즉시 통과
 # git global option(-C, -c, --git-dir, --work-tree)이 앞에 있어도 commit을 포함하면 검사
 if ! echo "$COMMAND" | grep -qE 'git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+\S+=\S+|--git-dir[[:space:]]+\S+|--work-tree[[:space:]]+\S+))*[[:space:]]+commit'; then
-  echo '{"decision": "approve"}'
+  exit 0 # 통과 → 무출력
   exit 0
 fi
 
 # -m / --message 플래그가 없으면 (에디터 사용) 본 훅은 검증하지 않음
 if ! echo "$COMMAND" | grep -qE -- '(-m.|--message[[:space:]=])'; then
-  echo '{"decision": "approve"}'
+  exit 0 # 통과 → 무출력
   exit 0
 fi
 
 # [auto] 표식이 없으면 통과 (수동 커밋)
 if ! echo "$COMMAND" | grep -qE '\[auto\]'; then
-  echo '{"decision": "approve"}'
+  exit 0 # 통과 → 무출력
   exit 0
 fi
 
 # 면제 키워드 (스코프 전역 커밋은 US-ID 불필요)
 EXEMPT_PATTERN='스캐폴딩|scaffolding|infrastructure|E2E 프레임워크|E2E framework|최종 검증|폴리싱|polishing|Directive:|Rejected:|Consensus:|Scope-risk:'
 if echo "$COMMAND" | grep -qE "$EXEMPT_PATTERN"; then
-  echo '{"decision": "approve"}'
+  exit 0 # 통과 → 무출력
   exit 0
 fi
 
 # US-F-### 또는 US-B-### 존재 체크
 if echo "$COMMAND" | grep -qE 'US-[FB]-[0-9]+'; then
-  echo '{"decision": "approve"}'
+  exit 0 # 통과 → 무출력
   exit 0
 fi
 

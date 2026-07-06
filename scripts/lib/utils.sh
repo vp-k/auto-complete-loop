@@ -51,7 +51,7 @@ record_verification() {
   if [[ -f "$VERIFICATION_FILE" ]]; then
     jq_inplace "$VERIFICATION_FILE" --arg k "$key" --argjson v "$json" '.[$k] = $v'
   else
-    jq -n --arg k "$key" --argjson v "$json" '{($k): $v}' > "$VERIFICATION_FILE"
+    jq -n --arg k "$key" --argjson v "$json" '{($k): $v}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 }
 
@@ -67,24 +67,85 @@ record_verification_qd() {
     jq_inplace "$VERIFICATION_FILE" --arg k "$key" --argjson v "$json" \
       '.qualityDimensions = ((.qualityDimensions // {}) + {($k): $v})'
   else
-    jq -n --arg k "$key" --argjson v "$json" '{"qualityDimensions": {($k): $v}}' > "$VERIFICATION_FILE"
+    jq -n --arg k "$key" --argjson v "$json" '{"qualityDimensions": {($k): $v}}' | write_json_atomic "$VERIFICATION_FILE"
   fi
 }
 
-# 안전한 jq 인플레이스 업데이트 (temp 파일 자동 정리 + 무결성 검증)
+# ─── 원자적 JSON 파일 쓰기 ───
+# `jq -n ... > "$FILE"` 직접 리다이렉트는 jq 실패/중단 시 파일을 truncate로 파괴한다.
+# tmp에 먼저 쓰고 유효성 검증 후 mv로 교체 — 실패 시 기존 파일 무손상.
+# Usage: write_json_atomic <file> [json_string]   (json 인수 생략 시 stdin에서 읽음)
+write_json_atomic() {
+  local file="${1:?write_json_atomic: file argument required}"
+  local json="${2:-}"
+  local tmp
+  tmp=$(mktemp)
+  if [[ -n "$json" ]]; then
+    printf '%s\n' "$json" > "$tmp"
+  else
+    cat > "$tmp"
+  fi
+  if [[ ! -s "$tmp" ]]; then
+    rm -f "$tmp"
+    die "write_json_atomic: refusing to write empty content to $file"
+  fi
+  if ! jq empty "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    die "write_json_atomic: refusing to write invalid JSON to $file"
+  fi
+  mv "$tmp" "$file"
+}
+
+# 안전한 jq 인플레이스 업데이트 (temp 파일 자동 정리 + 무결성 검증 + self-heal + 베스트에포트 락)
 jq_inplace() {
   local file="$1"; shift
+
+  # ── 베스트에포트 스핀락 (mkdir 기반 — flock은 Git Bash에 없을 수 있음) ──
+  # 같은 파일 대상 동시 업데이트로 인한 lost-update 완화. 최대 2초 대기 후 경고하고 진행.
+  local _ji_lockdir="${file}.lock.d" _ji_locked=false _ji_i
+  for ((_ji_i = 0; _ji_i < 20; _ji_i++)); do
+    if mkdir "$_ji_lockdir" 2>/dev/null; then
+      _ji_locked=true
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$_ji_locked" != "true" ]]; then
+    echo "WARNING: jq_inplace: lock busy for $file (waited 2s) — proceeding without lock" >&2
+  fi
+  # 락 해제 헬퍼 (die 경로 포함 모든 종료 지점에서 호출)
+  _ji_unlock() { [[ "$_ji_locked" == "true" ]] && rmdir "$_ji_lockdir" 2>/dev/null; return 0; }
+
+  # ── self-heal: 대상 파일이 존재하는데 유효 JSON이 아니면(빈 파일 포함) 백업 후 {}로 초기화 ──
+  # 무음 소실 방지: 이전에는 jq가 즉시 실패해 게이트 기록이 통째로 사라졌다.
+  if [[ -f "$file" ]] && ! jq -e type "$file" >/dev/null 2>&1; then
+    local _ji_backup
+    _ji_backup="${file}.corrupt.$(date +%s 2>/dev/null || echo 0)"
+    cp "$file" "$_ji_backup" 2>/dev/null || true
+    echo "WARNING: jq_inplace: $file is not valid JSON — backed up to $_ji_backup and reset to {}" >&2
+    printf '{}\n' > "$file"
+  fi
+
   local tmp
   tmp=$(mktemp)
   if jq "$@" "$file" > "$tmp"; then
+    # 출력이 비어 있으면 die (mv 시 대상 파일이 빈 파일로 파괴되는 것 방지)
+    if [[ ! -s "$tmp" ]]; then
+      rm -f "$tmp"
+      _ji_unlock
+      die "jq produced empty output for $file"
+    fi
     # 출력이 유효한 JSON인지 검증 (손상 방지)
     if ! jq empty "$tmp" 2>/dev/null; then
       rm -f "$tmp"
+      _ji_unlock
       die "jq produced invalid JSON for $file"
     fi
     mv "$tmp" "$file"
+    _ji_unlock
   else
     rm -f "$tmp"
+    _ji_unlock
     die "jq update failed for $file"
   fi
 }

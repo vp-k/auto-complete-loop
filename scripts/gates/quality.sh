@@ -1,9 +1,96 @@
 # gates/quality.sh — 빌드/타입체크/린트/테스트 품질 게이트
 
+# ─── quality-gate 결과 캐시 ───
+# 같은 코드 상태(git 지문)에서 이미 pass한 게이트를 재실행하지 않는다.
+# full-auto 한 런에서 Phase 2/3/4/live-testing이 각각 quality-gate를 호출하므로
+# 코드 미변경 시 재실행은 낭비. 실패 결과는 캐시하지 않는다 (실패 후엔 항상 재실행).
+
+# 캐시 파일 위치: git 레포면 .git/ 내부 (git add -A로도 커밋 불가능한 안전 위치).
+# 캐시는 git 지문 기반이라 git 없는 환경에서는 어차피 비활성 — 폴백 경로는 형식상 유지.
+quality_cache_file() {
+  local gd
+  gd=$(git rev-parse --git-dir 2>/dev/null) || { printf '%s' ".claude-quality-gate-cache.json"; return; }
+  printf '%s/claude-quality-gate-cache.json' "$gd"
+}
+
+# 현재 코드 상태 지문: HEAD 커밋 해시 + working tree 상태 해시.
+# 상태 해시 = porcelain(파일 목록/상태) + git diff HEAD(tracked 변경 "내용")
+#            + untracked 파일 내용. porcelain만으로는 dirty 파일을 재수정해도
+#            지문이 같아 stale pass 스킵이 발생하므로 내용까지 포함한다.
+# git 미설치 / git 레포 아님 / 커밋 없음 → 실패 반환 → 캐시 기능 자동 비활성(항상 실행).
+quality_fingerprint() {
+  command -v git >/dev/null 2>&1 || return 1
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  local head state_hash
+  head=$(git rev-parse HEAD 2>/dev/null) || return 1
+  # 워크플로우 런타임 산출물(.claude-*)은 코드 상태가 아니므로 전 구간에서 제외
+  # — 검증/베이스라인 파일 자신이 지문을 오염시켜 캐시 미스 나는 것 방지.
+  # untracked 내용은 10MB 캡 (비정상적으로 큰 미추적 파일로 인한 지연 방지;
+  # 파일 추가/삭제 자체는 porcelain 구간이 항상 감지).
+  state_hash=$(
+    {
+      git status --porcelain 2>/dev/null | grep -vE '\.claude[-/]' || true
+      git diff HEAD -- . ':(exclude).claude*' 2>/dev/null || true
+      git ls-files --others --exclude-standard -z -- . ':(exclude).claude*' 2>/dev/null \
+        | sort -z | xargs -0 -r cat 2>/dev/null | head -c 10485760 || true
+    } | git hash-object --stdin 2>/dev/null
+  ) || state_hash=""
+  if [[ -z "$state_hash" ]]; then
+    state_hash=$(
+      {
+        git status --porcelain 2>/dev/null | grep -vE '\.claude[-/]' || true
+        git diff HEAD -- . ':(exclude).claude*' 2>/dev/null || true
+      } | cksum | tr -s ' \t' '-'
+    )
+  fi
+  [[ -n "$state_hash" ]] || return 1
+  printf '%s-%s' "$head" "$state_hash"
+}
+
 # ─── quality-gate: 빌드/타입/린트/테스트 일괄 실행 ───
+# Usage: quality-gate [--force]  (--force: 캐시 무시하고 강제 재실행)
 
 cmd_quality_gate() {
   require_jq
+
+  local force=false _arg
+  for _arg in "$@"; do
+    [[ "$_arg" == "--force" ]] && force=true
+  done
+
+  # 캐시 확인: 지문이 마지막 pass 시점과 동일하면 스킵
+  local fingerprint="" cache_file
+  cache_file=$(quality_cache_file)
+  fingerprint=$(quality_fingerprint) || fingerprint=""
+  if [[ "$force" != "true" ]] && [[ -n "$fingerprint" ]] && [[ -f "$cache_file" ]]; then
+    local cached_fp cached_result
+    cached_fp=$(jq -r '.fingerprint // empty' "$cache_file" 2>/dev/null || true)
+    cached_result=$(jq -r '.result // empty' "$cache_file" 2>/dev/null || true)
+    if [[ "$cached_fp" == "$fingerprint" ]] && [[ "$cached_result" == "pass" ]]; then
+      # 스킵 가드: 캐시 스킵은 이전 pass의 부작용(verification 파일, progress DoD)이
+      # 이미 반영돼 있을 때만 유효. 새 런(상태 파일 아카이브됨 / fresh progress)이면
+      # 스킵 시 stop-hook 게이트가 영원히 미충족 상태로 stall하므로 실제 실행으로 폴백.
+      local side_effects_ok=true
+      [[ -f "$VERIFICATION_FILE" ]] || side_effects_ok=false
+      if [[ "$side_effects_ok" == "true" ]] && [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+        local dod_ok
+        dod_ok=$(jq '
+          if has("dod") then
+            ((if (.dod | has("build_pass")) then (.dod.build_pass.checked == true) else true end)
+             and (if (.dod | has("test_pass")) then (.dod.test_pass.checked == true) else true end)
+             and (if has("consistencyChecks") then (.consistencyChecks.code_quality.checked == true) else true end))
+          else true end' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+        [[ "$dod_ok" == "true" ]] || side_effects_ok=false
+      fi
+      if [[ "$side_effects_ok" == "true" ]]; then
+        echo "[quality-gate] SKIP (unchanged since last pass: ${fingerprint:0:12})"
+        jq_inplace "$VERIFICATION_FILE" --arg ts "$(timestamp)" '.timestamp = $ts'
+        append_gate_history "quality-gate" "pass" '{"cached":true}'
+        return 0
+      fi
+      echo "[quality-gate] cache fingerprint matches but verification/DoD state is missing — running gates"
+    fi
+  fi
 
   echo "=== Quality Gate ==="
 
@@ -277,9 +364,17 @@ cmd_quality_gate() {
     echo "=== WARNING: ALL GATES SKIPPED (no project type detected) ==="
     return 1
   elif [[ "$all_pass" == "true" ]]; then
+    # 성공 시에만 지문 캐시 기록 (게이트 실행이 working tree를 바꿨을 수 있으므로 재계산)
+    fingerprint=$(quality_fingerprint) || fingerprint=""
+    if [[ -n "$fingerprint" ]]; then
+      jq -n --arg fp "$fingerprint" --arg ts "$(timestamp)" \
+        '{"fingerprint": $fp, "timestamp": $ts, "result": "pass"}' > "$cache_file"
+    fi
     echo "=== ALL GATES PASSED ==="
     return 0
   else
+    # 실패는 캐시하지 않음 — stale pass 캐시가 남지 않도록 제거 (--force 실패 케이스 포함)
+    rm -f "$cache_file"
     echo "=== GATE FAILED: ${gate_summary} ==="
     return 1
   fi

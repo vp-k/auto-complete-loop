@@ -13,3 +13,7 @@
 .claude/ralph-loop.local.md
 .claude/ralph-loop-failure-history.local
 .claude/acl-learnings.local.md
+# Quality gate pass cache (legacy non-git fallback path; normally lives in .git/)
+.claude-quality-gate-cache.json
+# Archived state files (stop-hook moves completed run state here; self-ignored too)
+.claude-archive/

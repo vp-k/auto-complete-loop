@@ -54,38 +54,21 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
 태스크 리스트에 다음 3개 태스크를 생성:
 
+> 리뷰 관점(서브카테고리 정의)·리뷰 원칙·심각도 기준·Few-shot 예시·출력 형식은 `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`를 단일 출처로 따른다. 팀원 프롬프트에 정의를 복사하지 말고, 각 팀원이 이 파일을 직접 Read하도록 지시한다. (SEC/ERR/DATA vs PERF/CODE 분할은 "관점 분할 가이드" 섹션 참조)
+
 **태스크 1: Static Review — SEC/ERR/DATA** (sec-reviewer에게 할당)
 ```
 당신은 보안/에러 처리/데이터 일관성 전문 코드 리뷰어입니다.
 
-## 리뷰 원칙 (회의적 리뷰어 역할)
-- 수정이 필요 없다고 판단하더라도, 최소 1개 이상의 개선점을 반드시 찾아라.
-- 의심스러우면 severity를 한 단계 높게 판정하라.
-- "이 정도면 괜찮다"는 판단을 경계하라.
-
-## 전문 리뷰 관점
-1. SEC (보안): SEC-INJ, SEC-XSS, SEC-AUTH, SEC-ACCESS, SEC-TOCTOU, SEC-LLM, SEC-CRYPTO, SEC-TYPE, SEC-RACE, SEC-TIME, SEC-SECRET, SEC-SSRF, SEC-DESER, SEC-SSTI
-2. ERR (에러 처리): try-catch 누락, 에러 응답 불일치, 에지 케이스 미처리
-3. DATA (데이터 무결성): 트랜잭션 누락, 스키마 불일치, race condition
-
-## 심각도 판정 기준 (Few-shot)
-CRITICAL 예시: db.query("SELECT * FROM users WHERE id = " + userId) → SEC-INJ
-HIGH 예시: catch(e) {} 빈 catch 블록 → ERR
+## 리뷰 규칙 (단일 출처)
+Read ${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md 를 읽고 다음을 따르세요:
+- "리뷰 관점 (전체)" 섹션의 SEC/ERR/DATA 정의 — 이 3개 관점만 검토 (PERF/CODE는 quality-reviewer 담당)
+- "리뷰 원칙 (회의적 리뷰어 역할)", "심각도 기준", "심각도 판정 기준 (Few-shot 참고)", "Finding 출력 형식" 섹션
 
 ## 리뷰 대상
 [파일 경로 목록]
 
 [Acceptance Criteria가 있으면 여기에 포함]
-
-## 출력 형식
-### {CATEGORY}-{SEVERITY}-{번호}: {제목}
-- 파일: {경로}
-- 라인: {줄번호}
-- 설명: {문제 상세}
-- 권장: {수정안}
-
-finding 없으면 "NO_FINDINGS".
-마지막 줄: FINDING_COUNT: N
 
 ## 상호 도전
 다른 팀원(quality-reviewer, live-tester)의 finding이 공유되면,
@@ -96,24 +79,15 @@ finding 없으면 "NO_FINDINGS".
 ```
 당신은 성능/코드 일관성 전문 코드 리뷰어입니다.
 
-## 리뷰 원칙 (회의적 리뷰어 역할)
-[sec-reviewer와 동일한 원칙]
-
-## 전문 리뷰 관점
-1. PERF (성능): N+1 쿼리, 불필요한 DB 호출, 대량 데이터 미처리, 메모리 누수
-2. CODE (코드 품질): 컨벤션 위반, 패턴 불일치, 타입 안전성 부족, 미사용 코드
-
-## 심각도 판정 기준 (Few-shot)
-MEDIUM 예시: API 응답에서 페이지네이션 없이 전체 목록 반환 → PERF
-LOW 예시: 함수명 getData가 구체적이지 않음 → CODE
+## 리뷰 규칙 (단일 출처)
+Read ${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md 를 읽고 다음을 따르세요:
+- "리뷰 관점 (전체)" 섹션의 PERF/CODE 정의 — 이 2개 관점만 검토 (SEC/ERR/DATA는 sec-reviewer 담당)
+- "리뷰 원칙 (회의적 리뷰어 역할)", "심각도 기준", "심각도 판정 기준 (Few-shot 참고)", "Finding 출력 형식" 섹션
 
 ## 리뷰 대상
 [파일 경로 목록]
 
 [Acceptance Criteria가 있으면 여기에 포함]
-
-## 출력 형식
-[sec-reviewer와 동일]
 
 ## 상호 도전
 sec-reviewer가 보안 관점에서 발견한 이슈에 대해,

@@ -19,7 +19,7 @@
 #   init-ralph <promise> <progress_file> [max_iter]    - Ralph Loop 파일 생성
 #   status [--progress-file <path>]                    - 현재 상태 요약 출력
 #   update-step <step_name> <status> [--progress-file] - 단계 상태 전이
-#   quality-gate [--progress-file <path>]              - 빌드/타입/린트/테스트 일괄 실행
+#   quality-gate [--force] [--progress-file <path>]    - 빌드/타입/린트/테스트 일괄 실행 (pass 결과는 git 지문으로 캐시, --force로 무시)
 #   e2e-gate [--progress-file <path>]                  - E2E 테스트 프레임워크 감지/실행
 #   vuln-scan [--progress-file <path>]                  - 의존성 취약점 자동 검사 (언어별 감지)
 #   secret-scan                                        - 시크릿 유출 스캔 (HARD_FAIL)
@@ -96,10 +96,8 @@ main() {
     page-render-check) cmd_page_render_check "$@" ;;
     functional-flow)   cmd_functional_flow "$@" ;;
     skip-phases)       cmd_skip_phases "$@" ;;
-    doc-size-check)    cmd_doc_size_check "$@" ;;
     checkpoint)        cmd_checkpoint "$@" ;;
     docker-build-check) cmd_docker_build_check "$@" ;;
-    ambiguity-check)   cmd_ambiguity_check "$@" ;;
     clarification-gate) cmd_clarification_gate "$@" ;;
     spec-completeness) cmd_spec_completeness "$@" ;;
     doc-completeness)  cmd_doc_completeness "$@" ;;
@@ -118,7 +116,9 @@ main() {
       echo "  init-ralph <promise> <progress_file> [max] - Create Ralph Loop file"
       echo "  status                                     - Show current status"
       echo "  update-step <step> <status>                - Transition step state"
-      echo "  quality-gate                               - Run build/type/lint/test (+ env manifest)"
+      echo "  quality-gate [--force]                     - Run build/type/lint/test (+ env manifest)"
+      echo "    Caches pass results by git fingerprint (HEAD + status hash); skips when code unchanged."
+      echo "    --force  Ignore cache and re-run all gates"
       echo "  vuln-scan                                  - Dependency vulnerability scan (auto-detect)"
       echo "  secret-scan                                - Scan for hardcoded secrets (HARD_FAIL)"
       echo "  artifact-check                             - Check build artifact exists (SOFT_FAIL)"
@@ -141,10 +141,8 @@ main() {
       echo "  page-render-check [--port N] [--strict]    - Playwright page render check (blank/errors/404)"
       echo "  functional-flow                            - Run project-type-specific smoke scripts (api/frontend/fullstack)"
       echo "  skip-phases <N>                              - Skip Phase 0~(N-1), start from Phase N"
-      echo "  doc-size-check [docs_dir] [threshold_kb]     - Check doc sizes (default 30KB, SOFT)"
       echo "  checkpoint create|list|suggest-rollback       - Git checkpoint management"
       echo "  docker-build-check                           - Dockerfile build verification"
-      echo "  ambiguity-check [docs_dir]                   - Scan for TBD/TODO/ambiguous language (SOFT)"
       echo "  clarification-gate [docs_dir]                - Block on unresolved [NEEDS-CLARIFICATION] tags (HARD_FAIL)"
       echo "  spec-completeness                            - Planning doc completeness check (HARD on CRITICAL)"
       echo "  doc-completeness [docs_dir]                  - Quantitative API/section thresholds for plan-docs-full (HARD_FAIL)"

@@ -149,6 +149,11 @@ ROUND_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
 ### codex-cli 호출 (codex 모드: SEC/ERR/DATA/PERF/CODE 전 관점, dual 모드: SEC/ERR/DATA만)
 
+> **프롬프트 조립 지시**: 리뷰 관점·리뷰 원칙·심각도 기준·Few-shot 예시·출력 형식은 `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`("리뷰 관점 (전체)", "리뷰 원칙 (회의적 리뷰어 역할)", "심각도 기준", "심각도 판정 기준 (Few-shot 참고)", "Finding 출력 형식" 섹션)를 단일 출처로 따른다.
+> 호출 전에 이 파일을 Read하고, 아래 호출 블록의 자리 표시자에 다음을 삽입한다:
+> - `{리뷰 관점 블록}` ← "리뷰 관점 (전체)" 섹션 중 **codex 모드**: SEC/ERR/DATA/PERF/CODE 정의 (standalone 리뷰이므로 IMPL/E2E 제외), **dual 모드**: SEC/ERR/DATA 정의만
+> - `{리뷰 규칙 블록}` ← "리뷰 원칙 (회의적 리뷰어 역할)" + "심각도 기준" + "심각도 판정 기준 (Few-shot 참고)" + "Finding 출력 형식" 섹션 내용
+
 ```bash
 codex exec --skip-git-repo-check '## 역할
 (codex 모드) 당신은 보안/에러 처리/데이터 일관성/성능/코드 품질 전문 코드 리뷰어입니다.
@@ -157,39 +162,9 @@ codex exec --skip-git-repo-check '## 역할
 파일을 직접 찾고, 읽고, 분석하세요. 테스트 파일과 설정 파일은 제외합니다.
 
 ## 전문 리뷰 관점
-1. **Security (SEC)**: 아래 서브카테고리별로 분류하여 보고
-   - SEC-INJ: SQL/NoSQL/Command injection
-   - SEC-XSS: Cross-site scripting, 미이스케이프 출력
-   - SEC-AUTH: 인증/인가 우회, 세션 관리 미흡
-   - SEC-TOCTOU: Time-of-check to time-of-use race condition
-   - SEC-LLM: LLM 출력을 DB/shell/eval에 직접 전달하는 패턴
-   - SEC-CRYPTO: truncation vs hashing, MD5/SHA1, 하드코딩 salt
-   - SEC-TYPE: JS == vs ===, PHP loose comparison 등 type coercion
-   - SEC-RACE: 동시성 race condition (find_or_create without unique index 등)
-   - SEC-TIME: 토큰 만료, 세션 관리 타이밍 이슈
-   - SEC-SECRET: 시크릿/API키 노출, 하드코딩 자격증명
-2. **Error Handling (ERR)**: try-catch 누락, 에러 응답 불일치, 에지 케이스 미처리
-3. **Data Consistency (DATA)**: 트랜잭션 누락, 스키마 불일치, race condition
-4. **Performance (PERF)**: N+1 쿼리, 불필요한 DB 호출, 대량 데이터 미처리, 메모리 누수
-5. **Code Consistency (CODE)**: 컨벤션 위반, 패턴 불일치, 타입 안전성 부족, 미사용 코드
+{리뷰 관점 블록}
 
-## 리뷰 원칙 (회의적 리뷰어 역할)
-- 첫 라운드에서는 최소 1개 이상의 개선점을 반드시 찾아라. 2라운드 이후에는 실제 문제가 없으면 "NO_FINDINGS" 보고 가능.
-- 이전 라운드에서 "수정됨"으로 표시된 항목도 재검증하라. 수정이 불완전하거나 새로운 문제를 도입했을 수 있다.
-- 의심스러우면 severity를 한 단계 높게 판정하라. 과소평가보다 과대평가가 안전하다.
-- "이 정도면 괜찮다"는 판단을 경계하라. 프로덕션에서 장애를 일으킬 코드를 찾는 것이 목표다.
-
-## 심각도 기준
-- CRITICAL: 보안 취약점, 데이터 손실 가능, 심각한 성능 문제
-- HIGH: 주요 버그, 에러 처리 누락, N+1 쿼리, 주요 패턴 위반
-- MEDIUM: 잠재적 문제, 일관성 위반, 잠재적 성능 문제
-- LOW: 사소한 개선, 스타일, 사소한 최적화
-
-## 심각도 판정 기준 (Few-shot 참고)
-**CRITICAL 예시**: `db.query("SELECT * FROM users WHERE id = " + userId)` → SEC-INJ (SQL injection)
-**HIGH 예시**: `catch(e) {}` 빈 catch 블록 → ERR (에러 무시)
-**MEDIUM 예시**: API 응답에서 페이지네이션 없이 전체 목록 반환 → PERF (대량 데이터)
-**LOW 예시**: 함수명 `getData`가 구체적이지 않음 → CODE (네이밍)
+{리뷰 규칙 블록}
 
 ## 리뷰 범위
 ### 범위 지정
@@ -201,17 +176,7 @@ codex exec --skip-git-repo-check '## 역할
 {실제 git diff 출력}
 
 ## 참고: 이전 라운드에서 알려진 이슈 (라운드 2+에만 포함)
-[이전 finding 목록 — 참고용. 이 목록에 없는 새로운 이슈도 반드시 보고하세요]
-
-## 출력 형식
-### {CATEGORY}-{SEVERITY}-{번호}: {제목}
-- 파일: {경로}
-- 라인: {줄번호}
-- 설명: {문제 상세}
-- 권장: {수정안}
-
-finding 없으면 "NO_FINDINGS".
-마지막 줄: FINDING_COUNT: N'
+[이전 finding 목록 — 참고용. 이 목록에 없는 새로운 이슈도 반드시 보고하세요]'
 ```
 
 **호출 실패 시**: 재시도 1회 → 여전히 실패 시 Claude가 해당 관점 직접 리뷰.
@@ -222,6 +187,10 @@ finding 없으면 "NO_FINDINGS".
 
 codex-cli 1차 호출 완료 후, codex-cli를 PERF/CODE 관점으로 2차 순차 호출합니다. 두 호출은 서로 결과를 참조하지 않음.
 
+> **프롬프트 조립 지시**: 1차 호출과 동일하게 `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`를 단일 출처로 사용한다.
+> - `{PERF/CODE 관점 블록}` ← "리뷰 관점 (전체)" 섹션의 PERF/CODE 정의만
+> - `{리뷰 규칙 블록}` ← 1차 호출과 동일 ("리뷰 원칙" + "심각도 기준" + "심각도 판정 기준 (Few-shot 참고)" + "Finding 출력 형식")
+
 ```bash
 codex exec --skip-git-repo-check '## 역할
 당신은 성능/코드 일관성 전문 코드 리뷰어입니다. (1차 codex 리뷰와 독립적으로 수행하며, 서로 결과를 참조하지 않습니다.)
@@ -229,14 +198,9 @@ codex exec --skip-git-repo-check '## 역할
 파일을 직접 찾고, 읽고, 분석하세요. 테스트 파일과 설정 파일은 제외합니다.
 
 ## 전문 리뷰 관점
-1. **Performance (PERF)**: N+1 쿼리, 불필요한 DB 호출, 대량 데이터 미처리, 메모리 누수
-2. **Code Consistency (CODE)**: 컨벤션 위반, 패턴 불일치, 타입 안전성 부족, 미사용 코드
+{PERF/CODE 관점 블록}
 
-## 심각도 기준
-- CRITICAL: 심각한 성능 문제, 메모리 누수
-- HIGH: N+1 쿼리, 주요 패턴 위반
-- MEDIUM: 잠재적 성능 문제, 일관성 위반
-- LOW: 사소한 최적화, 스타일
+{리뷰 규칙 블록}
 
 ## 리뷰 범위
 ### 범위 지정
@@ -248,17 +212,7 @@ codex exec --skip-git-repo-check '## 역할
 {실제 git diff 출력}
 
 ## 참고: 이전 라운드에서 알려진 이슈 (라운드 2+에만 포함)
-[이전 finding 목록 — 참고용. 이 목록에 없는 새로운 이슈도 반드시 보고하세요]
-
-## 출력 형식
-### {CATEGORY}-{SEVERITY}-{번호}: {제목}
-- 파일: {경로}
-- 라인: {줄번호}
-- 설명: {문제 상세}
-- 권장: {수정안}
-
-finding 없으면 NO_FINDINGS.
-마지막 줄: FINDING_COUNT: N'
+[이전 finding 목록 — 참고용. 이 목록에 없는 새로운 이슈도 반드시 보고하세요]'
 ```
 
 **codex 2차 호출 실패 시**: 재시도 1회 → 여전히 실패 시 Claude가 PERF/CODE 직접 리뷰.

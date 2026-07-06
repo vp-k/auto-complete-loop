@@ -1,6 +1,82 @@
-# 코드 리뷰 공통 규칙
+# 코드 리뷰 공통 규칙 (단일 출처)
 
-code-review, code-review-solo 스킬이 공유하는 규칙입니다.
+모든 코드 리뷰 워크플로우(code-review, code-review-solo, team-code-review, code-review-loop, code-reviewer 에이전트)가 공유하는 규칙입니다.
+리뷰 관점(카테고리/서브카테고리 정의), 리뷰 원칙, 심각도 기준, Few-shot 예시, 출력 형식은 **이 파일에만** 정의합니다. 다른 파일에 복사하지 말고 이 파일을 참조하거나, 외부 CLI(codex 등) 프롬프트에는 해당 섹션 내용을 읽어 삽입하세요.
+
+## 리뷰 관점 (전체)
+
+### 1. SEC (보안) — 서브카테고리별로 분류하여 보고
+
+- SEC-INJ: SQL/NoSQL/Command injection, OS command injection
+- SEC-XSS: Cross-site scripting, 미이스케이프 출력
+- SEC-AUTH: 인증/인가 우회, 세션 관리 미흡
+- SEC-ACCESS: 수평/수직 권한 상승 (IDOR, role bypass)
+- SEC-TOCTOU: Time-of-check to time-of-use race condition
+- SEC-LLM: LLM 출력을 DB/shell/eval에 검증 없이 직접 전달, 사용자 입력 경유 prompt injection, 토큰/비용 한도 미설정
+- SEC-CRYPTO: 취약 해시(MD5/SHA1), truncation vs hashing, 하드코딩 salt
+- SEC-TYPE: JS `==` vs `===`, PHP loose comparison 등 type coercion
+- SEC-RACE: 동시성 race condition (find_or_create without unique index 등)
+- SEC-TIME: 토큰 만료, 세션 관리 타이밍 이슈
+- SEC-SECRET: 시크릿/API키 노출, 하드코딩 자격증명
+- SEC-SSRF: Server-Side Request Forgery (사용자 제어 URL로 서버 측 요청)
+- SEC-DESER: 신뢰할 수 없는 데이터의 안전하지 않은 역직렬화
+- SEC-SSTI: Server-Side Template Injection
+
+### 2. ERR (에러 처리)
+
+- try-catch 누락 (I/O, 네트워크, DB 연산), 빈 catch 블록 (예외 무시)
+- 에러 전파 오류, 에러 응답 불일치, 복구 로직 부재
+- 시스템 경계에서 null/undefined 체크 누락, 에지 케이스 미처리
+
+### 3. DATA (데이터 무결성)
+
+- API 경계 입력 검증 누락, 데이터 변환 오류
+- 트랜잭션 누락/불일치, 스키마/타입 불일치, 유니크 제약 누락
+- 레이스 컨디션, 일관성 위반
+
+### 4. PERF (성능)
+
+- N+1 쿼리, 불필요한 DB 호출/연산, 불필요한 동기 연산
+- 페이지네이션 없는 무제한 쿼리, 대량 데이터 미처리
+- 메모리 누수 (미해제 스트림/리스너)
+
+### 5. CODE (코드 품질)
+
+- 중복, 복잡도, 네이밍, 패턴 불일치, 컨벤션 위반, 타입 안전성 부족
+- 미사용/도달 불가 코드, 로직 오류 (off-by-one, 잘못된 조건), 핵심 경로 테스트 커버리지 누락
+- CODE-GOD: God Object/Function (단일 함수/클래스 500+ 줄)
+- CODE-SHOTGUN: Shotgun Surgery (하나의 변경에 10+ 파일 수정 필요)
+- CODE-ENVY: Feature Envy (메서드가 자신보다 다른 클래스의 데이터를 더 많이 사용)
+- CODE-PRIMITIVE: Primitive Obsession (도메인 타입 대신 원시 타입 남용)
+
+### 6. IMPL (구현 완성도) — 적용 조건: SPEC.md 등 스펙 문서가 있는 워크플로우 (full-auto Phase 3 전용)
+
+SPEC.md를 읽고 각 API 엔드포인트/페이지에 대해 검증:
+
+- IMPL-STUB: 빈 함수 body, placeholder 응답 (res.json({}), return null이 유일 로직인 핸들러)
+- IMPL-SCHEMA: SPEC.md API 스키마와 불일치하는 요청/응답 구조 (필드 누락, 타입 불일치)
+- IMPL-MISSING: SPEC에 정의됐지만 코드에 미구현된 엔드포인트/페이지/컴포넌트
+- IMPL-HARDCODE: 하드코딩된 mock 데이터가 프로덕션 코드에 존재 (테스트 파일 제외)
+- IMPL-FLOW: 핵심 플로우(회원가입→로그인→프로필 등)의 연결이 실제로 작동하지 않음
+
+### 7. E2E (E2E 테스트 품질) — 적용 조건: full-auto Phase 3 전용 (E2E 테스트가 요구되는 프로젝트)
+
+- E2E 시나리오가 SPEC.md의 핵심 유저스토리를 커버하는가
+- 테스트 독립성 (상태 공유 없음)
+- 셀렉터 안정성 (data-testid > semantic > text)
+- mock/seed 데이터가 실제 스키마에서 파생되었는가
+- 외부 서비스만 모킹 (자체 백엔드는 실제 사용)
+
+## 관점 분할 가이드
+
+| 모드 | 관점 분할 |
+|------|-----------|
+| **codex 단독** (code-review SKILL, code-review-loop codex 모드) | 1회 호출로 전 관점 (SEC/ERR/DATA/PERF/CODE, 적용 조건 충족 시 IMPL/E2E 포함) |
+| **dual 분할** (code-review-loop dual 모드) | codex 1차: SEC/ERR/DATA → codex 2차: PERF/CODE. 순차 호출, 서로 결과 참조 금지 |
+| **solo 3-pass** (code-review-solo SKILL) | Pass 1: SEC+ERR → Pass 2: DATA+PERF → Pass 3: CODE+IMPL(+E2E). 각 패스는 해당 관점만 검토 |
+| **team** (team-code-review SKILL) | sec-reviewer: SEC/ERR/DATA, quality-reviewer: PERF/CODE 병렬 (+ live-tester, 조건부 ux-reviewer) |
+
+- IMPL/E2E는 SPEC 기반 워크플로우(full-auto Phase 3)에서만 기본 포함. standalone `/code-review-loop`의 codex/dual 모드는 SEC/ERR/DATA/PERF/CODE만 사용하며, solo 3-pass의 Pass 3 IMPL(+E2E)은 프로젝트에 SPEC.md가 존재할 때만 검토 대상에 포함한다.
 
 ## 리뷰 원칙 (회의적 리뷰어 역할)
 

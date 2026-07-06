@@ -16,6 +16,8 @@
 set -euo pipefail
 
 # jq 의존성 사전 검증
+# fail-open: jq가 없으면 검증 불가 → 경고 후 stop을 승인(approve)하여 루프를 끝낸다.
+# (fail-closed로 block하면 jq 없는 환경에서 사용자가 무한 루프에 갇히므로 의도적으로 fail-open)
 if ! command -v jq &>/dev/null; then
   echo "Auto Complete Loop: ERROR - jq is required but not found. Install jq to use Ralph Loop."
   echo '{"decision": "approve"}'
@@ -32,6 +34,35 @@ cleanup() {
   done
 }
 trap cleanup EXIT
+
+# <promise>TEXT</promise> 태그 내용 추출 (멀티라인/공백 내성)
+# 개행(CR/LF)을 공백으로 평탄화(-s: 연속 공백 압축)한 뒤 마지막 <promise>...</promise>
+# 내용을 트림하여 반환 — 앞쪽에 promise 태그를 "인용"한 텍스트가 있어도 실제 선언(마지막)을 채택.
+# 태그 주변에 다른 텍스트가 있거나 태그가 여러 줄에 걸쳐 있어도 매칭된다.
+extract_promise_text() {
+  printf '%s' "$1" \
+    | tr -s '\r\n' ' ' \
+    | grep -o '<promise>[^<]*</promise>' \
+    | tail -1 \
+    | sed -e 's/^<promise>//' -e 's|</promise>$||' \
+          -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+# 상태 파일 아카이브 (삭제 대신 보존 — misfire 시 복구 가능)
+# 아카이브 실패(권한 등) 시 기존 동작(rm)으로 폴백.
+# 경로는 프로젝트 루트(hook 실행 cwd) 기준 — 상태 파일들과 동일 기준.
+ARCHIVE_ROOT=".claude-archive"
+archive_or_remove() {
+  local _f="$1" _dir="$2"
+  [[ -f "$_f" ]] || return 0
+  if mkdir -p "$_dir" 2>/dev/null && mv -f "$_f" "$_dir/" 2>/dev/null; then
+    # 자기-ignore: 사용자 프로젝트의 `git add -A` 커밋에 아카이브가 쓸려 들어가지
+    # 않도록 아카이브 루트에 전체 무시 .gitignore를 1회 생성 (.gitignore 자신도 무시됨)
+    [[ -f "$ARCHIVE_ROOT/.gitignore" ]] || printf '*\n' > "$ARCHIVE_ROOT/.gitignore" 2>/dev/null || true
+    return 0
+  fi
+  rm -f "$_f"
+}
 
 # 상태 파일이 없으면 정상 종료 허용 (단, progress 파일 미완료 시 WARNING)
 if [[ ! -f "$RALPH_STATE_FILE" ]]; then
@@ -125,11 +156,10 @@ fi
 
 # 완료 Promise 검사
 if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
-  # 먼저 <promise> 태그 존재 여부를 grep으로 확인 (perl 불필요)
+  # promise 태그 내용 추출 — 멀티라인/공백/주변 텍스트 내성 (extract_promise_text 참조)
   PROMISE_TEXT=""
-  if [[ -n "$LAST_OUTPUT" ]] && echo "$LAST_OUTPUT" | grep -q '<promise>' 2>/dev/null; then
-    # sed로 promise 태그 내용 추출 (단일 라인 전용 — 규약상 항상 단일 라인)
-    PROMISE_TEXT=$(echo "$LAST_OUTPUT" | sed -n 's/.*<promise>\(.*\)<\/promise>.*/\1/p' | head -1 | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if [[ -n "$LAST_OUTPUT" ]]; then
+    PROMISE_TEXT=$(extract_promise_text "$LAST_OUTPUT" || true)
   fi
 
   if [[ -n "$PROMISE_TEXT" ]] && [[ "$PROMISE_TEXT" = "$COMPLETION_PROMISE" ]]; then
@@ -335,11 +365,16 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       done
 
       rm -f "$RALPH_STATE_FILE" ".claude/ralph-loop-failure-history.local"
-      # 검증 완료된 progress 파일 정리
+      # 검증 완료된 progress/verification 파일 정리: 삭제 대신 아카이브 (오판 시 복구 가능)
+      ARCHIVE_DIR="${ARCHIVE_ROOT}/$(date -u '+%Y%m%dT%H%M%SZ')"
       for pf in "${VERIFIED_PROGRESS_FILES[@]}"; do
-        rm -f "$pf"
+        archive_or_remove "$pf" "$ARCHIVE_DIR"
       done
-      rm -f ".claude-verification.json"
+      archive_or_remove ".claude-verification.json" "$ARCHIVE_DIR"
+      # 오래된 아카이브 정리 (7일 초과 디렉토리 삭제)
+      if [[ -d "$ARCHIVE_ROOT" ]]; then
+        find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+      fi
       exit 0
     else
       echo "Auto Complete Loop: Promise detected but verification failed: ${FAILURE_REASONS}Continuing loop..."

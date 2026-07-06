@@ -125,10 +125,25 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 
 #### 기획 수준 원칙 / 문서 품질 체크리스트 / 검토 기준 / 피드백 우선순위
 
-> 공통 기획 규칙은 아래 파일을 Read하여 적용합니다.
+> 공통 기획 규칙은 아래 파일을 **Step 1-2 진입 시 1회만** Read하여 적용합니다.
 > Read ${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md
 
 기획 수준 원칙(MVP 금지, TDD, E2E), 문서 품질 체크리스트, 검토 기준, 피드백 우선순위 모두 위 템플릿을 따릅니다.
+
+#### 템플릿 로드 규칙 (lazy-load — 컨텍스트 절약)
+
+**템플릿을 미리 전부 Read하지 않는다.** 전 단계에 걸쳐 필요한 것은 `doc-planning-common.md` 하나뿐이며(위에서 1회 Read), 나머지 템플릿은 아래 매핑에 따라 **해당 산출물을 작성하는 시점에만** Read한다:
+
+| 산출물 (읽는 시점) | 그때만 Read할 파일 |
+|---|---|
+| 모든 문서 공통 규칙 — Step 1-2 진입 시 1회 | `${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md` |
+| SPEC.md — 작성 시작 시점 | `${CLAUDE_PLUGIN_ROOT}/templates/SPEC.md` (구조 스켈레톤) |
+| 보안 문서(security-authn-authz.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/security-authn-authz.md` |
+| 에러 정책 문서(error-policy.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/error-policy.md` |
+| 로깅 표준 문서(logging-standard.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/logging-standard.md` |
+| 프로젝트 CLAUDE.md — Phase 0(pm-planning)에서 처리 | `templates/project-claude-md.md`는 **cp 전용**, Read 불필요 |
+
+지금 작성 중인 문서와 무관한 템플릿은 읽지 않는다. 다음 문서로 넘어갈 때 그 문서에 필요한 템플릿을 그 시점에 Read한다.
 
 ### Step 1-3: Iteration 관리
 

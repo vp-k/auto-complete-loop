@@ -64,6 +64,32 @@ archive_or_remove() {
   rm -f "$_f"
 }
 
+# ─── Lesson Ledger: 기억은 저장이 아니라 다음 실행 조건 ───
+# .claude/acl-learnings.local.md에 LESSON 항목을 append.
+# session-start.sh가 최근 LESSON을 다음 세션 시작 컨텍스트로 주입한다.
+# 순환 방지: 동일한 "다음 실행 조건"이 이미 있으면 skip. 실패해도 hook 동작에 영향 없음.
+LEARNINGS_FILE=".claude/acl-learnings.local.md"
+append_lesson() {
+  local _source="$1" _situation="$2" _failure="$3" _next="$4"
+  # 개행 평탄화 + 길이 제한 (한 줄 명령형 유지)
+  _situation=$(printf '%s' "$_situation" | tr '\r\n' '  ' 2>/dev/null || true); _situation="${_situation:0:500}"
+  _failure=$(printf '%s' "$_failure" | tr '\r\n' '  ' 2>/dev/null || true); _failure="${_failure:0:500}"
+  _next=$(printf '%s' "$_next" | tr '\r\n' '  ' 2>/dev/null || true); _next="${_next:0:500}"
+  [[ -n "$_next" ]] || return 0
+  # 순환 방지: 동일 "다음 실행 조건"이 이미 기록되어 있으면 중복 append 금지
+  if [[ -f "$LEARNINGS_FILE" ]] && grep -qF -- "- 다음 실행 조건: ${_next}" "$LEARNINGS_FILE" 2>/dev/null; then
+    return 0
+  fi
+  mkdir -p .claude 2>/dev/null || return 0
+  {
+    printf '\n## LESSON | %s | source=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')" "$_source"
+    printf -- '- 상황: %s\n' "${_situation:-unknown}"
+    printf -- '- 실패/결정: %s\n' "${_failure:-unknown}"
+    printf -- '- 다음 실행 조건: %s\n' "$_next"
+  } >> "$LEARNINGS_FILE" 2>/dev/null || true
+  return 0
+}
+
 # 상태 파일이 없으면 정상 종료 허용 (단, progress 파일 미완료 시 WARNING)
 if [[ ! -f "$RALPH_STATE_FILE" ]]; then
   # A1: 비-Ralph 워크플로우에서도 미완료 progress 파일 경고
@@ -429,8 +455,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
     if [[ "$VERIFICATION_PASSED" = "true" ]]; then
       echo "Auto Complete Loop: Promise verified. All conditions met."
 
-      # A3: 세션 학습 추출 — progress 파일 삭제 전에 핵심 결정/패턴 저장
-      LEARNINGS_FILE=".claude/acl-learnings.local.md"
+      # A3: 세션 학습 추출 — progress 파일 삭제 전에 핵심 결정/패턴을 LESSON 포맷으로 저장
       for pf in "${VERIFIED_PROGRESS_FILES[@]}"; do
         if [[ -f "$pf" ]]; then
           _has_handoff=$(jq 'has("handoff")' "$pf" 2>/dev/null || echo "false")
@@ -446,14 +471,17 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
             ' "$pf" 2>/dev/null || true)
 
             if [[ -n "$_key_decisions" ]] || [[ -n "$_scope_reductions" ]] || [[ -n "$_warnings" ]]; then
-              mkdir -p .claude
-              {
-                echo ""
-                echo "## $(date '+%Y-%m-%d %H:%M') — ${pf}"
-                [[ -n "$_key_decisions" ]] && echo "- Decisions: $_key_decisions"
-                [[ -n "$_scope_reductions" ]] && echo "- $_scope_reductions"
-                [[ -n "$_warnings" ]] && echo "- $_warnings"
-              } >> "$LEARNINGS_FILE"
+              _summary=""
+              [[ -n "$_key_decisions" ]] && _summary="Decisions: ${_key_decisions}"
+              [[ -n "$_scope_reductions" ]] && _summary="${_summary:+${_summary} | }${_scope_reductions}"
+              [[ -n "$_warnings" ]] && _summary="${_summary:+${_summary} | }${_warnings}"
+              # 다음 실행 조건: 경고가 있으면 경고 반영을, 없으면 결정 유지를 명령형으로
+              if [[ -n "$_warnings" ]]; then
+                _next_cond="이전 완주(${pf})의 경고를 먼저 확인·반영하라: ${_warnings#Warnings: }"
+              else
+                _next_cond="이전 완주(${pf})의 결정을 전제로 진행하라: ${_key_decisions:-${_scope_reductions#Scope reductions: }}"
+              fi
+              append_lesson "completion" "${pf} 워크플로우 완주" "$_summary" "$_next_cond" || true
             fi
           fi
         fi
@@ -499,6 +527,16 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         echo "Auto Complete Loop: WARNING - Same failure repeated ${REPEAT_COUNT} times. Breaking loop due to unresolvable verification failures."
         echo "Auto Complete Loop: Unresolved issues: ${FAILURE_REASONS}"
         echo "Auto Complete Loop: Progress files preserved for manual inspection."
+        # LESSON 기록: 반복 실패 강제 탈출 — 실패 게이트명 + 해결 명령을 기계적으로 구성해
+        # 다음 세션의 실행 조건으로 남긴다 (session-start.sh가 주입)
+        _remedies=$(printf '%s' "$FAILURE_REASONS" | grep -o "run '[^']*'" | sed "s/^run '//; s/'\$//" | sort -u | paste -sd ';' - 2>/dev/null | sed 's/;/; /g' || true)
+        _gate_names=$(printf '%s' "$FAILURE_REASONS" | grep -oE '[A-Za-z]+=(missing|fail|soft_fail)' | cut -d= -f1 | sort -u | paste -sd ',' - 2>/dev/null || true)
+        if [[ -n "${_remedies:-}" ]]; then
+          _next_cond="완주 선언 전에 실패 게이트(${_gate_names:-unknown})를 먼저 해결하라 — 실행: ${_remedies}"
+        else
+          _next_cond="완주 선언 전에 다음 실패 사유를 먼저 해결하라: ${FAILURE_REASONS}"
+        fi
+        append_lesson "stop-hook-3strike" "Ralph Loop 완주 검증에서 동일 실패 ${REPEAT_COUNT}회 반복 → 강제 탈출" "${FAILURE_REASONS}" "${_next_cond}" || true
         rm -f "$RALPH_STATE_FILE" "$FAILURE_HISTORY_FILE"
         # exit 0 to stop the loop, but progress files are NOT deleted (unlike success path)
         exit 0

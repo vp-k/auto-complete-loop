@@ -26,6 +26,11 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" commit-msg-guard.sh",
             "description": "[auto] 커밋 메시지의 US-ID suffix 의무화 검증"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" verification-write-guard.sh",
+            "description": "verification.json Bash 경유 쓰기 조작 차단 (게이트 증거 파일 보호, fail-closed)"
           }
         ]
       },

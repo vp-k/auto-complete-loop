@@ -383,6 +383,14 @@ cmd_implementation_depth() {
     return 1
   elif [[ $total_count -gt 0 ]]; then
     echo ""
+    # SOFT → HARD 승격: 직전 실행도 fail/warn이면 이번엔 하드 실패 (soft_gate_escalation은 append 전에 호출)
+    if soft_gate_escalation "implementation-depth" "warn"; then
+      echo "[implementation-depth] ESCALATED: 연속 실패 → HARD 승격, pass까지 유지 (규칙은 적는 게 아니라 강제되어야 한다)"
+      # 증거 정합: verification.json의 result도 fail로 재기록 (게이트 판정과 일치)
+      [[ -f "$VERIFICATION_FILE" ]] && jq_inplace "$VERIFICATION_FILE" '.implementationDepth.result = "fail" | .implementationDepth.escalated = true'
+      append_gate_history "implementation-depth" "fail" "$(jq -c '. + {"escalated":true}' <<< "$details")"
+      return 1
+    fi
     echo "[IMPL-DEPTH] WARN: $total_count findings (threshold: $threshold)"
     append_gate_history "implementation-depth" "warn" "$details"
     return 0
@@ -441,12 +449,13 @@ cmd_test_quality() {
         [[ -z "$tf" ]] && continue
         # test/it 호출 수
         local tc
-        tc=$(grep -cE '^\s*(test|it)\s*\(' "$tf" 2>/dev/null || echo "0")
+        # 주의: grep -c는 무매치 시 "0"을 출력하고 exit 1이므로 `|| echo 0`을 쓰면 "0\n0"이 된다
+        tc=$(grep -cE '^\s*(test|it)\s*\(' "$tf" 2>/dev/null || true); tc=${tc:-0}
         total_tests=$((total_tests + tc))
 
         # assertion 줄 수 기반 비율 (파일 단위가 아닌 assertion 밀도)
         local ac
-        ac=$(grep -cE '(expect|assert|should|toBe|toEqual|toHave|toContain|toThrow|toMatch)' "$tf" 2>/dev/null || echo "0")
+        ac=$(grep -cE '(expect|assert|should|toBe|toEqual|toHave|toContain|toThrow|toMatch)' "$tf" 2>/dev/null || true); ac=${ac:-0}
         # assertion 줄이 테스트 수 이상이면 전량 커버, 아니면 비례 배분
         if [[ $ac -ge $tc ]] && [[ $tc -gt 0 ]]; then
           assertion_tests=$((assertion_tests + tc))
@@ -456,7 +465,7 @@ cmd_test_quality() {
 
         # skip 수
         local sc
-        sc=$(grep -cE '(test|it|describe)\.(skip|todo)\(' "$tf" 2>/dev/null || echo "0")
+        sc=$(grep -cE '(test|it|describe)\.(skip|todo)\(' "$tf" 2>/dev/null || true); sc=${sc:-0}
         skipped_tests=$((skipped_tests + sc))
       done <<< "$test_files"
       ;;
@@ -468,11 +477,11 @@ cmd_test_quality() {
       while IFS= read -r tf; do
         [[ -z "$tf" ]] && continue
         local tc
-        tc=$(grep -cE '^\s*def test_|^\s*async def test_' "$tf" 2>/dev/null || echo "0")
+        tc=$(grep -cE '^\s*def test_|^\s*async def test_' "$tf" 2>/dev/null || true); tc=${tc:-0}
         total_tests=$((total_tests + tc))
 
         local ac
-        ac=$(grep -cE '(assert |self\.assert|pytest\.raises)' "$tf" 2>/dev/null || echo "0")
+        ac=$(grep -cE '(assert |self\.assert|pytest\.raises)' "$tf" 2>/dev/null || true); ac=${ac:-0}
         if [[ $ac -ge $tc ]] && [[ $tc -gt 0 ]]; then
           assertion_tests=$((assertion_tests + tc))
         else
@@ -480,7 +489,7 @@ cmd_test_quality() {
         fi
 
         local sc
-        sc=$(grep -cE '@pytest\.mark\.skip|@unittest\.skip' "$tf" 2>/dev/null || echo "0")
+        sc=$(grep -cE '@pytest\.mark\.skip|@unittest\.skip' "$tf" 2>/dev/null || true); sc=${sc:-0}
         skipped_tests=$((skipped_tests + sc))
       done <<< "$test_files"
       ;;
@@ -492,11 +501,11 @@ cmd_test_quality() {
       while IFS= read -r tf; do
         [[ -z "$tf" ]] && continue
         local tc
-        tc=$(grep -cE '^func Test' "$tf" 2>/dev/null || echo "0")
+        tc=$(grep -cE '^func Test' "$tf" 2>/dev/null || true); tc=${tc:-0}
         total_tests=$((total_tests + tc))
 
         local ac
-        ac=$(grep -cE '(t\.(Error|Fatal|Fail|Assert)|assert\.|require\.)' "$tf" 2>/dev/null || echo "0")
+        ac=$(grep -cE '(t\.(Error|Fatal|Fail|Assert)|assert\.|require\.)' "$tf" 2>/dev/null || true); ac=${ac:-0}
         if [[ $ac -ge $tc ]] && [[ $tc -gt 0 ]]; then
           assertion_tests=$((assertion_tests + tc))
         else
@@ -504,7 +513,7 @@ cmd_test_quality() {
         fi
 
         local sc
-        sc=$(grep -cE 't\.Skip\(' "$tf" 2>/dev/null || echo "0")
+        sc=$(grep -cE 't\.Skip\(' "$tf" 2>/dev/null || true); sc=${sc:-0}
         skipped_tests=$((skipped_tests + sc))
       done <<< "$test_files"
       ;;
@@ -517,6 +526,12 @@ cmd_test_quality() {
   esac
 
   if [[ $total_tests -eq 0 ]]; then
+    # SOFT → HARD 승격: 직전 실행도 fail/warn이면 이번엔 하드 실패
+    if soft_gate_escalation "test-quality" "warn"; then
+      echo "[test-quality] ESCALATED: 연속 실패 → HARD 승격, pass까지 유지 (규칙은 적는 게 아니라 강제되어야 한다)"
+      append_gate_history "test-quality" "fail" '{"totalTests":0,"escalated":true}'
+      return 1
+    fi
     echo "[TEST-QUALITY] WARN: No test functions found"
     append_gate_history "test-quality" "warn" '{"totalTests":0}'
     return 0
@@ -590,6 +605,12 @@ cmd_test_quality() {
 
   if [[ $issues -gt 0 ]]; then
     echo ""
+    # SOFT → HARD 승격: 직전 실행도 fail/warn이면 이번엔 하드 실패 (soft_gate_escalation은 append 전에 호출)
+    if soft_gate_escalation "test-quality" "warn"; then
+      echo "[test-quality] ESCALATED: 연속 실패 → HARD 승격, pass까지 유지 (규칙은 적는 게 아니라 강제되어야 한다)"
+      append_gate_history "test-quality" "fail" "$(jq -c '. + {"escalated":true}' <<< "$details")"
+      return 1
+    fi
     echo "[TEST-QUALITY] WARN: $issues quality issues found"
     append_gate_history "test-quality" "warn" "$details"
     return 0

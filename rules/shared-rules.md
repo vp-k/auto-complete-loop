@@ -1,9 +1,11 @@
 # 공통 규칙 (모든 스킬 적용)
 
 ## 검증 결과 기록 (필수)
-모든 검증(빌드/테스트/린트) 결과는 `.claude-verification.json`에 기록합니다.
+모든 검증(빌드/테스트/린트) 결과는 `.claude-verification.json`에 기록되어야 합니다.
 증거 없는 완료 선언은 금지입니다.
-품질 게이트는 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate`로 실행합니다.
+- 빌드/테스트/린트: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate` 실행 — 스크립트가 자동 기록
+- 소프트 품질 차원(featureCompleteness/security/visualRegression 등): `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 로 기록
+- **verification.json 직접 편집(Edit/Write/Bash 리다이렉트)은 가드가 차단함** — 반드시 위 서브커맨드를 사용 (읽기는 허용)
 
 ## DoD 확인
 프로젝트 루트의 `DONE.md`가 있으면 반드시 읽고 체크리스트로 사용합니다.
@@ -24,8 +26,8 @@
 3.5. **E2E 테스트 실행** (phases.phase_2.e2e.applicable==true인 경우):
      - `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file {PROGRESS_FILE}`
      - phases.phase_2.e2e.scenarios의 모든 시나리오 status=="completed" 확인
-     - E2E 결과를 `.claude-verification.json`의 `e2e` 필드에 기록
-4. 결과를 `.claude-verification.json`에 기록
+     - E2E 결과는 e2e-gate 스크립트가 `.claude-verification.json`의 `e2e` 필드에 자동 기록
+4. 결과가 `.claude-verification.json`에 기록되었는지 확인 — 게이트 결과는 각 서브커맨드가 자동 기록하고, 소프트 품질 차원은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 로 기록 (직접 편집은 가드가 차단함)
 5. 해당 progress 파일의 dod 체크리스트 업데이트 (evidence 포함)
 
 ## Error Classification & Escalation
@@ -200,7 +202,7 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
 - 빌드 성공 로그 (exit code 0 확인)
 - 테스트 통과 로그 (PASSED 개수 확인)
 - 린트 통과 로그
-- `.claude-verification.json`에 기록 완료
+- `.claude-verification.json`에 기록 완료 (게이트 서브커맨드 자동 기록 + 소프트 차원은 `record-dimension` — 직접 편집은 가드가 차단함)
 - progress 파일의 dod 체크리스트 전체 checked + evidence 포함
 
 **금지 (실행 없이 선언):**

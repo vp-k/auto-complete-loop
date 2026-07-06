@@ -184,6 +184,53 @@ append_gate_history() {
   fi
 }
 
+# SOFT 게이트 연속 실패 → HARD 승격 판정 (키노트 slide 33: 규칙은 적는 게 아니라 강제되어야 한다)
+# 같은 게이트가 2회 연속 fail/warn이면 승격 — 호출측이 exit 1을 결정한다.
+#
+# Usage: soft_gate_escalation <gate_name> <this_result>
+# 반환: 0 = 승격 (직전 gateHistory 기록도 fail/warn 계열 — "연속 실패")
+#       1 = 승격 없음 (첫 실패, 직전이 pass/skip, progress 파일 없음 등)
+# 의도된 래칫: 직전이 하드 fail이었어도(escalated fail 포함) 이번이 fail/warn이면
+#   승격 유지 — 문제가 pass로 해소될 때까지 HARD가 지속되고, pass 후 warn 등급 복귀.
+# 주의: 반드시 이번 실행의 append_gate_history 호출 **전에** 호출할 것
+#       (gateHistory의 마지막 항목 = 직전 실행 기록이어야 함).
+#       출력은 없음 — 메시지는 호출측이 구성한다.
+soft_gate_escalation() {
+  local gate="$1" this_result="$2"
+
+  # 이번 결과가 fail/warn 계열이 아니면 승격 대상 아님
+  case "$this_result" in
+    fail|warn) ;;
+    *) return 1 ;;
+  esac
+
+  command -v jq >/dev/null 2>&1 || return 1
+
+  # progress 파일: PROGRESS_FILE 우선, 없으면 자동 탐지. 없으면 승격 없음 (조용히)
+  local pf="${PROGRESS_FILE:-}"
+  if [[ -z "$pf" ]] || [[ ! -f "$pf" ]]; then
+    pf=$(detect_progress_file 2>/dev/null) || return 1
+  fi
+  [[ -f "$pf" ]] || return 1
+
+  # gateHistory 스키마 (append_gate_history 기록 형식):
+  #   {"gate": <name>, "phase": <phase>, "result": <pass|fail|warn|skip>, "ts": <ts>, "details": {...}}
+  # 해당 게이트의 마지막(직전) 기록 result 조회
+  local prev
+  prev=$(jq -r --arg g "$gate" '
+    [ (.gateHistory // [])[] | select(.gate == $g) ] | last | .result // empty
+  ' "$pf" 2>/dev/null) || return 1
+
+  case "$prev" in
+    fail|warn)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # Progress 파일 자동 탐지
 detect_progress_file() {
   for f in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json \

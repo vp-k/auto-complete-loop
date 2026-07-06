@@ -51,7 +51,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 | **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, smokeCheck(`soft_fail`=fail), specCompleteness, clarificationGate, docCompleteness, specToTests, docCodeCheck, serviceTestCheck, liveTesting, layerCoverage, codeReviewFindings, acceptanceTests(full-auto 계열), acceptanceFreeze(plan-docs-full 계열) | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
 | **훅 강제 (하드)** | protect-files-guard | 동결된 `tests/acceptance/**` — `acceptance-freeze` 이후 Edit/Write 차단 (우회 수정도 `acceptance-gate` 해시 무결성이 감지) | 수정 시도 자체가 차단. 변경은 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user`로만 가능 |
 | **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check, acceptance-freeze, acceptance-gate | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
-| **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict), visualRegression | WARN 출력 후 진행 가능 (수정 권장) |
+| **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict), visualRegression | WARN 출력 후 진행 가능 (수정 권장). 단, **연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1** — pass가 나오면 warn 등급으로 복귀 |
 
 directorOverride를 포함한 어떤 오버라이드도 "훅 강제" 등급을 우회할 수 없다.
 
@@ -97,6 +97,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-f
 **Phase 2 smoke 검증**: `tests/api-smoke.sh` 존재 시, 해당 문서의 API 엔드포인트를 서버 시작 후 curl로 검증. 응답이 빈 객체/빈 배열이면 수정 필요.
 
 **Phase 4 규칙**: Step 4-1 (quality-gate) 직후 Step 4-1.7/4-1.8/4-1.9 순서로 실행. SOFT gate이므로 WARN은 진행 가능, FAIL은 수정 필요.
+
+**SOFT→HARD 승격**: SOFT 게이트는 **연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1** — pass가 나오면 warn 등급으로 복귀한다. 즉 SOFT 실패를 방치한 채 재실행만 반복할 수 없다.
 
 ## 복구 감지 (0단계 전 실행)
 

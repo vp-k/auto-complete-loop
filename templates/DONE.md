@@ -39,6 +39,7 @@
 - [ ] `smoke-check --strict` PASS — 서버 기동 + 엔드포인트 검증 (hasBackend=true 시)
 
 ### 구현 품질 DoD (소프트 게이트 — 임계값 기반)
+> SOFT 게이트는 연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1 — pass가 나오면 warn 등급으로 복귀
 - [ ] `implementation-depth` PASS — stub/빈 함수 5건 미만
 - [ ] `test-quality` PASS — assertion 비율 ≥ 70%, skip 비율 ≤ 20%
 - [ ] `functional-flow` PASS — 핵심 플로우 smoke 스크립트 통과 (tests/*-smoke.sh)

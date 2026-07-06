@@ -61,6 +61,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh implementation-depth --progres
 ```
 
 - SOFT gate: 5건 미만이면 WARN (진행 가능), 5건 이상이면 FAIL (수정 필요)
+- **SOFT→HARD 승격**: 연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1 — pass가 나오면 warn 등급으로 복귀
 - 수정 후 재실행하여 임계값 미만 확인
 
 ### Step 4-1.8: 기능 플로우 검증
@@ -80,6 +81,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh test-quality --progress-file {
 - assertion 비율 ≥ 70%, skip 비율 ≤ 20%
 - US-* ID 기반 커버리지 확인 (SPEC.md에 US-* 존재 시)
 - SOFT gate: 미달 시 WARN
+- **SOFT→HARD 승격**: 연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1 — pass가 나오면 warn 등급으로 복귀
 
 ### Step 4-1.10: 페이지 렌더링 검증 (hasFrontend=true 시)
 
@@ -290,18 +292,14 @@ design-polish-gate 실행 후, Before/After 비교를 수행합니다.
    - `before`가 없으면 (첫 실행) 시각 비교 건너뜀
 
 3. **결과 기록**
-   `.claude-verification.json`의 `qualityDimensions`에 추가:
-   ```json
-   "visualRegression": {
-     "result": "pass|warn|fail",
-     "healthScore": 85,
-     "scoreDiff": 5,
-     "evidence": "Before/After 비교 완료, 레이아웃 정상"
-   }
+   `record-dimension` 서브커맨드로 `qualityDimensions.visualRegression`에 기록 (verification.json 직접 편집은 가드가 차단함):
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension visualRegression pass "healthScore 85 (diff +5), Before/After 비교 완료, 레이아웃 정상"
    ```
    - `warn`: 스코어 하락(-5 이상 -10 미만) 또는 경미한 시각적 차이
    - `fail`: 스코어 하락(-10 이상) 또는 명백한 레이아웃 깨짐
    - `pass`: 스코어 유지/개선 + 시각적 차이 없음
+   - evidence 문자열에 healthScore/scoreDiff와 비교 근거를 포함한다
 
 ### Step 4-6: 아티팩트/런타임 체크
 
@@ -396,22 +394,20 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh layer-coverage --progress-file
 
 **FAIL 시**: Phase 2로 회귀하여 누락 레이어 구현. Phase 4를 통과할 수 없음.
 
-각 차원의 결과를 `.claude-verification.json`에 기록 (`layerCoverage`는 위 서브커맨드가 기록하므로 아래 예시에서 제외 — 직접 쓰지 않는다):
-```json
-"qualityDimensions": {
-  "featureCompleteness": { "result": "pass", "evidence": "12/12 features implemented" },
-  "security": { "result": "pass", "evidence": "0 SEC CRITICAL/HIGH findings" },
-  "performance": { "result": "pass", "evidence": "0 PERF CRITICAL/HIGH findings" },
-  "codeQuality": { "result": "pass", "evidence": "85% test coverage on business logic" },
-  "documentation": { "result": "pass", "evidence": "README + API docs + .env.example" },
-  "e2eCoverage": { "result": "pass", "evidence": "5/5 E2E scenarios passed" }
-}
+각 소프트 차원의 결과는 `record-dimension` 서브커맨드로 기록한다 (`layerCoverage`는 위 서브커맨드가 기록하므로 제외 — record-dimension이 거부한다). verification.json 직접 편집은 가드가 차단함:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension featureCompleteness pass "12/12 features implemented"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension security pass "0 SEC CRITICAL/HIGH findings"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension performance pass "0 PERF CRITICAL/HIGH findings"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension codeQuality pass "85% test coverage on business logic"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension documentation pass "README + API docs + .env.example"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension e2eCoverage pass "5/5 E2E scenarios passed"
 ```
 
 소프트 차원에서 fail이 있으면 경고 출력하되 Phase 완료는 차단하지 않음 (정보 제공용).
 
 #### 4-7c: 결과 기록
-4. 결과를 `.claude-verification.json`에 기록 (기술 게이트 + 다차원 품질)
+4. 결과 기록 — 기술 게이트(build/test/lint)는 `quality-gate` 등 각 서브커맨드가 verification.json에 자동 기록하고, 다차원 품질은 위 `record-dimension`으로 기록한다 (직접 편집은 가드가 차단함)
 5. progress 파일의 dod 체크리스트 최종 업데이트
    - `dod.code_review_pass`는 **모델이 직접 세팅하지 않는다** — 아래 서브커맨드의 PASS 결과로만 세팅:
      ```bash

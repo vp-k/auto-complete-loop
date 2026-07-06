@@ -46,6 +46,7 @@
 #   acceptance-gate                                     - 동결 무결성 검증 + run.sh 실행 (HARD_FAIL, 디렉토리 없으면 skip)
 #   layer-coverage                                      - projectScope 대비 레이어 아티팩트 검증 (HARD_FAIL, scope 없으면 skip)
 #   code-review-findings                                - progress의 open CRITICAL/HIGH 리뷰 finding 계수 (HARD_FAIL)
+#   record-dimension <key> <result> [evidence...]        - 소프트 품질 차원 기록 (qualityDimensions.<key>, layerCoverage 금지)
 #   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
 #   test-quality                                        - 테스트 assertion 비율/skip 비율/US 커버리지 (SOFT gate)
 #   page-render-check [--port N] [--strict]             - 프론트엔드 페이지 렌더링 검증 (빈 페이지/console.error/404 탐지)
@@ -108,6 +109,7 @@ main() {
     acceptance-gate)   cmd_acceptance_gate "$@" ;;
     layer-coverage)    cmd_layer_coverage "$@" ;;
     code-review-findings) cmd_code_review_findings "$@" ;;
+    record-dimension)  cmd_record_dimension "$@" ;;
     implementation-depth) cmd_implementation_depth "$@" ;;
     test-quality)      cmd_test_quality "$@" ;;
     page-render-check) cmd_page_render_check "$@" ;;
@@ -175,6 +177,9 @@ main() {
       echo "  layer-coverage                               - Verify projectScope layers exist on filesystem (HARD_FAIL; skip if no projectScope)"
       echo "                                               Sole writer of qualityDimensions.layerCoverage (checked by stop-hook)"
       echo "  code-review-findings                         - Count open CRITICAL/HIGH review findings in progress (HARD_FAIL)"
+      echo "  record-dimension <key> <result> [evidence...] - Record soft quality dimension to qualityDimensions.<key>"
+      echo "                                               result: pass|warn|fail|skip. 'layerCoverage' rejected (layer-coverage gate only)."
+      echo "                                               Only sanctioned write path for soft dimensions — direct edits to .claude-verification.json are blocked by the guard."
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
       echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"

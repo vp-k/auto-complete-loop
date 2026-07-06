@@ -535,6 +535,46 @@ cmd_code_review_findings() {
   return 0
 }
 
+# ─── record-dimension: 소프트 품질 차원 기록 (verification.json 직접 편집 대체 경로) ───
+# 가드가 .claude-verification.json 직접 기록(Edit/Write/Bash 리다이렉트)을 차단하므로,
+# 소프트 품질 차원(featureCompleteness/security/performance/codeQuality/documentation/
+# e2eCoverage/visualRegression 등)은 이 서브커맨드로만 기록한다.
+# - qualityDimensions 하위에만 기록 — 최상위 키(build/test/acceptanceTests 등)는 기록 불가
+# - layerCoverage는 layer-coverage 게이트가 유일한 기록자 — 자기신고 금지 (exit 1)
+
+cmd_record_dimension() {
+  local key="${1:-}" result="${2:-}"
+  shift 2 2>/dev/null || true
+  local evidence="$*"
+
+  if [[ -z "$key" || -z "$result" ]]; then
+    die "Usage: record-dimension <key> <result> [evidence...] (result: pass|warn|fail|skip)"
+  fi
+
+  # layerCoverage 거부 — 하드 게이트 결과의 자기신고 차단
+  if [[ "$key" == "layerCoverage" ]]; then
+    die "record-dimension: 'layerCoverage'는 layer-coverage 서브커맨드 전용 — 자기신고 금지"
+  fi
+
+  # result 값 검증
+  case "$result" in
+    pass|warn|fail|skip) ;;
+    *) die "record-dimension: invalid result '$result' (allowed: pass|warn|fail|skip)" ;;
+  esac
+
+  require_jq
+
+  # qualityDimensions.<key>에만 기록 (최상위 키 기록 경로 없음)
+  record_verification_qd "$key" \
+    "$(jq -n --arg r "$result" --arg e "$evidence" --arg ts "$(timestamp)" \
+        '{result: $r, evidence: $e, timestamp: $ts}')"
+
+  append_gate_history "record-dimension" "$result" \
+    "$(jq -n --arg k "$key" '{dimension: $k}')"
+
+  echo "OK: qualityDimensions.$key = $result"
+}
+
 # ─── add-dod-key: DoD 키 동적 추가 (idempotent) ───
 
 cmd_add_dod_key() {

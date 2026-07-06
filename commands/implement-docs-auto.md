@@ -325,8 +325,10 @@ Task(subagent_type="general-purpose", prompt="
 ### 요구사항 대조
 [SPEC.md 또는 기획 문서의 해당 항목]
 
-구현이 요구사항을 충족하는지 확인하고,
-결과를 .claude-verification.json에 기록해주세요.
+구현이 요구사항을 충족하는지 확인하고, 결과를 다음 명령으로 기록해주세요
+(.claude-verification.json 직접 편집은 가드가 차단함):
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension featureCompleteness <pass|warn|fail> \"<evidence>\"
+(빌드/테스트 결과는 quality-gate 서브커맨드 실행 시 자동 기록됨)
 ")
 ```
 
@@ -615,8 +617,8 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 
 1. 원래 요구사항(SPEC.md 또는 기획 문서) 다시 읽기
 2. 구현이 요구사항을 충족하는지 항목별 대조
-3. 빌드/테스트를 **지금** 실행 (이전 결과 재사용 금지)
-4. 실행 결과를 `.claude-verification.json`에 기록
+3. 빌드/테스트를 **지금** 실행 (이전 결과 재사용 금지) — `quality-gate` 서브커맨드가 결과를 `.claude-verification.json`에 자동 기록
+4. 소프트 품질 차원은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 로 기록 (verification.json 직접 편집은 가드가 차단함)
 5. `.claude-progress.json`의 dod 체크리스트 업데이트 (evidence 포함)
 
 **5개 중 하나라도 미완료면 완료 불가. 미충족 항목부터 해결.**
@@ -760,7 +762,7 @@ codex exec --skip-git-repo-check '## 릴리즈 전 정리
 1. 빌드 재실행 -> 성공
 2. 테스트 재실행 -> 전체 통과
 3. 린트 재실행 -> 경고 없음
-4. 결과를 `.claude-verification.json`에 기록
+4. 결과 기록 — `quality-gate` 서브커맨드가 자동 기록, 소프트 품질 차원은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 사용 (verification.json 직접 편집은 가드가 차단함)
 5. `.claude-progress.json`의 dod 체크리스트 최종 업데이트
 
 ## 5단계: 완료 보고

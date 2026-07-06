@@ -34,10 +34,19 @@ fi
 
 FILENAME=$(basename "$FILE_PATH")
 
-# --- Guard 1: 진행 상태 파일 보호 (warn) ---
+# --- Guard 1: 진행 상태/증거 파일 보호 ---
+# 신뢰 모델: 훅과 게이트 스크립트가 같은 권한 환경에서 실행되므로 완전 차단은
+# 불가능하다. 이 가드는 우발적/1차 시도를 막고, 우회 흔적은 감사 가능하게
+# 남기는 목적이다. (Bash 경유 조작은 verification-write-guard.sh가 담당)
+
+# .claude-verification.json: 게이트 스크립트 전용 증거 파일 → 직접 수정 하드 차단
+if [[ "$FILENAME" == ".claude-verification.json" ]]; then
+  echo '{"decision": "block", "reason": "verification.json은 게이트 스크립트 전용 증거 파일 — 직접 수정 금지. 결과를 바꾸려면 해당 게이트를 재실행하라 (shared-gate.sh <gate>)"}'
+  exit 0
+fi
 
 case "$FILENAME" in
-  .claude-quality-baseline.json|.claude-verification.json)
+  .claude-quality-baseline.json)
     echo "{\"decision\": \"approve\", \"reason\": \"WARNING: ${FILENAME}을 수정하려 합니다. 이 파일은 품질 게이트 상태를 추적합니다. shared-gate.sh를 통한 정당한 수정인지 확인하세요.\"}"
     exit 0
     ;;

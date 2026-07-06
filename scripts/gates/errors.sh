@@ -1,5 +1,33 @@
 # gates/errors.sh — 에러 기록 + 에스컬레이션(L0-L5) 추적, 디버그 코드 탐색
 
+# ─── escalation lesson: L3 이상으로 상승하는 순간 lesson ledger에 기록 ───
+# .claude/acl-learnings.local.md에 LESSON 항목 append — session-start.sh가
+# 다음 세션 시작 시 실행 조건으로 주입한다. 실패해도 게이트 동작에 영향 없음.
+# 순환 방지: 동일한 "다음 실행 조건" 문자열이 이미 있으면 skip.
+_append_escalation_lesson() {
+  local _new_level="$1" _file="$2" _type="$3" _msg="$4" _from_level="${5:-}"
+  local _n="${_new_level#L}"
+  [[ "$_n" =~ ^[0-9]+$ ]] || return 0
+  [[ "$_n" -ge 3 ]] || return 0   # L3 미만 상승은 lesson 대상 아님
+  # 직전 레벨은 실제 상승 전 레벨 사용 (L0→L3 직행 시 "L2 실패"로 오기록 방지)
+  local _prev="${_from_level:-L$((_n - 1))}"
+  local _learnings=".claude/acl-learnings.local.md"
+  local _next="${_prev} 접근이 3회 실패한 문제 — 같은 유형(${_type})이면 처음부터 ${_new_level} 접근 고려"
+  _msg=$(printf '%s' "$_msg" | tr '\r\n' '  ' 2>/dev/null || true); _msg="${_msg:0:300}"
+  # 순환 방지 (grep -F: 리터럴 매치)
+  if [[ -f "$_learnings" ]] && grep -qF -- "- 다음 실행 조건: ${_next}" "$_learnings" 2>/dev/null; then
+    return 0
+  fi
+  mkdir -p .claude 2>/dev/null || return 0
+  {
+    printf '\n## LESSON | %s | source=escalation\n' "$(timestamp 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf -- '- 상황: %s / %s — %s\n' "$_file" "$_type" "${_msg:-unknown}"
+    printf -- '- 실패/결정: 에스컬레이션 %s → %s (예산 소진)\n' "$_prev" "$_new_level"
+    printf -- '- 다음 실행 조건: %s\n' "$_next"
+  } >> "$_learnings" 2>/dev/null || true
+  return 0
+}
+
 # ─── record-error: 에러 반복 판별 + errorHistory 업데이트 ───
 
 cmd_record_error() {
@@ -47,6 +75,11 @@ cmd_record_error() {
 
   # --level이 제공되면 에스컬레이션 레벨/예산 항상 반영
   if [[ -n "$err_level" ]]; then
+    # L3 이상으로 "상승"하는 순간 lesson 기록 (동일 레벨 재기록/하강은 제외)
+    local _prev_lnum="${current_escalation#L}" _new_lnum="${err_level#L}"
+    if [[ "$_prev_lnum" =~ ^[0-9]+$ ]] && [[ "$_new_lnum" =~ ^[0-9]+$ ]] && [[ "$_new_lnum" -gt "$_prev_lnum" ]]; then
+      _append_escalation_lesson "$err_level" "$err_file" "$err_type" "$err_msg" "$current_escalation" || true
+    fi
     current_escalation="$err_level"
     current_budget="${level_budget[$err_level]:-3}"
   fi
@@ -160,6 +193,7 @@ cmd_record_error() {
       | .errorHistory.escalationBudget = 0
       | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + ["L5"])
     '
+    _append_escalation_lesson "L5" "$err_file" "$err_type" "$err_msg" || true
     echo "ACTION: L4 예산 소진 → L5 사용자 개입 필요"
     exit 3
   elif [[ "$current_escalation" == "L2" ]]; then
@@ -180,6 +214,8 @@ cmd_record_error() {
       | .errorHistory.currentError.count = 0
       | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + [$nl])
     '
+    # L3 이상으로 자동 상승하는 순간 lesson 기록
+    _append_escalation_lesson "$next_level" "$err_file" "$err_type" "$err_msg" || true
     echo "ACTION: $current_escalation 예산 소진 ($current_count/$current_budget) → $next_level 로 자동 에스컬레이트"
     exit 1
   else

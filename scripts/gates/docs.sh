@@ -500,6 +500,21 @@ cmd_spec_completeness() {
     fi
   fi
 
+  # ── UI 상태 명세 (MAJOR — 프론트엔드 US가 있는 경우) ──
+  # happy path만 명세하면 빈/로딩/에러 상태가 구현·인수 테스트에서 통째로 누락되어
+  # live-testing에서야 발견된다. US-F-*가 존재하면 UI States 섹션을 요구한다.
+  if [[ -n "$spec_file" ]]; then
+    local usf_count
+    usf_count=$({ grep -coE 'US-F-[0-9]+' "$spec_file" 2>/dev/null || true; } | tr -d '[:space:]')
+    [[ "$usf_count" =~ ^[0-9]+$ ]] || usf_count=0
+    if [[ "$usf_count" -gt 0 ]]; then
+      if ! grep -qiE 'UI States|화면별 상태|빈 상태|empty state' "$spec_file" 2>/dev/null; then
+        major=$((major + 1))
+        issues="${issues}MAJOR: Frontend US exists but no UI States section (빈/로딩/에러/유효성 상태 명세 — templates/SPEC.md 'UI States' 참조)\n"
+      fi
+    fi
+  fi
+
   # ── 결과 출력 ──
   echo ""
   if [[ -n "$issues" ]]; then

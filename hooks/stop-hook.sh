@@ -138,8 +138,10 @@ FRONTMATTER=$(awk '/^---$/{i++; if(i==2) exit; next} i==1{print}' "$RALPH_STATE_
 # CR 문자 제거 (Windows CRLF 대응)
 ITERATION=$(echo "$FRONTMATTER" | grep "^iteration:" | sed 's/iteration: *//' | tr -d '\r' || true)
 MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep "^max_iterations:" | sed 's/max_iterations: *//' | tr -d '\r' || true)
-COMPLETION_PROMISE=$(echo "$FRONTMATTER" | grep "^completion_promise:" | sed 's/completion_promise: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r' || true)
-PROGRESS_FILE_FROM_FRONTMATTER=$(echo "$FRONTMATTER" | grep "^progress_file:" | sed 's/progress_file: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '\r' || true)
+# CR 제거를 따옴표 스트립보다 먼저 (CRLF 파일에서 "…"\r 의 닫는 따옴표가 남는 버그 방지)
+# + 작은따옴표도 허용 (모델이 ralph 파일을 재작성하며 '…'를 쓴 실측 사례 — 실전 검증에서 발견)
+COMPLETION_PROMISE=$(echo "$FRONTMATTER" | grep "^completion_promise:" | sed 's/completion_promise: *//' | tr -d '\r' | sed -e "s/^['\"]//" -e "s/['\"]\$//" || true)
+PROGRESS_FILE_FROM_FRONTMATTER=$(echo "$FRONTMATTER" | grep "^progress_file:" | sed 's/progress_file: *//' | tr -d '\r' | sed -e "s/^['\"]//" -e "s/['\"]\$//" || true)
 
 # progress_file 경로 검증 (경로 조작 방지)
 if [[ -n "${PROGRESS_FILE_FROM_FRONTMATTER:-}" ]]; then
@@ -579,8 +581,10 @@ if [[ -n "${FAILURE_REASONS:-}" ]]; then
   SYSTEM_MSG="${SYSTEM_MSG} | Verification failed: ${FAILURE_REASONS}"
 fi
 
-# 수동 탈출 안내 (block reason 끝에 1줄)
-PROMPT_TEXT="${PROMPT_TEXT}"$'\n\n'"루프를 강제 종료하려면 .claude/ralph-loop.local.md 를 삭제하세요."
+# 수동 탈출 안내 — 반드시 systemMessage(사용자용)에만 넣는다.
+# PROMPT_TEXT(모델 재주입 프롬프트)에 넣으면 모델에게 "막히면 파일을 지워라"고
+# 지시하는 셈이 되어 최종 락 우회를 유발한다 (실전 검증에서 실측된 사고).
+SYSTEM_MSG="${SYSTEM_MSG} | (사용자 안내) 루프 강제 종료: .claude/ralph-loop.local.md 삭제"
 
 jq -n \
   --arg prompt "$PROMPT_TEXT" \

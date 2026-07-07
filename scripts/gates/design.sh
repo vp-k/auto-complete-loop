@@ -335,8 +335,11 @@ cmd_page_render_check() {
   fi
 
   # Playwright 렌더링 검증 스크립트 생성 (임시)
+  # 반드시 프로젝트 내부에 생성 — 시스템 temp에 두면 node가 프로젝트의
+  # node_modules/playwright를 해석하지 못해 ESM import가 실패한다 (Windows 실측)
   local tmp_script
-  tmp_script=$(mktemp --suffix=.mjs)
+  mkdir -p .claude
+  tmp_script=".claude/page-render-check-$$.mjs"
   cat > "$tmp_script" << 'PLAYWRIGHT_SCRIPT'
 import { chromium } from 'playwright';
 

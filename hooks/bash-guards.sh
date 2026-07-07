@@ -131,11 +131,13 @@ check_commit_msg() {
 
 VG_BLOCK_MSG='verification.json은 게이트 스크립트 전용 증거 파일 — 직접 수정 금지. 결과를 바꾸려면 해당 게이트를 재실행하라 (shared-gate.sh <gate>). 읽기 전용 참조(cat/grep/jq 조회, 파이프로 넘긴 뒤 파일명을 지명하지 않는 필터)는 허용되지만, 파일명과 같은 세그먼트에 쓰기 가능 명령이 있으면 안전을 위해 차단된다 (fail-closed).'
 
-check_verification_write() {
+# 일반화: <파일 리터럴> <파일 regex 코어(이스케이프됨)> <차단 메시지>
+# 규칙은 위 주석(1/2a/2b/2c/3)과 동일 — 보호 파일별로 재사용한다.
+_check_file_write() {
+  local file_lit="$1" file_core="$2" msg="$3"
   local target_re redir_re write_cmds_re segs _seg
   # word-boundary: 앞뒤가 파일명 구성문자(영숫자 . _ -)가 아니어야 매칭
-  # → .claude-verification.json.bak / my.claude-verification.json 오탐 제거
-  target_re='(^|[^A-Za-z0-9._-])\.claude-verification\.json([^A-Za-z0-9._-]|$)'
+  target_re="(^|[^A-Za-z0-9._-])${file_core}([^A-Za-z0-9._-]|\$)"
 
   # 규칙 1: 파일명이 없으면 무조건 통과 (shared-gate.sh 게이트 호출은 영향 없음)
   if ! printf '%s' "$COMMAND" | grep -qE "$target_re"; then
@@ -143,42 +145,37 @@ check_verification_write() {
   fi
 
   # 규칙 2a: 해당 파일명으로의 리다이렉트 (>, >>, >| — jq/echo/: > 등 모든 형태)
-  redir_re='>[>|]?[[:space:]]*["'\'']?[^"'\''[:space:]<>|;&]*\.claude-verification\.json([^A-Za-z0-9._-]|$|["'\''])'
+  redir_re='>[>|]?[[:space:]]*["'\'']?[^"'\''[:space:]<>|;&]*'"${file_core}"'([^A-Za-z0-9._-]|$|["'\''])'
   if printf '%s' "$COMMAND" | grep -qE "$redir_re"; then
-    block "$VG_BLOCK_MSG"
+    block "$msg"
   fi
 
   # 규칙 2c: stdin→인자 전달자(xargs/parallel)는 위치 무관 fail-closed
   if printf '%s' "$COMMAND" | grep -qE '(^|[[:space:]|;&(`])(xargs|parallel)([[:space:]]|$|["'\''])'; then
-    block "$VG_BLOCK_MSG"
+    block "$msg"
   fi
 
   # 규칙 2b: 파일명이 포함된 세그먼트에 쓰기 가능 명령 존재 시 차단
-  # tee/sed(-i 판별 애매)/mv/cp/rm/truncate/dd/sponge/perl/awk(인플레이스 가능) +
-  # python/node 등 인터프리터(-e/-c 임의 쓰기 가능) + bash/sh/eval 등 간접 실행 래퍼
-  write_cmds_re='(^|[[:space:]|;&(`])(tee|sed|mv|cp|rm|truncate|dd|sponge|install|rsync|shred|perl|awk|gawk|python[0-9.]*|node|deno|bun|ruby|php|eval|bash|sh|zsh|dash|ksh)([[:space:]]|$|["'\''])'
+  write_cmds_re='(^|[[:space:]|;&(`])(tee|sed|mv|cp|rm|truncate|dd|sponge|install|rsync|shred|perl|awk|gawk|python[0-9.]*|node|deno|bun|ruby|php|eval|bash|sh|zsh|dash|ksh|touch)([[:space:]]|$|["'\''])'
 
-  # 파일명이 인용부 안에 있는지 판별: 인용부 제거 전/후 파일명 등장 횟수 비교.
-  # 인용부 안에 있으면(횟수 감소) 인용부 내 구분자(;|&) 때문에 세그먼트 분할이
-  # 신뢰 불가 → 기존 fail-closed 규칙 유지 (쓰기 가능 명령이 어디든 있으면 차단).
+  # 파일명이 인용부 안에 있는지 판별 (기존 fail-closed 규칙)
   local stripped occ_orig occ_stripped
   stripped=$(strip_quotes "$COMMAND")
-  occ_orig=$(printf '%s' "$COMMAND" | grep -oF '.claude-verification.json' | wc -l || true)
-  occ_stripped=$(printf '%s' "$stripped" | grep -oF '.claude-verification.json' | wc -l || true)
+  occ_orig=$(printf '%s' "$COMMAND" | grep -oF "$file_lit" | wc -l || true)
+  occ_stripped=$(printf '%s' "$stripped" | grep -oF "$file_lit" | wc -l || true)
   if [[ "${occ_orig:-0}" -ne "${occ_stripped:-0}" ]]; then
     if printf '%s' "$COMMAND" | grep -qE "$write_cmds_re"; then
-      block "$VG_BLOCK_MSG"
+      block "$msg"
     fi
-    # 인용부 안 파일명 + 쓰기 명령 없음 (예: grep '.claude-verification.json' log) → 통과
     return 0
   fi
 
-  # 파일명이 전부 인용부 밖 → 인용부 제거본 기준 세그먼트 분석 (구분자 정렬 보장)
+  # 파일명이 전부 인용부 밖 → 세그먼트 분석
   segs=$(printf '%s\n' "$stripped" | tr ';|&' '\n')
   while IFS= read -r _seg; do
     printf '%s' "$_seg" | grep -qE "$target_re" || continue
     if printf '%s' "$_seg" | grep -qE "$write_cmds_re"; then
-      block "$VG_BLOCK_MSG"
+      block "$msg"
     fi
   done <<< "$segs"
 
@@ -186,10 +183,24 @@ check_verification_write() {
   return 0
 }
 
+check_verification_write() {
+  _check_file_write '.claude-verification.json' '\.claude-verification\.json' "$VG_BLOCK_MSG"
+}
+
+# ─── 검사 4: Ralph 루프 상태 파일 보호 (최종 락 우회 방지) ───
+# 실전 검증 실측: 모델이 promise 미인식 상황에서 rm -f로 ralph 파일을 삭제해
+# 루프를 우회 종료했다. 파일 삭제는 "사용자의" 탈출구이며 모델의 것이 아니다.
+RALPH_BLOCK_MSG='Ralph 루프 상태 파일(.claude/ralph-loop.local.md)은 stop-hook 전용 — 모델이 수정/삭제하면 최종 검증 락을 우회하게 되므로 금지. 루프를 끝내려면 (a) 완주 조건(게이트)을 충족시키거나 (b) 진퇴양난이면 AskUserQuestion으로 사용자에게 강제 종료(파일 삭제는 사용자 몫)를 요청하라. 읽기는 허용.'
+
+check_ralph_write() {
+  _check_file_write 'ralph-loop.local.md' 'ralph-loop\.local\.md' "$RALPH_BLOCK_MSG"
+}
+
 # ─── 순차 실행 (기존 hooks.json 등록 순서와 동일) ───
 check_no_verify
 check_commit_msg
 check_verification_write
+check_ralph_write
 
 # 전 검사 통과 → 무출력 (권한 판정 유보)
 exit 0

@@ -44,6 +44,13 @@ if [[ "$FILENAME" == ".claude-verification.json" ]]; then
   exit 0
 fi
 
+# ralph-loop.local.md: stop-hook 전용 루프 상태 파일 → 모델 수정 하드 차단
+# (실전 검증 실측: 모델이 파일을 재작성/삭제해 최종 락을 우회 — 삭제는 사용자의 탈출구)
+if [[ "$FILENAME" == "ralph-loop.local.md" ]]; then
+  echo '{"decision": "block", "reason": "Ralph 루프 상태 파일은 stop-hook 전용 — 모델이 수정하면 최종 검증 락을 우회하게 되므로 금지. 생성은 shared-gate.sh init-ralph로만, 강제 종료(삭제)는 AskUserQuestion으로 사용자에게 요청하라."}'
+  exit 0
+fi
+
 # 경고 경로: decision 없이 systemMessage만 출력 (권한 판정 유보 — approve로 프롬프트 우회 금지)
 case "$FILENAME" in
   .claude-quality-baseline.json)

@@ -309,6 +309,7 @@ ENDJSON
   "dod": {
     "doc_consistency": { "checked": false, "evidence": null },
     "doc_code_check": { "checked": false, "evidence": null },
+    "no_definition_conflict": { "checked": false, "evidence": null },
     "semantic_review": { "checked": false, "evidence": null }
   },
   "handoff": {

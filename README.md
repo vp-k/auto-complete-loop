@@ -159,7 +159,7 @@ Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
 ### Utilities
 | Command | Description |
 |---------|-------------|
-| `/check-docs [dir]` | Doc consistency check |
+| `/check-docs [--mode codex\|solo] [dir]` | Doc consistency check — 4 script gates (doc-consistency, doc-code-check, definition-conflict, clarification-gate) + AI semantic review, gate-recorded DoD |
 | `/add-e2e [dir]` | Add E2E tests from docs or code analysis |
 
 > ℹ️ 제품 발견 도구(`/interview-prep`, `/interview-summary`, `/post-analysis`)는 v4.0.0에서 별도 플러그인 [product-discovery](https://github.com/vp-k/product-discovery)로 분리되었습니다.

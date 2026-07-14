@@ -126,6 +126,22 @@ cmd_doc_consistency() {
   echo ""
   echo "=== Issues found: $issues ==="
   append_gate_history "doc-consistency" "$([ "$issues" -eq 0 ] && echo "pass" || echo "warn")" "{\"issues\":$issues}"
+
+  # verification.json 기록 (stop-hook 하드락 증거 — docCodeCheck 기록 계약과 대칭)
+  local _dcy_result="pass"
+  [[ "$issues" -gt 0 ]] && _dcy_result="fail"
+  record_verification "docConsistency" \
+    "$(jq -n --arg ts "$(timestamp)" --arg r "$_dcy_result" --argjson n "$issues" '{timestamp:$ts,result:$r,issues:$n}')"
+
+  # DoD 자동 기록 (doc-check 템플릿 계약): 이 게이트가 dod.doc_consistency의 스크립트 기록자다.
+  # PASS(issues=0) 시 키가 존재하는 progress 파일에만 기록 — 모델 직접 세팅 금지 원칙의 전제
+  # (spec-completeness/definition-conflict의 dod 기록 패턴 준수).
+  if [[ "$issues" -eq 0 ]] && [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    jq_inplace "$PROGRESS_FILE" --arg ev "doc-consistency PASS at $(timestamp) (issues: 0)" '
+      if (((.dod // {}) | objects | has("doc_consistency")) // false)
+      then .dod.doc_consistency = {checked: true, evidence: $ev} else . end'
+  fi
+
   [[ "$issues" -eq 0 ]] && return 0 || return 1
 }
 
@@ -135,6 +151,18 @@ cmd_doc_code_check() {
   local docs_dir="${1:-docs}"
 
   echo "=== Doc-Code Consistency Check ==="
+
+  # DoD 자동 기록 (doc-check 템플릿 계약): 이 게이트가 dod.doc_code_check의 스크립트 기록자다.
+  # 통과하는 모든 종결 경로(pass/skip)에서 기록해야 check-docs가 소프트 데드락에 빠지지 않는다.
+  # Usage: _dcc_record_dod <evidence>
+  _dcc_record_dod() {
+    local ev="$1"
+    if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]] && command -v jq >/dev/null 2>&1; then
+      jq_inplace "$PROGRESS_FILE" --arg ev "$ev (doc-code-check at $(timestamp))" '
+        if (((.dod // {}) | objects | has("doc_code_check")) // false)
+        then .dod.doc_code_check = {checked: true, evidence: $ev} else . end'
+    fi
+  }
 
   local issues=0
 
@@ -153,6 +181,7 @@ cmd_doc_code_check() {
     append_gate_history "doc-code-check" "skip" '{"reason":"no docs"}'
     record_verification "docCodeCheck" \
       "$(jq -n --arg ts "$(timestamp)" '{timestamp:$ts,result:"skip",reason:"no docs"}')"
+    _dcc_record_dod "N/A: no documentation files found"
     return 0
   fi
 
@@ -229,6 +258,7 @@ cmd_doc_code_check() {
   append_gate_history "doc-code-check" "$_dcc_result" "{\"issues\":$issues}"
   record_verification "docCodeCheck" \
     "$(jq -n --arg ts "$(timestamp)" --arg r "$_dcc_result" --argjson n "$issues" '{timestamp:$ts,result:$r,issues:$n}')"
+  [[ "$issues" -eq 0 ]] && _dcc_record_dod "doc-code-check PASS (issues: 0)"
   [[ "$issues" -eq 0 ]] && return 0 || return 1
 }
 

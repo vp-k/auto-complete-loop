@@ -37,8 +37,9 @@ No Ralph/progress/promise code — managed by the orchestrator.
    SOURCE_HASH=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash)
    ```
    이 값을 이번 라운드 `roundResults.sourceHash`로 기록한다. `code-review-findings` 게이트가
-   마지막 라운드의 sourceHash를 현재 지문과 대조하므로, 캡처~라운드 기록 사이에 소스 파일을
-   편집하지 않는다 (수정은 아래 2단계에서).
+   마지막 라운드의 sourceHash를 현재 지문과 대조한다. **캡처~리뷰어 실행(1단계) 완료까지** 소스
+   파일을 편집하지 않으며, 라운드 기록에는 반드시 이 캡처값을 사용한다 (수정 후 재캡처 금지 —
+   미리뷰 상태에 귀속되는 오염 발생).
 
 1. **codex-cli에 리뷰 요청**
 

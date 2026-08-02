@@ -224,7 +224,15 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
   ```bash
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .claude-full-auto-progress.json
   ```
-  applicable이 false/null이면 E2E 게이트 스킵. E2E 실패 시: 수정 후 e2e-gate만 재실행 (코드 리뷰 재실행 불필요)
+  applicable이 false/null이면 E2E 게이트 스킵. E2E 실패 시: 수정 후 e2e-gate만 재실행.
+  단, **E2E 수정이 소스를 변경했으면** 아래 재기록 라운드 규칙이 적용된다.
+- **재기록 라운드 규칙 (sourceHash 정합)**: 마지막 리뷰 라운드 기록 **이후** 소스 변경이
+  발생했다면 (최종 라운드의 LOW 수정 커밋, E2E 수정, 승격 finding 수정 등) —
+  전체 라운드 절차(지문 캡처 → 리뷰어 호출 → 검증 → 기록)를 1회 더 실행해 새 지문으로
+  귀속해야 `code-review-findings`를 통과한다. 리뷰어 호출 없이 라운드 항목만 append하는 것은 금지.
+- **라운드 기록 후 게이트 실행 전 커밋 금지**: 라운드 기록 → `code-review-findings` 사이에
+  `git commit`을 만들지 않는다 (progress/verification 기록 파일은 `.claude*`라 지문에 영향
+  없지만, **커밋은 HEAD를 움직여 지문을 바꾼다** — 소스 커밋이 필요하면 재기록 라운드로).
 
 ## Phase 3 완료
 

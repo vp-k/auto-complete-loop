@@ -28,7 +28,8 @@ No Ralph/progress/promise code — managed by the orchestrator.
 SOURCE_HASH=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash)
 ROUND_BASE=$(git rev-parse HEAD 2>/dev/null || echo "")
 ```
-`SOURCE_HASH`를 이번 라운드 `roundResults.sourceHash`로 기록한다. 캡처~라운드 기록 사이 소스 파일 편집 금지.
+`SOURCE_HASH`를 이번 라운드 `roundResults.sourceHash`로 기록한다. **캡처~서브에이전트 리뷰 완료까지**
+소스 파일 편집 금지, 라운드 기록에는 반드시 이 캡처값 사용 (수정 후 재캡처 금지).
 
 **라운드 2+**: `git diff --name-only <직전 라운드의 ROUND_BASE>..HEAD`로 변경된 파일만 리뷰 범위로 사용 (base 없는 `git diff`는 커밋 후 빈 목록이 되므로 금지). 이전 open finding 전체를 포함하고, **review-perspectives.md의 "라운드 2+ 래칫" 5규칙을 각 서브에이전트 프롬프트에 포함**한다 (미변경 코드 신규 지적은 novelty justification 필수).
 

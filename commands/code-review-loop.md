@@ -138,7 +138,7 @@ SOURCE_HASH=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash)
 ```
 **라운드 2+**: `git diff --name-only <roundStartSha>..HEAD` 목록을 전달 (커밋 후 uncommitted diff가 비는 문제 방지). 이전 finding 목록은 open 항목 전체를 프롬프트에 포함. **라운드 2+에는 review-perspectives.md의 "라운드 2+ 래칫" 5규칙을 리뷰어 프롬프트에 포함한다** (delta-only/novelty/monotonicity/severity/counter-review — 발산 방지). 리뷰어가 Claude가 놓친 새로운 이슈를 보고하는 것은 여전히 허용되나, 미변경 코드에 대한 신규 지적은 래칫 규칙 2(novelty justification)를 따른다.
 
-**리뷰 중 편집 금지**: `SOURCE_HASH` 캡처부터 라운드 결과 기록까지 소스 파일을 편집하지 않는다 (수정은 3단계 이후에).
+**리뷰 중 편집 금지**: `SOURCE_HASH` 캡처부터 **리뷰어 실행·finding 검증 완료까지** 소스 파일을 편집하지 않는다 (수정은 4단계에서). 6단계 기록의 `sourceHash`는 **반드시 이 2단계 캡처값**을 사용한다 — 수정 후 재캡처해 기록하면 미리뷰 상태에 귀속되는 오염이 발생한다.
 
 ### 모드별 리뷰 실행
 
@@ -174,8 +174,10 @@ codex exec --skip-git-repo-check '## 역할
 ### 변경된 파일 목록 (git diff --name-only)
 {실제 git diff 출력}
 
-## 참고: 이전 라운드에서 알려진 이슈 (라운드 2+에만 포함)
-[이전 finding 목록 — 참고용. 이 목록에 없는 새로운 이슈도 반드시 보고하세요]'
+## 이전 라운드의 open finding (라운드 2+에만 포함)
+[이전 open finding 목록 — 리뷰 범위에 포함. 라운드 2+ 래칫: 리뷰 범위는 변경 파일 + 이 목록이며,
+변경되지 않은 코드에 대한 신규 지적은 "이전 라운드가 놓친 이유"를 명시할 때만 CRITICAL~MEDIUM으로,
+아니면 LOW/advisory로 보고하세요. fixed/dismissed 재오픈은 새 증거 인용 필수, 심각도 인플레이션 금지]'
 ```
 
 **호출 실패 시**: 재시도 1회 → 여전히 실패 시 Claude가 해당 관점 직접 리뷰.
@@ -210,8 +212,13 @@ codex exec --skip-git-repo-check '## 역할
 ### 변경된 파일 목록 (git diff --name-only)
 {실제 git diff 출력}
 
-## 참고: 이전 라운드에서 알려진 이슈 (라운드 2+에만 포함)
-[이전 finding 목록 — 참고용. 이 목록에 없는 새로운 이슈도 반드시 보고하세요]'
+## 이전 라운드의 open finding (라운드 2+에만 포함)
+[이전 open finding 목록 — 리뷰 범위에 포함. 라운드 2+ 래칫: 리뷰 범위는 변경 파일 + 이 목록이며,
+변경되지 않은 코드에 대한 신규 지적은 "이전 라운드가 놓친 이유"를 명시할 때만 CRITICAL~MEDIUM으로,
+아니면 LOW/advisory로 보고하세요. fixed/dismissed 재오픈은 새 증거 인용 필수, 심각도 인플레이션 금지]
+
+## 역검토 (라운드 2+ dual 전용 — counter-review)
+[1차 호출의 이전 라운드 finding 요약 — 스코프 인플레이션·중복·정당화 없는 신규 지적을 별도 섹션으로 보고하세요]'
 ```
 
 **codex 2차 호출 실패 시**: 재시도 1회 → 여전히 실패 시 Claude가 PERF/CODE 직접 리뷰.

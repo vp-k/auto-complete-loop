@@ -192,7 +192,12 @@ finding 없으면 "NO_FINDINGS".
 progress 파일에 라운드 결과 기록. **각 confirmed finding은 `phases.phase_3.findingHistory` 배열에도
 개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"dismissed", ...}`) —
 `code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 Phase 완료를 차단한다
-(빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail):
+(빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail).
+
+**sourceHash 귀속 (v4.9.0 필수)**: 팀 생성(Step 3-1) **전에** `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash`
+출력을 캡처해 이번 라운드의 `sourceHash`로 기록한다. `code-review-findings`가 마지막 라운드의
+sourceHash를 현재 소스 지문과 대조하므로(불일치/부재 = FAIL), 캡처~팀원 리뷰 완료 사이에는
+소스 파일을 편집하지 않는다 (수정은 위 4단계에서):
 ```json
 "phase_3": {
   "reviewType": "agent-teams",
@@ -200,6 +205,7 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 `phases.p
   "roundResults": [
     {
       "round": 1,
+      "sourceHash": "<팀 생성 전 shared-gate.sh source-hash 출력>",
       "reviewers": ["sec-reviewer", "quality-reviewer", "live-tester"],
       "findingsBySrc": {
         "sec-reviewer": { "total": 5, "confirmed": 4 },
@@ -242,6 +248,9 @@ sec-reviewer, quality-reviewer, live-tester 팀원에게 shutdown을 요청하�
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh e2e-gate --progress-file .claude-full-auto-teams-progress.json
   ```
   applicable이 false/null이면 E2E 게이트 스킵.
+- **재기록 라운드 규칙**: 마지막 라운드 기록 이후 소스 변경(E2E 수정, 최종 라운드 수정 커밋 등)이
+  발생했으면 전체 라운드 절차(지문 캡처 → 팀 리뷰 → 기록)를 1회 더 실행해야
+  `code-review-findings`의 sourceHash 대조를 통과한다. 라운드 기록 후 게이트 전 커밋 금지.
 
 ### Step 3-7: Phase 3 완료
 

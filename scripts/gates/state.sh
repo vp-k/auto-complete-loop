@@ -490,7 +490,9 @@ cmd_code_review_findings() {
                                       or ((.id // "") | test("-CRITICAL-")))) | length),
         high:     ($open | map(select((.severity // "") == "HIGH"
                                       or ((.id // "") | test("-HIGH-")))) | length),
-        lastRound: ((.roundResults // (.phases.phase_3.roundResults // [])) | if length > 0 then .[-1] else null end),
+        lastRound: (((.roundResults // []) + (.phases.phase_3.roundResults // []))
+                   | map(select(type == "object"))
+                   | if length > 0 then .[-1] else null end),
         lastRoundHash: (((.roundResults // []) + (.phases.phase_3.roundResults // []))
                        | map(select(type == "object"))
                        | if length > 0 then (.[-1].sourceHash // "") else "" end)
@@ -510,10 +512,13 @@ cmd_code_review_findings() {
     has_round=$(echo "$counts" | jq '.lastRound != null' 2>/dev/null || echo "false")
     if [[ "$has_round" != "true" ]]; then
       # 리뷰 증거가 전혀 없음 (findingHistory 항목 0 + roundResults 0) = 리뷰 미수행 → fail-closed
+      # sourceHashCheck: git repo면 missing(리뷰·귀속 모두 없음), 비-git이면 skip — "skip=비-git" 계약 유지
+      local _nv_shc="skip"
+      quality_fingerprint >/dev/null 2>&1 && _nv_shc="missing"
       note="no review evidence (empty findingHistory, no roundResults) — code review has not run"
       echo "[code-review-findings] FAIL: $note"
       append_gate_history "code-review-findings" "fail" '{"criticalOpen":0,"highOpen":0,"reason":"no evidence"}'
-      _crf_record "fail" 0 0 "$note"
+      _crf_record "fail" 0 0 "$note" "$_nv_shc"
       echo "=== CODE REVIEW FINDINGS: FAIL ==="
       return 1
     fi
@@ -553,8 +558,9 @@ cmd_code_review_findings() {
     else
       echo "  마지막 리뷰 라운드가 소스 지문에 귀속되지 않았습니다 (pre-4.9 기록 또는 누락)."
     fi
-    echo "  Remedy: 수정을 커밋하고 'shared-gate.sh source-hash'로 지문을 캡처한 뒤,"
-    echo "          그 지문을 sourceHash로 기록하는 리뷰 라운드를 1회 더 실행하세요."
+    echo "  Remedy: 수정을 커밋한 뒤 **전체 라운드 절차(소스 지문 캡처 → 리뷰어 실제 호출 →"
+    echo "          finding 검증/수정 → 라운드 기록)를 1회 더 실행**하세요. open finding이 있으면"
+    echo "          그 라운드에서 함께 수정/기각합니다. 리뷰어 호출 없이 라운드 항목만 append하는 것은 금지."
     append_gate_history "code-review-findings" "fail" "$(jq -n --arg s "$sh_check" '{reason:("sourceHash " + $s)}')"
     _crf_record "fail" "$critical_open" "$high_open" "sourceHash $sh_check — unreviewed changes" "$sh_check"
     echo "=== CODE REVIEW FINDINGS: FAIL ==="

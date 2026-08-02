@@ -211,9 +211,10 @@ Phase 3 완료 시:
   - 승격 라운드를 roundResults에 {escalated: true, reviewMode: "<targetMode>", sourceHash: "<캡처값>"} 포함해 기록 (0-finding이어도 필수)
   - bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh review-escalation-check --mark-complete --progress-file {PROGRESS_FILE}
   - 증거 없으면 FAIL → 승격 리뷰 수행 후 재실행 (stop-hook이 reviewEscalation=pass|skip을 fail-closed로 요구)
-  - **승격 finding 수정이 있었던 경우**: 수정을 커밋한 뒤, 새 지문으로 sourceHash를 기록하는
-    비승격 리뷰 라운드를 1회 더 실행해야 code-review-findings의 sourceHash 대조를 통과한다
-    (0-finding 승격 라운드는 지문 불변이므로 추가 조치 불필요)
+  - **승격 finding 수정이 있었던 경우**: 수정을 커밋한 뒤, **전체 라운드 절차(지문 캡처 →
+    리뷰어 실제 호출 → 검증 → 기록)로 비승격 리뷰 라운드를 1회 더 실행**해야
+    code-review-findings의 sourceHash 대조를 통과한다 — 리뷰어 호출 없이 라운드 항목만
+    append하는 것은 금지 (0-finding 승격 라운드는 지문 불변이므로 추가 조치 불필요)
 
   *** Code Review Findings 게이트 (Director 전 필수 — HARD gate) ***
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}

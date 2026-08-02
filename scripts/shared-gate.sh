@@ -46,6 +46,9 @@
 #   acceptance-gate                                     - 동결 무결성 검증 + run.sh 실행 (HARD_FAIL, 디렉토리 없으면 skip)
 #   layer-coverage                                      - projectScope 대비 레이어 아티팩트 검증 (HARD_FAIL, scope 없으면 skip)
 #   code-review-findings                                - progress의 open CRITICAL/HIGH 리뷰 finding 계수 (HARD_FAIL)
+#   provenance-gate                                     - SPEC 핵심 섹션 provenance 마커 검증 (HARD_FAIL)
+#   doc-split record --parent <p> --children <a,b>      - TOO_BIG 문서 분할 기록 (record-error exit 4 후에만)
+#   review-escalation-check [--mark-complete]           - 위험 트리거 기반 리뷰 승격 판정/증거 검증
 #   record-dimension <key> <result> [evidence...]        - 소프트 품질 차원 기록 (qualityDimensions.<key>, layerCoverage 금지)
 #   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
 #   test-quality                                        - 테스트 assertion 비율/skip 비율/US 커버리지 (SOFT gate)
@@ -122,6 +125,9 @@ main() {
     doc-completeness)  cmd_doc_completeness "$@" ;;
     definition-conflict) cmd_definition_conflict "$@" ;;
     spec-to-tests)     cmd_spec_to_tests "$@" ;;
+    provenance-gate)   cmd_provenance_gate "$@" ;;
+    doc-split)         cmd_doc_split "$@" ;;
+    review-escalation-check) cmd_review_escalation_check "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
@@ -148,7 +154,7 @@ main() {
       echo "    --action '...'   Description of attempted fix"
       echo "    --result pass|fail  Result of the action"
       echo "    --reset-count    Reset attempt counter (on escalation level change)"
-      echo "    Exit codes: 0=continue, 1=escalate, 2=codex needed, 3=user intervention"
+      echo "    Exit codes: 0=continue, 1=escalate, 2=codex needed, 3=user intervention, 4=doc split required"
       echo "  check-tools                                - Check codex availability"
       echo "  find-debug-code [dir]                      - Find debug code"
       echo "  doc-consistency [docs_dir]                 - Check doc consistency"
@@ -167,6 +173,14 @@ main() {
       echo "  doc-completeness [docs_dir]                  - Quantitative API/section thresholds for plan-docs-full (HARD_FAIL)"
       echo "  definition-conflict [docs_dir]               - Detect Non-Goals violations across docs (SOFT_FAIL)"
       echo "  spec-to-tests                                - Verify SPEC.md endpoints map 1:1 to tests/api-smoke.sh (HARD_FAIL)"
+      echo "  provenance-gate                              - Verify SPEC core sections carry provenance markers (HARD_FAIL)"
+      echo "                                               user-fact | repo-fact:<path> | assumption: <rationale> | blocker"
+      echo "                                               Unsafe domains (credentials/payments/prod deploy/destructive data) must not be 'assumption'"
+      echo "  doc-split record --parent <doc.md> --children <a.md,b.md[,...]>"
+      echo "                                             - Record TOO_BIG document split (only after record-error exit 4)"
+      echo "                                               Parent -> status=split, children registered pending, escalation reset to L1"
+      echo "  review-escalation-check [--mark-complete]    - Evaluate risk triggers (L2+ escalation / scope reduction / re-freeze)"
+      echo "                                               No flag: record required/skip. --mark-complete: verify escalated review evidence"
       echo "  runtime-gate [port] [--timeout S] [--strict] - Start server ONCE, run endpoint smoke + FE-BE integration + functional flows, stop once"
       echo "                                               Records smokeCheck/integrationSmoke/functionalFlow in .claude-verification.json"
       echo "  live-testing-gate                            - Count open LIVE-CRITICAL/HIGH findings in progress (HARD_FAIL; skip if no live records)"

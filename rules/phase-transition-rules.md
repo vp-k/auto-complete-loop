@@ -194,9 +194,23 @@ DoD: `"dod.all_code_implemented": { "checked": true, "evidence": "모든 문서 
 ## Phase 3 → Phase 4
 
 ```
+Phase 3 진입 → *** 리뷰 승격 판정 (스킬 로드 전 필수) ***
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh review-escalation-check --progress-file {PROGRESS_FILE}
+  - 위험 트리거(L2+ 에스컬레이션 / 범위 축소 / 인수 테스트 재동결) 평가 → reviewEscalation = skip | pending
+  - skip → 기존 리뷰 모드만으로 진행
+
 Phase 3 진입 → Read ${CLAUDE_PLUGIN_ROOT}/{PHASE_3_SKILL}
 Phase 3 스킬의 지정된 Step 범위 수행 (오케스트레이터에서 PHASE_3_STEPS로 정의)
 Phase 3 완료 시:
+  *** 리뷰 승격 완료 검증 (pending이었던 경우 — code-review-findings보다 선행) ***
+  reviewEscalation이 pending이면 승격 리뷰 1라운드를 추가 실행한다:
+  - targetMode=dual: codex 2차 독립 리뷰 1회 (code-review 스킬의 codex 라운드 절차 재사용, 관점 분할)
+  - targetMode=roundtable: Agent tool로 `roundtable` 에이전트 호출 (입력: 변경 파일 + 트리거 사유)
+  - 승격 리뷰 finding은 findingHistory에 "escalated": true로 append (동일 스키마)
+  - 승격 라운드를 roundResults에 {escalated: true, reviewMode: "<targetMode>"} 포함해 기록 (0-finding이어도 필수)
+  - bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh review-escalation-check --mark-complete --progress-file {PROGRESS_FILE}
+  - 증거 없으면 FAIL → 승격 리뷰 수행 후 재실행 (stop-hook이 reviewEscalation=pass|skip을 fail-closed로 요구)
+
   *** Code Review Findings 게이트 (Director 전 필수 — HARD gate) ***
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}
   - open CRITICAL/HIGH finding을 집계하여 1건 이상이면 FAIL → Phase 4 전이 차단 (수정 후 재실행)

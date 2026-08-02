@@ -409,6 +409,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error \
 - `1`: 현재 레벨 예산 소진 → 다음 레벨로 에스컬레이트
 - `2`: L2 도달 → codex 분석 필요
 - `3`: L5 도달 → 사용자 개입 필요
+- `4`: L3 예산 소진 + 현재 문서 분할 가능 → TOO_BIG 문서 분할 (아래 L3.5 참조)
 
 ### 빌드/테스트 실패 처리 (레벨별 에스컬레이션)
 
@@ -453,6 +454,15 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 2. codex 분석 결과 기반으로 다시 구현
 3. `phase` → `implementing` (처음부터 다시 구현)
 4. 3회 소진 시 → L4로 에스컬레이트
+
+**L3.5: TOO_BIG 문서 분할 (record-error exit 4 수신 시, 문서당 1회)**
+
+L3 예산 소진 시 record-error가 자동 판정 (in_progress 문서 1개 + 미분할):
+1. 부모 문서 + SPEC을 재독하여 2~5개 자식 문서(`docs/<부모스템>-part1.md`, ...) 작성 — **AC 합집합 = 부모 AC (누락 금지)**
+2. README.md 문서 목록에 자식 추가
+3. `shared-gate.sh doc-split record --parent <부모.md> --children <a.md,b.md,...>` 실행 (부모 split 전환 + 자식 등록 + L1 리셋 원자 처리)
+4. 첫 자식 문서부터 구현 재개
+5. 분할 불가(내용이 원자적) 또는 자식이 다시 L3 소진 시 → L4로 진행
 
 **L4: 범위 축소 (1회)**
 
@@ -582,6 +592,13 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 
 - `pending` -> `in_progress`: 해당 문서 구현 시작 시
 - `in_progress` -> `completed`: 품질 게이트 + codex 리뷰 통과 시
+- `in_progress` -> `split`: TOO_BIG 분할 시 (`record-error` exit 4 → `doc-split record` — 게이트가 전환, 모델 직접 세팅 금지)
+
+**TOO_BIG 분할 필드 (doc-split 게이트가 기록):**
+
+- 부모: `status: "split"`, `children: ["auth-part1.md", ...]`
+- 자식: `{"name": "auth-part1.md", "status": "pending", "phase": null, "tickets": [], "splitDepth": 1, "parentDoc": "auth.md"}`
+- `status=split` 문서는 완료 판정에서 제외된다 (자식 완료가 커버) — stop-hook이 자동 처리
 
 **phase 값 (3단계):**
 

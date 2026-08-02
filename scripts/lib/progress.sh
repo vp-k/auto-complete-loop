@@ -140,6 +140,15 @@ migrate_schema_v7() {
 # Usage: append_gate_history <gate_name> <result> [details_json]
 append_gate_history() {
   local gate="$1" result="$2" details="${3:-"{}"}"
+
+  # 이벤트 로그 (관측용 — progress 유무/템플릿과 무관하게 기록, 실패해도 무시)
+  local _ge_phase="unknown"
+  if [[ -n "$PROGRESS_FILE" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    _ge_phase=$(jq -r '.currentPhase // "unknown"' "$PROGRESS_FILE" 2>/dev/null || echo "unknown")
+  fi
+  log_event "gate.result" "$(jq -cn --arg g "$gate" --arg r "$result" --arg p "$_ge_phase" \
+    '{gate: $g, phase: $p, result: $r}' 2>/dev/null || echo '{}')" 2>/dev/null || true
+
   if [[ -z "$PROGRESS_FILE" ]] || [[ ! -f "$PROGRESS_FILE" ]]; then
     return 0
   fi

@@ -63,6 +63,7 @@ Phase 1: Planning ───── {PHASE_1_SKILL}로 기획 문서 완성
 Phase 2: Implementation ── Claude 직접 구현 + TDD
     ↓ [일관성 검사 #2: doc↔code]
 Phase 3: Code Review ──── {PHASE_3_SKILL}로 리뷰 + Claude 수정
+    ↓ [리뷰 승격: review-escalation-check — L2+/범위축소/재동결 트리거 시 dual/roundtable 추가 라운드 의무]
     ↓ [일관성 검사 #3: code quality]
 Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
     ↓

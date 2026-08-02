@@ -100,3 +100,37 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
 ```
 
 1개라도 잔존하면 Phase 2 진입 차단. 모두 해소한 뒤에만 구현 시작 가능.
+
+## Provenance 마커 프로토콜 (SPEC 핵심 섹션 출처 4분류)
+
+**원칙**: SPEC의 모든 결정에는 **출처**가 있어야 한다. "태그가 없다 = 명확하다"는 부재 증명이
+아니라, 섹션마다 출처를 명시하는 존재 증명을 요구한다 (스펙 공백 시 임의 구현 금지 규칙의 기획 단계 버전).
+
+### 마커 형식 (핵심 섹션 헤딩 직후 첫 비공백 줄, 섹션당 정확히 1개)
+
+```markdown
+<!-- provenance: user-fact -->                      ← 사용자 요구사항/답변에서 직접 확인된 사실
+<!-- provenance: repo-fact:src/auth/jwt.ts -->      ← 레포에서 확인된 사실 (확인 경로 인용)
+<!-- provenance: assumption: REST가 관례이고 되돌리기 쉬움 -->  ← 안전한 기본값 (근거 필수)
+<!-- provenance: blocker -->                        ← 사용자 결정 필요 (아래 해소 프로세스)
+```
+
+**대상 섹션**: Success Criteria, User Stories(F/B), Data Model, API Contract, Constraints, Context & Existing System
+
+### 4분류 판정 기준
+
+| 분류 | 조건 |
+|------|------|
+| `user-fact` | 요구사항 원문 또는 사용자 답변(AskUserQuestion/NEEDS-CLARIFICATION 해소)에 근거 |
+| `repo-fact:<path>` | 기존 레포 코드/설정에서 확인 (브라운필드) — 확인한 경로를 반드시 인용 |
+| `assumption: <근거>` | 국소적·가역적·비파괴적 기본값만 허용. 근거 없는 assumption은 게이트가 거부 |
+| `blocker` | 인간 권한/외부 비용/파괴적 선택이 걸린 결정 — 추정 금지 |
+
+**unsafe 도메인은 assumption 금지** (user-fact 또는 blocker만):
+자격증명/시크릿/API 키, 결제/환불 정책, 프로덕션 배포 권한, 파괴적 데이터 작업(drop/truncate/삭제·보존 정책), 개인정보(PII) 처리.
+
+### 해소 프로세스
+
+1. **작성 중**: 섹션 완성 시점에 마커 1개를 기록하며 작성 (분류 판단 자체가 스펙 품질 점검)
+2. **blocker 처리**: 각 blocker를 `[NEEDS-CLARIFICATION: <질문>]` 태그로 전환 → 기존 batch-ask 플로우로 사용자 질의 → 답변 반영 후 마커를 `user-fact`로 교체
+3. **게이트**: `shared-gate.sh provenance-gate` — 마커 누락/중복/근거 없는 assumption/unsafe-assumption/blocker 잔존 시 HARD_FAIL (clarification-gate 직전에 실행)

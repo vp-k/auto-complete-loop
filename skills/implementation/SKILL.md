@@ -219,6 +219,24 @@ Phase 3 코드 리뷰 시 이 기준을 codex 프롬프트에 포함하여 검�
 - **경고 발생 시**: 추가 분할을 시도하고, 분할 불가 시 사유를 progress에 기록
 - **기록**: `phases.phase_2.scopeChallenges`에 경고 발생 티켓과 조치 결과 기록
 
+### Step 2-3.5: TOO_BIG 문서 분할 (record-error exit 4 수신 시)
+
+`record-error`가 **exit 4**를 반환하면 (L3 예산 소진 + 현재 문서 분할 가능),
+L4 범위 축소 전에 문서를 분할해 재시도한다:
+
+1. 부모 문서 + SPEC.md를 다시 읽고 내용을 2~5개 자식 문서로 분할 작성:
+   `docs/<부모스템>-part1.md`, `docs/<부모스템>-part2.md`, ...
+2. **AC 합집합 = 부모 AC** — 부모의 acceptanceCriteria가 자식들에 누락 없이 분배되어야 한다
+3. README.md 문서 목록에 자식 문서 추가
+4. 분할 기록 (부모 split 전환 + 자식 pending 등록 + 에스컬레이션 L1 리셋을 원자 처리):
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-split record --parent <부모.md> --children <a.md,b.md,...> --progress-file {PROGRESS_FILE}
+   ```
+5. 첫 자식 문서부터 Step 2-4 루프를 재개
+
+제약: `doc-split record`는 exit 4가 기록한 `pendingSplit` 없이는 거부된다. 분할은 문서당
+1회만 가능 (자식이 다시 L3를 소진하면 L4 범위 축소). 상세: error-escalation-rules.md.
+
 ### Step 2-4: 자동 구현 루프
 
 모든 문서에 대해 순차적으로:
@@ -258,7 +276,7 @@ Phase 3 코드 리뷰 시 이 기준을 codex 프롬프트에 포함하여 검�
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file {PROGRESS_FILE}
    ```
    - 실패 시 L0-L5 에스컬레이션 적용
-   - L0 즉시 수정(3회) -> L1 다른 방법(3회) -> L2 codex 분석 -> L3 다른 접근법(3회) -> L4 범위 축소 -> L5 사용자 개입
+   - L0 즉시 수정(3회) -> L1 다른 방법(3회) -> L2 codex 분석 -> L3 다른 접근법(3회) -> **TOO_BIG 문서 분할(exit 4, Step 2-3.5)** -> L4 범위 축소 -> L5 사용자 개입
 
    - **implementation-depth 검증**: 해당 문서에서 구현한 파일들에 대해 stub 검사 실행
      ```bash

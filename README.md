@@ -1,8 +1,8 @@
 # Auto Complete Loop
 
-**v4.4.0**
+**v4.7.0**
 
-AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, and a lesson memory loop that turns failures into next-run conditions.
+AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
 
 ## Installation
 
@@ -207,7 +207,7 @@ Memory is not storage — every lesson is written as a **condition for the next 
 
 - **What gets recorded** (`.claude/acl-learnings.local.md`, `## LESSON` entries with a `다음 실행 조건:` line):
   - Error escalation reaching L3+ (root-cause analysis outcomes)
-  - 3-strike loop escapes (same gate failing repeatedly → failing gate + fix command recorded)
+  - Stuck-pattern loop escapes — 3-strike (same failure 3× consecutive), OSCILLATION (two failure states alternating A-B-A-B), DIMINISHING_RETURNS (6 consecutive failed verifications with ≥3 distinct signatures) — each with a pattern-specific next-run condition
   - Successful completion (key decisions/warnings extracted from progress handoff before cleanup)
 - **How it comes back**: `session-start` hook injects the most recent LESSON entries into the next session's context, so the next run starts already knowing what broke and what to do about it
 - **No loops**: identical "next-run conditions" are deduplicated before append
@@ -226,8 +226,10 @@ The ~40 `shared-gate.sh` subcommands include the following user-facing gates (se
 | `live-testing-gate` | HARD | Open LIVE-CRITICAL/HIGH findings from real-app testing |
 | `layer-coverage` | HARD | Declared frontend/backend layers missing on filesystem |
 | `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed |
-| `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections (auto-records plan-template DoD keys) |
+| `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections, 4-dimension clarity (Goal/Constraints/SC/Context) (auto-records plan-template DoD keys) |
+| `provenance-gate` | HARD | SPEC core sections without provenance markers (user-fact/repo-fact/assumption/blocker); assumptions in unsafe domains (credentials/payments/prod deploy/destructive data/PII); unresolved blockers |
 | `clarification-gate` | HARD | `[NEEDS-CLARIFICATION]` tags left in docs |
+| `review-escalation-check` | HARD | Risk-triggered runs (L2+ escalation / scope reduction / acceptance re-freeze) finishing without an extra escalated review round (dual/roundtable) |
 | `doc-completeness` | HARD | API blocks below quantitative thresholds |
 | `spec-to-tests` | HARD | SPEC endpoints without smoke coverage (plan-docs-full) |
 | `definition-conflict` | SOFT | Non-Goals violations (each match must be adjudicated + recorded) |
@@ -264,7 +266,15 @@ No override (including directorOverride) can bypass the 훅-강제 tier.
 
 **Gate History**: Every gate execution recorded. 3 consecutive same-gate failures trigger a recorded escape (with a LESSON entry) instead of an infinite loop.
 
-**Error Escalation (L0-L5)**: Immediate fix → different method → codex analysis + roundtable → different approach → scope reduction → user intervention. L3+ escalations feed the lesson ledger.
+**Error Escalation (L0-L5)**: Immediate fix → different method → codex analysis + roundtable → different approach → **TOO_BIG doc split (exit 4)** → scope reduction → user intervention. L3+ escalations feed the lesson ledger.
+
+**TOO_BIG Document Split**: when L3 budget is exhausted on a single in-progress document, `record-error` returns exit 4 instead of dropping to L4 scope reduction — the doc is split into 2–5 child docs (`doc-split record`, depth-1 bound, AC union preserved) and implementation restarts at L1. The split is gated by a `pendingSplit` precondition so the model cannot self-reset the escalation ladder.
+
+**Spec Provenance Contract**: every SPEC core section carries an origin marker (`user-fact` / `repo-fact:<path>` / `assumption: <rationale>` / `blocker`). Unsafe domains (credentials, payments, prod deploy authority, destructive data ops, PII) can never be assumptions. Blockers convert to `[NEEDS-CLARIFICATION]` batch questions. Adopted from ouroboros's interview convergence contract, enforced deterministically by `provenance-gate`.
+
+**Trigger-Based Review Escalation**: normal runs use the user-selected review mode; runs that hit risk triggers (L2+ escalation, scope reduction, acceptance re-freeze) must add one escalated review round (2nd codex pass if available, else the roundtable agent) with deterministic evidence, or the stop-hook blocks completion.
+
+**Event Log**: append-only `.claude/acl-events.jsonl` (gate results, errors, escalations, loop exits, splits, re-freezes — dot-notation event types, capped, archived on success). Observability only — no gate reads it, so it can't be gamed.
 
 **IMPL Code Review**: Reviews code against SPEC.md (STUB/SCHEMA/MISSING/HARDCODE/FLOW).
 

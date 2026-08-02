@@ -1,5 +1,12 @@
 # Specification
 
+> **Provenance 마커 규칙**: 아래 핵심 섹션(Success Criteria, User Stories, Data Model,
+> API Contract, Constraints, Context)은 헤딩 직후 첫 줄에 출처 마커 1개가 필수다.
+> `user-fact`(사용자 요구/답변) | `repo-fact:<경로>`(레포 확인 사실) |
+> `assumption: <근거>`(안전 기본값) | `blocker`(사용자 결정 필요 → [NEEDS-CLARIFICATION] 전환).
+> unsafe 도메인(자격증명/결제/프로덕션 배포/파괴적 데이터 작업/개인정보) 포함 섹션은 assumption 금지.
+> 검증: `shared-gate.sh provenance-gate` — 프로토콜: templates/doc-planning-common.md
+
 ## Target Users (Personas Reference)
 - 페르소나 1: [이름] — [역할], [핵심 니즈]
 - 페르소나 2: [이름] — [역할], [핵심 니즈]
@@ -7,12 +14,19 @@
 ## Core Jobs (JTBD Reference)
 - When [상황], I want to [행동], So I can [가치]
 
+## Context & Existing System
+<!-- provenance: repo-fact:[확인한 경로] -->
+(브라운필드: 기존 스택/통합 제약/깨지면 안 되는 파일·API를 명시. 그린필드면 아래 리터럴 유지)
+- 해당 없음 — greenfield
+
 ## Success Criteria
+<!-- provenance: user-fact -->
 - North Star Metric: [지표]
 - SC-1: [정성적/정량적 기준]
 - SC-2: [기준]
 
 ## User Stories — Frontend
+<!-- provenance: user-fact -->
 (projectScope.hasFrontend=true일 때 필수. false면 이 섹션을 "N/A — 프론트엔드 없음"으로 표기)
 
 - US-F-001: As a [역할], I want to [UI 행동], so that [가치]
@@ -20,6 +34,7 @@
   - AC-F-001-2: [UX 예외 케이스]
 
 ## User Stories — Backend
+<!-- provenance: user-fact -->
 (projectScope.hasBackend=true일 때 필수. false면 이 섹션을 "N/A — 백엔드 없음"으로 표기)
 
 - US-B-001: As a [역할], I want to [API 행동], so that [가치]
@@ -45,6 +60,7 @@
   (예: US-F-002 AC에 "메모 0건이면 '아직 메모가 없습니다' 표시" 포함)
 
 ## Data Model
+<!-- provenance: user-fact -->
 | 엔티티 | 필드 | 타입 | 제약조건 | 설명 |
 |--------|------|------|----------|------|
 
@@ -53,6 +69,7 @@
 |--------|--------|------|
 
 ## API Contract
+<!-- provenance: user-fact -->
 ### [METHOD] /api/[resource]
 - Auth: [인증 방식]
 - Request: { ... }
@@ -70,6 +87,7 @@
   - 경계값 -> [예상 동작]
 
 ## Constraints
+<!-- provenance: user-fact -->
 
 > **hasBackend=true일 때 아래 3개 상세 문서 작성 필수** — 이 섹션은 요약만 두고 상세는 별도 문서 참조.
 

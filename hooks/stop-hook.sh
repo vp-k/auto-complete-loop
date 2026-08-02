@@ -98,6 +98,21 @@ append_lesson() {
   return 0
 }
 
+# ─── 이벤트 로그 (scripts/lib/utils.sh log_event의 최소 인라인 복제 — 훅은 standalone) ───
+# 순수 관측용 append-only JSONL. 실패해도 훅 동작에 영향 없음.
+EVENTS_FILE=".claude/acl-events.jsonl"
+log_event() {
+  local _t="${1:-}" _p="${2:-{\}}" _l
+  [[ -n "$_t" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  mkdir -p .claude 2>/dev/null || return 0
+  _l=$(jq -cn --arg t "$_t" \
+    --arg ts "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%S')" \
+    --argjson p "$_p" '{ts: $ts, event: $t} + $p' 2>/dev/null) || return 0
+  printf '%s\n' "$_l" >> "$EVENTS_FILE" 2>/dev/null || true
+  return 0
+}
+
 # 상태 파일이 없으면 정상 종료 허용 (단, progress 파일 미완료 시 WARNING)
 if [[ ! -f "$RALPH_STATE_FILE" ]]; then
   # A1: 비-Ralph 워크플로우에서도 미완료 progress 파일 경고
@@ -160,6 +175,7 @@ if ! [[ "$ITERATION" =~ ^[0-9]+$ ]] || ! [[ "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; th
   echo "Auto Complete Loop: State file preserved at $RALPH_STATE_FILE for manual inspection."
   echo "Auto Complete Loop: To recover, fix or delete $RALPH_STATE_FILE manually."
   # fail-closed: 손상 상태에서 루프 중단하되 파일 보존
+  log_event "loop.exit" '{"reason":"corrupt_state"}' || true
   rm -f ".claude/ralph-loop-failure-history.local"
   exit 0
 fi
@@ -174,6 +190,8 @@ fi
 # max_iterations 도달 확인
 if [[ $MAX_ITERATIONS -gt 0 ]] && [[ $ITERATION -ge $MAX_ITERATIONS ]]; then
   echo "Ralph loop: Max iterations ($MAX_ITERATIONS) reached."
+  log_event "loop.exit" "$(jq -cn --argjson it "$ITERATION" \
+    '{reason: "max_iterations", iteration: $it}' 2>/dev/null || echo '{}')" || true
   rm -f "$RALPH_STATE_FILE" ".claude/ralph-loop-failure-history.local"
   exit 0
 fi
@@ -248,7 +266,9 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
             VERIFICATION_PASSED="false"
             FAILURE_REASONS="${FAILURE_REASONS}$PROGRESS_FILE: documents array is empty. "
           else
-            ALL_COMPLETED=$(jq '[.documents[].status] | all(. == "completed")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
+            # status=="split"인 부모 문서는 완료 대상에서 제외 (자식 문서 완료가 커버) —
+            # 단, split 제외 후 0개면 미완료 취급 (전부 split-부모인 비정상 상태 방어)
+            ALL_COMPLETED=$(jq '[.documents[] | select(.status != "split")] | (length > 0) and all(.status == "completed")' "$PROGRESS_FILE" 2>/dev/null || echo "false")
             if [[ "$ALL_COMPLETED" != "true" ]]; then
               VERIFICATION_PASSED="false"
               FAILURE_REASONS="${FAILURE_REASONS}$PROGRESS_FILE: not all documents completed. "
@@ -445,10 +465,14 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       if [[ "$WF_FULL_AUTO" == "true" ]]; then
         # full-auto: 기획 게이트(pass) + live/layer/일관성(pass|skip) + 코드리뷰 finding(pass)
         _require_vgate "specCompleteness"   "pass"      "shared-gate.sh spec-completeness"
+        # provenance: skip 허용 (--start-phase로 Phase 1을 건너뛴 pre-4.7 문서 하위호환)
+        _require_vgate "provenanceGate"     "pass skip" "shared-gate.sh provenance-gate"
         _require_vgate "clarificationGate"  "pass"      "shared-gate.sh clarification-gate"
         _require_vgate "docCompleteness"    "pass"      "shared-gate.sh doc-completeness"
         _require_vgate "liveTesting"        "pass skip" "shared-gate.sh live-testing-gate"
         _require_vgate "codeReviewFindings" "pass"      "shared-gate.sh code-review-findings"
+        # 리뷰 승격: 트리거 없으면 skip, 트리거 발동 시 승격 리뷰 증거(pass) 필수
+        _require_vgate "reviewEscalation"   "pass skip" "shared-gate.sh review-escalation-check"
         _require_vgate "docCodeCheck"       "pass skip" "shared-gate.sh doc-code-check"
         _require_vgate "serviceTestCheck"   "pass skip" "shared-gate.sh service-test-check"
         # 인수 테스트 게이트: skip 불허 — full-auto는 SPEC 기반이므로 Phase 1이 반드시 tests/acceptance/를 생성
@@ -458,8 +482,9 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       fi
 
       if [[ "$WF_PLAN_DOCS_FULL" == "true" ]]; then
-        # plan-docs-full: 4대 기획 게이트 모두 pass
+        # plan-docs-full: 기획 게이트 모두 pass (provenance 포함 — 신규 기획은 마커 필수)
         _require_vgate "specCompleteness"  "pass" "shared-gate.sh spec-completeness"
+        _require_vgate "provenanceGate"    "pass" "shared-gate.sh provenance-gate"
         _require_vgate "clarificationGate" "pass" "shared-gate.sh clarification-gate"
         _require_vgate "docCompleteness"   "pass" "shared-gate.sh doc-completeness"
         _require_vgate "specToTests"       "pass" "shared-gate.sh spec-to-tests"
@@ -504,6 +529,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         fi
       done
 
+      log_event "loop.exit" '{"reason":"success"}' || true
       rm -f "$RALPH_STATE_FILE" ".claude/ralph-loop-failure-history.local"
       # 검증 완료된 progress/verification 파일 정리: 삭제 대신 아카이브 (오판 시 복구 가능)
       ARCHIVE_DIR="${ARCHIVE_ROOT}/$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -511,6 +537,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         archive_or_remove "$pf" "$ARCHIVE_DIR"
       done
       archive_or_remove ".claude-verification.json" "$ARCHIVE_DIR"
+      archive_or_remove ".claude/acl-events.jsonl" "$ARCHIVE_DIR"
       # 오래된 아카이브 정리 (7일 초과 디렉토리 삭제)
       if [[ -d "$ARCHIVE_ROOT" ]]; then
         find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
@@ -519,41 +546,99 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
     else
       echo "Auto Complete Loop: Promise detected but verification failed: ${FAILURE_REASONS}Continuing loop..."
 
-      # 무한 루프 감지: 동일 실패 해시가 3회 연속 시 강제 탈출
+      # 무한 루프 감지: 실패 서명 패턴 3종 (3-strike / OSCILLATION / DIMINISHING_RETURNS)
       FAILURE_HISTORY_FILE=".claude/ralph-loop-failure-history.local"
-      # 크로스 플랫폼 해시 (md5sum → md5 → sha256sum → cksum 폴백)
-      if command -v md5sum &>/dev/null; then
-        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | md5sum | cut -d' ' -f1)
-      elif command -v md5 &>/dev/null; then
-        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | md5)
-      elif command -v sha256sum &>/dev/null; then
-        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | sha256sum | cut -d' ' -f1)
-      else
-        CURRENT_FAILURE_HASH=$(echo "$FAILURE_REASONS" | cksum | cut -d' ' -f1)
-      fi
-      REPEAT_COUNT=0
-      if [[ -f "$FAILURE_HISTORY_FILE" ]]; then
-        # grep -c는 무매치에도 "0"을 출력하므로 || echo를 붙이면 "0\n0"이 되어 산술 에러 — || true로 가드
-        REPEAT_COUNT=$(grep -c "^${CURRENT_FAILURE_HASH}$" "$FAILURE_HISTORY_FILE" 2>/dev/null || true)
-        [[ "$REPEAT_COUNT" =~ ^[0-9]+$ ]] || REPEAT_COUNT=0
-      fi
-      echo "$CURRENT_FAILURE_HASH" >> "$FAILURE_HISTORY_FILE"
-      REPEAT_COUNT=$((REPEAT_COUNT + 1))
 
-      if [[ $REPEAT_COUNT -ge 3 ]]; then
-        echo "Auto Complete Loop: WARNING - Same failure repeated ${REPEAT_COUNT} times. Breaking loop due to unresolvable verification failures."
+      # 실패 사유 정규화: CR·숫자 제거 + 공백 압축 — 카운트 등 가변 텍스트로
+      # 서명이 매번 달라지는 것을 방지 (record-error msgNormalized 선례)
+      NORMALIZED_REASONS=$(printf '%s' "$FAILURE_REASONS" | tr -d '\r' | tr -d '0-9' | tr -s ' ' 2>/dev/null || true)
+
+      # 크로스 플랫폼 해시 (md5sum → md5 → sha256sum → cksum 폴백)
+      hash_string() {
+        if command -v md5sum &>/dev/null; then
+          printf '%s' "$1" | md5sum | cut -d' ' -f1
+        elif command -v md5 &>/dev/null; then
+          printf '%s' "$1" | md5
+        elif command -v sha256sum &>/dev/null; then
+          printf '%s' "$1" | sha256sum | cut -d' ' -f1
+        else
+          printf '%s' "$1" | cksum | cut -d' ' -f1
+        fi
+      }
+      CURRENT_FAILURE_HASH=$(hash_string "$NORMALIZED_REASONS")
+
+      # 이번 iteration의 실패 게이트명 추출 (라인 포맷: hash<TAB>gates — 구 포맷(해시만)과 하위호환)
+      _cur_gates=$(printf '%s' "$FAILURE_REASONS" | grep -oE '[A-Za-z]+=(missing|fail|soft_fail)' | cut -d= -f1 | sort -u | paste -sd ',' - 2>/dev/null || true)
+      printf '%s\t%s\n' "$CURRENT_FAILURE_HASH" "${_cur_gates:-}" >> "$FAILURE_HISTORY_FILE"
+      log_event "loop.verify_failed" "$(jq -cn --argjson it "$ITERATION" --arg g "${_cur_gates:-}" \
+        '{iteration: $it, gates: $g}' 2>/dev/null || echo '{}')" || true
+
+      # 최근 6개 서명 로드 (성공/탈출 시 파일이 클리어되므로 엔트리 수 = 연속 실패 검증 수)
+      _H=()
+      while IFS= read -r _hl; do
+        _H+=("${_hl%%$'\t'*}")
+      done < <(tail -n 6 "$FAILURE_HISTORY_FILE" 2>/dev/null || true)
+      _n=${#_H[@]}
+
+      # 패턴 판정 (구체적 우선: 3-strike → OSCILLATION → DIMINISHING_RETURNS)
+      # - 3-strike: 동일 서명 3회 "연속" (기존 구현은 파일 전체 누적 카운트였음 — 연속으로 교정.
+      #   누적성 정체는 아래 DIMINISHING_RETURNS가 흡수한다)
+      # - OSCILLATION: 최근 4개가 A→B→A→B 교대 (한쪽을 고치면 다른 쪽이 깨지는 진동)
+      # - DIMINISHING_RETURNS: 6회 연속 실패 + 최근 6개 중 상이 서명 ≥3 (수렴 없는 산발 실패)
+      STUCK_PATTERN=""
+      if [[ $_n -ge 3 ]] \
+         && [[ "${_H[$_n-1]}" == "${_H[$_n-2]}" ]] \
+         && [[ "${_H[$_n-2]}" == "${_H[$_n-3]}" ]]; then
+        STUCK_PATTERN="3strike"
+      elif [[ $_n -ge 4 ]] \
+         && [[ "${_H[$_n-1]}" == "${_H[$_n-3]}" ]] \
+         && [[ "${_H[$_n-2]}" == "${_H[$_n-4]}" ]] \
+         && [[ "${_H[$_n-1]}" != "${_H[$_n-2]}" ]]; then
+        STUCK_PATTERN="oscillation"
+      elif [[ $_n -ge 6 ]]; then
+        _distinct=$(printf '%s\n' "${_H[@]}" | sort -u | wc -l | tr -d ' ' || true)
+        if [[ "$_distinct" =~ ^[0-9]+$ ]] && [[ $_distinct -ge 3 ]]; then
+          STUCK_PATTERN="diminishing_returns"
+        fi
+      fi
+
+      if [[ -n "$STUCK_PATTERN" ]]; then
+        # 공통: 실패 게이트명 + 해결 명령을 기계적으로 구성 (session-start.sh가 다음 세션에 주입)
+        _remedies=$(printf '%s' "$FAILURE_REASONS" | grep -o "run '[^']*'" | sed "s/^run '//; s/'\$//" | sort -u | paste -sd ';' - 2>/dev/null | sed 's/;/; /g' || true)
+        _gate_names="${_cur_gates:-unknown}"
+
+        case "$STUCK_PATTERN" in
+          3strike)
+            echo "Auto Complete Loop: WARNING - Same failure repeated 3 times. Breaking loop due to unresolvable verification failures."
+            if [[ -n "${_remedies:-}" ]]; then
+              _next_cond="완주 선언 전에 실패 게이트(${_gate_names})를 먼저 해결하라 — 실행: ${_remedies}"
+            else
+              _next_cond="완주 선언 전에 다음 실패 사유를 먼저 해결하라: ${FAILURE_REASONS}"
+            fi
+            _situation="Ralph Loop 완주 검증에서 동일 실패 3회 연속 반복 → 강제 탈출"
+            _lesson_source="stop-hook-3strike"
+            ;;
+          oscillation)
+            echo "Auto Complete Loop: WARNING - OSCILLATION detected (two failure states alternating A-B-A-B). Breaking loop."
+            # 진동하는 두 상태의 게이트명 (최근 2라인의 gates 필드 합집합)
+            _osc_gates=$(tail -n 2 "$FAILURE_HISTORY_FILE" 2>/dev/null | cut -f2 -s | tr ',' '\n' | sort -u | grep -v '^$' | paste -sd ',' - 2>/dev/null || true)
+            _next_cond="두 실패 상태가 교대로 반복(OSCILLATION) — 한쪽을 고치면 다른 쪽이 깨진다. 관련 게이트(${_osc_gates:-$_gate_names})를 동시에 만족하는 단일 변경을 설계하라"
+            _situation="Ralph Loop 완주 검증에서 두 실패 서명이 A-B-A-B 교대 → 강제 탈출"
+            _lesson_source="stop-hook-oscillation"
+            ;;
+          diminishing_returns)
+            echo "Auto Complete Loop: WARNING - DIMINISHING_RETURNS detected (6 consecutive failed verifications, ${_distinct} distinct failure signatures). Breaking loop."
+            _next_cond="6회 연속 검증 실패에 상이한 실패가 ${_distinct}종 — 개별 수정이 수렴하지 않는다(DIMINISHING_RETURNS). 공통 원인을 먼저 찾고 접근을 전환하라 (L3 다른 접근법/roundtable 고려)"
+            _situation="Ralph Loop 완주 검증 6회 연속 실패, 상이 서명 ${_distinct}종 → 강제 탈출"
+            _lesson_source="stop-hook-diminishing-returns"
+            ;;
+        esac
+
         echo "Auto Complete Loop: Unresolved issues: ${FAILURE_REASONS}"
         echo "Auto Complete Loop: Progress files preserved for manual inspection."
-        # LESSON 기록: 반복 실패 강제 탈출 — 실패 게이트명 + 해결 명령을 기계적으로 구성해
-        # 다음 세션의 실행 조건으로 남긴다 (session-start.sh가 주입)
-        _remedies=$(printf '%s' "$FAILURE_REASONS" | grep -o "run '[^']*'" | sed "s/^run '//; s/'\$//" | sort -u | paste -sd ';' - 2>/dev/null | sed 's/;/; /g' || true)
-        _gate_names=$(printf '%s' "$FAILURE_REASONS" | grep -oE '[A-Za-z]+=(missing|fail|soft_fail)' | cut -d= -f1 | sort -u | paste -sd ',' - 2>/dev/null || true)
-        if [[ -n "${_remedies:-}" ]]; then
-          _next_cond="완주 선언 전에 실패 게이트(${_gate_names:-unknown})를 먼저 해결하라 — 실행: ${_remedies}"
-        else
-          _next_cond="완주 선언 전에 다음 실패 사유를 먼저 해결하라: ${FAILURE_REASONS}"
-        fi
-        append_lesson "stop-hook-3strike" "Ralph Loop 완주 검증에서 동일 실패 ${REPEAT_COUNT}회 반복 → 강제 탈출" "${FAILURE_REASONS}" "${_next_cond}" || true
+        append_lesson "$_lesson_source" "$_situation" "${FAILURE_REASONS}" "${_next_cond}" || true
+        log_event "loop.exit" "$(jq -cn --arg r "$STUCK_PATTERN" --arg g "$_gate_names" \
+          '{reason: $r, gates: $g}' 2>/dev/null || echo '{}')" || true
         rm -f "$RALPH_STATE_FILE" "$FAILURE_HISTORY_FILE"
         # exit 0 to stop the loop, but progress files are NOT deleted (unlike success path)
         exit 0

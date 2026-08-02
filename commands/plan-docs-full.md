@@ -49,8 +49,9 @@ argument-hint: <요구사항 (자연어)>
     ├── skills/pm-planning/SKILL.md        (Phase 0 — 기존 재사용)
     └── {PHASE_1_SKILL}                    (Phase 1 — 모드별 스킬 재사용)
 
-→ [게이트 6종 — 모두 PASS여야 promise 발행]
-   0. spec-completeness    (HARD_FAIL: 필수 섹션 + 핵심 섹션 TBD 0건)
+→ [게이트 7종 — 모두 PASS여야 promise 발행]
+   0. spec-completeness    (HARD_FAIL: 필수 섹션 + 핵심 섹션 TBD 0건 + 4차원(Goal/Constraints/SC/Context) 검사)
+   0.5 provenance-gate     (HARD_FAIL: SPEC 핵심 섹션 출처 마커 — user-fact/repo-fact/assumption/blocker)
    1. doc-completeness     (HARD_FAIL: API 블록 정량 임계값)
    2. doc-consistency      (WARN: 모델/엔드포인트/네이밍 교차 검증)
    3. definition-conflict  (SOFT_FAIL: Non-Goals 침범 탐지 + Claude 판정 기록)
@@ -93,8 +94,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 1. `{PROGRESS_FILE}`의 `phases.phase_0` + `phases.phase_1` 모든 step status가 `completed`
 2. `{PROGRESS_FILE}`의 `dod`(아래 DoD 키 목록) 모두 `checked: true`
-3. **게이트 6종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
+3. **게이트 7종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
    - `spec-completeness` exit 0 (CRITICAL 0건)
+   - `provenance-gate` exit 0 (핵심 섹션 마커 완비, blocker/unsafe-assumption 0건)
    - `doc-completeness` exit 0
    - `doc-consistency` exit 0 (이슈 0건)
    - `definition-conflict` exit 0 + 매치가 있다면 progress의 `nonGoalsAudit`에 모든 매치 판정 기록 완료
@@ -121,7 +123,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 ```bash
 for key in pm_approved assumptions_documented premortem_done all_docs_complete \
            spec_md_generated smoke_scripts_generated spec_completeness_passed \
-           doc_completeness_passed \
+           doc_completeness_passed provenance_recorded \
            doc_consistency_passed definition_conflict_resolved spec_to_tests_passed \
            acceptance_frozen clarification_resolved; do
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key "$key" --progress-file {PROGRESS_FILE}
@@ -205,19 +207,25 @@ jq_inplace {PROGRESS_FILE} \
 
 파일이 없으면 기록하지 말고 Phase 1(Step 1-7)을 재수행합니다.
 
-## 3단계: 게이트 6종 순차 검증 (Phase 1 종료 직후)
+## 3단계: 게이트 7종 순차 검증 (Phase 1 종료 직후)
 
 스킬 완료 후 오케스트레이터가 다음 게이트를 **순차** 실행합니다. 하나라도 실패하면 Phase 1 재진입(해당 이슈 수정).
 
-> 게이트 결과는 `.claude-verification.json`에 자동 기록되며, stop-hook이 `specCompleteness` · `clarificationGate` · `docCompleteness` · `specToTests` · `acceptanceFreeze` 키가 전부 `pass`인지 최종 검증합니다 (미실행 = 완주 불가, fail-closed).
+> 게이트 결과는 `.claude-verification.json`에 자동 기록되며, stop-hook이 `specCompleteness` · `provenanceGate` · `clarificationGate` · `docCompleteness` · `specToTests` · `acceptanceFreeze` 키가 전부 `pass`인지 최종 검증합니다 (미실행 = 완주 불가, fail-closed).
 >
-> plan 템플릿 기본 dod 5키(`user_story`/`data_model`/`api_contract`/`error_scenarios`/`no_definition_conflict`)는 spec-completeness · definition-conflict 게이트가 PASS 시 **자동 기록**합니다 (모델 직접 세팅 금지).
+> plan 템플릿 기본 dod 5키(`user_story`/`data_model`/`api_contract`/`error_scenarios`/`no_definition_conflict`)와 `provenance_recorded`는 spec-completeness · definition-conflict · provenance-gate 게이트가 PASS 시 **자동 기록**합니다 (모델 직접 세팅 금지).
 
 ```bash
-# 게이트 0: spec-completeness (HARD_FAIL: CRITICAL 이슈 0건 — 핵심 섹션 TBD 포함)
+# 게이트 0: spec-completeness (HARD_FAIL: CRITICAL 이슈 0건 — 핵심 섹션 TBD + 4차원 검사 포함)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness \
   --progress-file {PROGRESS_FILE}
 # 실패 → overview/SPEC의 누락 섹션·핵심 섹션 내 TBD를 구체 결정으로 교체 후 재실행
+
+# 게이트 0.5: provenance-gate (HARD_FAIL: SPEC 핵심 섹션 출처 마커)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh provenance-gate \
+  --progress-file {PROGRESS_FILE}
+# 실패(마커 누락/근거 없는 assumption/unsafe-assumption) → 해당 섹션 마커 보완 후 재실행
+# 실패(blocker 잔존) → [NEEDS-CLARIFICATION]으로 전환해 batch-ask로 해소 → user-fact 교체 후 재실행
 
 # 게이트 1: doc-completeness (HARD_FAIL)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-completeness docs/ \
@@ -289,7 +297,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file {PROGRE
 ## 강제 규칙
 
 - `pm-planning` / `doc-planning` 스킬 내부 로직을 이 파일에 복사하지 않는다 (단일 소스 원칙)
-- 6종 게이트 중 하나라도 실패한 채로 promise를 발행하지 않는다
+- 7종 게이트 중 하나라도 실패한 채로 promise를 발행하지 않는다
+- provenance blocker를 assumption으로 바꿔치기해 게이트를 우회하지 않는다 (unsafe 도메인은 user-fact/blocker만)
 - 동결 이후 tests/acceptance/**를 수정하지 않는다 (protect-files-guard 훅 차단. 스펙 변경 시에만 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user` 재동결)
 - `definition-conflict`의 매치된 라인 각각이 `nonGoalsAudit`에 기록되지 않은 채로 진행하지 않는다 (임의 판단 회피)
 - progress 파일의 DoD는 게이트 PASS evidence와 함께만 `checked: true`로 갱신한다

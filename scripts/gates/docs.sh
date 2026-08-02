@@ -545,12 +545,64 @@ cmd_spec_completeness() {
     fi
   fi
 
+  # ── 명확성 4차원 검사 (Goal / Constraints / Success Criteria / Context) ──
+  # ouroboros의 clarity dimension 채택 — 수치 점수 대신 결정론적 존재/비어있음 검사.
+  local dim_goal="ok" dim_sc="ok" dim_constraints="ok" dim_context="ok"
+
+  # [Goal] overview.md에 문제/목표 헤딩 존재 (본문 공백은 위 빈 섹션 검사가 커버)
+  if [[ -f "overview.md" ]]; then
+    if ! grep -qiE '^#+[ 	].*(문제|Problem|목표|Goal|비전|Vision)' "overview.md" 2>/dev/null; then
+      dim_goal="missing"
+      major=$((major + 1))
+      issues="${issues}MAJOR: [Goal] overview.md에 문제 정의/목표 헤딩 없음 (문제|Problem|목표|Goal|비전)\n"
+    fi
+  else
+    dim_goal="missing"
+  fi
+
+  if [[ -n "$spec_file" ]]; then
+    # [SuccessCriteria] SC-N 항목 ≥1 (검증 불가능한 성공 기준 = 미완성 스펙 → CRITICAL)
+    local sc_count
+    sc_count=$({ grep -coE 'SC-[0-9]+' "$spec_file" 2>/dev/null || true; } | tr -d '[:space:]')
+    [[ "$sc_count" =~ ^[0-9]+$ ]] || sc_count=0
+    if [[ "$sc_count" -eq 0 ]]; then
+      dim_sc="missing"
+      critical=$((critical + 1))
+      issues="${issues}CRITICAL: [SuccessCriteria] $spec_file에 SC-N 성공 기준 항목 없음 (최소 1개 필수)\n"
+    elif ! grep -qiE 'North Star' "$spec_file" 2>/dev/null; then
+      minor=$((minor + 1))
+      issues="${issues}MINOR: [SuccessCriteria] North Star Metric 미정의\n"
+    fi
+
+    # [Constraints] 성능/보안 하위 섹션 존재 + 비어있지 않음
+    local _cs
+    for _cs in "성능" "보안"; do
+      if ! grep -qE "^###[ 	]+${_cs}" "$spec_file" 2>/dev/null; then
+        dim_constraints="incomplete"
+        major=$((major + 1))
+        issues="${issues}MAJOR: [Constraints] $spec_file의 Constraints에 '### ${_cs}' 하위 섹션 없음\n"
+      fi
+    done
+
+    # [Context] 기존 시스템 컨텍스트 섹션 존재 (브라운필드 내용 또는 '해당 없음 — greenfield' 리터럴)
+    # MAJOR로 유지 — pre-4.7 SPEC의 --start-phase 재진입을 하드블록하지 않기 위함 (신규 작성은 스킬이 보장)
+    if ! grep -qiE '^#+[ 	].*(Context.*Existing|기존 시스템|Existing System)' "$spec_file" 2>/dev/null; then
+      dim_context="missing"
+      major=$((major + 1))
+      issues="${issues}MAJOR: [Context] $spec_file에 'Context & Existing System' 섹션 없음 (브라운필드 제약 명시 또는 '해당 없음 — greenfield')\n"
+    fi
+  fi
+
   # ── 결과 출력 ──
   echo ""
   if [[ -n "$issues" ]]; then
     printf '%b\n' "$issues"
   fi
 
+  echo "┌─ 명확성 4차원 ──────────────────────┐"
+  echo "│ Goal: $dim_goal  SuccessCriteria: $dim_sc"
+  echo "│ Constraints: $dim_constraints  Context: $dim_context"
+  echo "└─────────────────────────────────────┘"
   echo "┌─────────────────────────────────────┐"
   echo "│ CRITICAL: $critical  MAJOR: $major  MINOR: $minor"
   echo "└─────────────────────────────────────┘"
@@ -571,7 +623,9 @@ cmd_spec_completeness() {
   record_verification "specCompleteness" \
     "$(jq -n --arg ts "$(timestamp)" --arg r "$v_result" \
         --argjson c "$critical" --argjson mj "$major" --argjson mn "$minor" \
-        '{timestamp:$ts,result:$r,critical:$c,major:$mj,minor:$mn}')"
+        --arg dg "$dim_goal" --arg ds "$dim_sc" --arg dc "$dim_constraints" --arg dx "$dim_context" \
+        '{timestamp:$ts,result:$r,critical:$c,major:$mj,minor:$mn,
+          dimensions:{goal:$dg,successCriteria:$ds,constraints:$dc,context:$dx}}')"
 
   # DoD 자동 기록 (plan 템플릿 계약): 이 게이트가 user_story/data_model/api_contract/error_scenarios의
   # 스크립트 기록자다 (code-review-findings의 dod.code_review_pass 기록 패턴 준수).
@@ -589,6 +643,168 @@ cmd_spec_completeness() {
     echo "BLOCKED: $critical CRITICAL issue(s) must be resolved before Phase 2."
     return 1
   fi
+  return 0
+}
+
+# ─── provenance-gate: SPEC 핵심 섹션 출처(provenance) 마커 검증 (HARD_FAIL) ───
+# 계약: SPEC의 핵심 섹션마다 헤딩 직후 첫 비공백 줄에 정확히 1개의 마커가 있어야 한다.
+#   <!-- provenance: user-fact -->                      사용자 요구/답변에서 직접 확인된 사실
+#   <!-- provenance: repo-fact:<path> -->               레포에서 확인된 사실 (경로 인용)
+#   <!-- provenance: assumption: <근거> -->             안전한 기본값 (근거 필수, 되돌릴 수 있어야 함)
+#   <!-- provenance: blocker -->                        사용자 결정 필요 → [NEEDS-CLARIFICATION]으로 전환해 질문
+# unsafe 도메인(자격증명/결제/프로덕션 배포/파괴적 데이터 작업/개인정보)이 본문에 있는 섹션은
+# assumption 금지 — user-fact 또는 blocker만 허용 (ouroboros convergence contract 채택).
+cmd_provenance_gate() {
+  echo "=== Provenance Gate ==="
+  require_jq
+
+  # SPEC 파일 탐색 (spec-completeness와 동일 후보)
+  local spec_file=""
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { spec_file="$candidate"; break; }
+  done
+
+  _pg_record() {  # $1=result $2=missing $3=blockers $4=unsafe
+    record_verification "provenanceGate" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" \
+          --argjson m "${2:-0}" --argjson b "${3:-0}" --argjson u "${4:-0}" \
+          '{timestamp:$ts,result:$r,missing:$m,blockers:$b,unsafeAssumptions:$u}')"
+  }
+
+  if [[ -z "$spec_file" ]]; then
+    echo "[provenance-gate] HARD_FAIL: SPEC file not found (searched: SPEC.md, docs/SPEC.md, docs/api-spec.md, spec.md)"
+    append_gate_history "provenance-gate" "hard_fail" '{"reason":"no spec"}'
+    _pg_record "fail" 0 0 0
+    echo "=== PROVENANCE GATE: HARD_FAIL ==="
+    return 1
+  fi
+
+  # 마커 문법 (assumption은 비어있지 않은 근거 강제)
+  local marker_re='^<!--[ ]*provenance:[ ]*(user-fact|repo-fact(:[^>]+)?|assumption:[ ]*[^[:space:]>][^>]*|blocker)[ ]*-->[ ]*$'
+
+  # 하위호환 skip 계약: 마커가 전혀 없고 Phase 1이 skip-phases로 건너뛰어진 경우
+  # (pre-4.7 문서로 --start-phase 재진입) → skip 기록. 그 외 마커 0개는 fail-closed.
+  local total_markers
+  total_markers=$({ grep -cE "$marker_re" "$spec_file" 2>/dev/null || true; })
+  [[ "$total_markers" =~ ^[0-9]+$ ]] || total_markers=0
+  if [[ "$total_markers" -eq 0 ]] && [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    local _skip_ev
+    _skip_ev=$(jq -r '.dod.all_docs_complete.evidence // ""' "$PROGRESS_FILE" 2>/dev/null || echo "")
+    if [[ "$_skip_ev" == *"skipped by user"* ]]; then
+      echo "[provenance-gate] SKIP (Phase 1 skipped by user — pre-provenance SPEC 하위호환)"
+      append_gate_history "provenance-gate" "skip" '{"reason":"phase 1 skipped"}'
+      _pg_record "skip" 0 0 0
+      echo "=== PROVENANCE GATE: SKIP ==="
+      return 0
+    fi
+  fi
+
+  # unsafe 도메인 (핵심 섹션 본문 스코프 한정 — 오탐 억제. 튜닝은 이 변수에서)
+  local unsafe_re='credential|secret|시크릿|API[ _-]?key|password|비밀번호|token 발급|결제|payment|billing|환불|프로덕션 배포|production deploy|drop table|truncate|cascade delete|삭제 정책|retention|개인정보|PII|주민등록'
+
+  # 필수 섹션 (SPEC에 존재하는 헤딩만 검사 — 섹션 존재 자체는 spec-completeness 소관)
+  local sec_keys=("Success Criteria" "User Stories(FE)" "User Stories(BE)" "Data Model" "API Contract" "Constraints" "Context")
+  local sec_res=(
+    'Success Criteria|성공 기준'
+    'User Stories.*(Frontend|프론트)'
+    'User Stories.*(Backend|백엔드)'
+    'Data Model|데이터 모델'
+    'API Contract|API 계약'
+    'Constraints|제약'
+    'Context.*Existing|기존 시스템|Existing System'
+  )
+
+  local missing=0 blockers=0 unsafe=0 checked=0
+  local issues="" blocker_list=""
+  local i
+  for i in "${!sec_keys[@]}"; do
+    local sec_name="${sec_keys[$i]}" sec_re="${sec_res[$i]}"
+    local full_re="^#+[ 	].*(${sec_re})"
+
+    # 섹션 헤딩이 없으면 검사 대상 아님
+    grep -qE "$full_re" "$spec_file" 2>/dev/null || continue
+    checked=$((checked + 1))
+
+    # 섹션 본문 캡처 (코드블록 제외, 하위 헤딩 본문 포함)
+    local body
+    body=$(awk -v re="$full_re" '
+      /^```/ { inblock = !inblock; next }
+      inblock { next }
+      /^#+[ \t]/ {
+        match($0, /^#+/); lvl = RLENGTH
+        if (capture && lvl <= cap_lvl) capture = 0
+        if ($0 ~ re && !done) { capture = 1; done = 1; cap_lvl = lvl }
+        next
+      }
+      capture { print }
+    ' "$spec_file" 2>/dev/null || true)
+
+    # 헤딩 직후 첫 비공백 줄 = 유효 마커 정확히 1개
+    local first_line marker_count
+    first_line=$(printf '%s\n' "$body" | grep -m1 -v '^[[:space:]]*$' 2>/dev/null || true)
+    marker_count=$({ printf '%s\n' "$body" | grep -cE "$marker_re" 2>/dev/null || true; })
+    [[ "$marker_count" =~ ^[0-9]+$ ]] || marker_count=0
+
+    if ! printf '%s' "$first_line" | grep -qE "$marker_re" 2>/dev/null; then
+      missing=$((missing + 1))
+      issues="${issues}CRITICAL: [$sec_name] 헤딩 직후 첫 비공백 줄에 유효한 provenance 마커 없음 (found: '${first_line:0:60}')\n"
+      continue
+    fi
+    if [[ "$marker_count" -ne 1 ]]; then
+      missing=$((missing + 1))
+      issues="${issues}CRITICAL: [$sec_name] provenance 마커가 ${marker_count}개 — 섹션당 정확히 1개여야 함\n"
+      continue
+    fi
+
+    # 마커 타입 추출
+    local ptype
+    ptype=$(printf '%s' "$first_line" | sed -E 's/^<!--[ ]*provenance:[ ]*//; s/[ ]*-->[ ]*$//' | cut -d: -f1 | tr -d ' ')
+
+    if [[ "$ptype" == "blocker" ]]; then
+      blockers=$((blockers + 1))
+      blocker_list="${blocker_list}  - ${sec_name}\n"
+    elif [[ "$ptype" == "assumption" ]]; then
+      # unsafe 도메인 강제: 마커 라인 제외 본문에서 unsafe 용어 매치 시 assumption 금지
+      if printf '%s\n' "$body" | grep -vE "$marker_re" | grep -qiE "$unsafe_re" 2>/dev/null; then
+        unsafe=$((unsafe + 1))
+        issues="${issues}CRITICAL: [$sec_name] unsafe 도메인(자격증명/결제/프로덕션/파괴적 작업/개인정보) 포함 섹션은 assumption 금지 — user-fact 또는 blocker로 전환\n"
+      fi
+    fi
+  done
+
+  echo ""
+  [[ -n "$issues" ]] && printf '%b' "$issues"
+
+  if [[ "$blockers" -gt 0 ]]; then
+    echo "[provenance-gate] blocker 마커 ${blockers}건:"
+    printf '%b' "$blocker_list"
+    echo "  각 blocker를 [NEEDS-CLARIFICATION: <질문>] 태그로 전환한 뒤 batch-ask(AskUserQuestion)로 해소하고,"
+    echo "  답변을 user-fact로 반영 후 재실행하세요 (프로토콜: templates/doc-planning-common.md)"
+  fi
+
+  local total_critical=$((missing + unsafe))
+  if [[ "$total_critical" -gt 0 ]] || [[ "$blockers" -gt 0 ]]; then
+    echo "[provenance-gate] HARD_FAIL: missing/malformed=$missing, unsafe-assumption=$unsafe, blockers=$blockers (checked sections: $checked)"
+    append_gate_history "provenance-gate" "hard_fail" \
+      "{\"missing\":$missing,\"unsafe\":$unsafe,\"blockers\":$blockers}"
+    _pg_record "fail" "$missing" "$blockers" "$unsafe"
+    echo "=== PROVENANCE GATE: HARD_FAIL ==="
+    return 1
+  fi
+
+  echo "[provenance-gate] All $checked core sections carry valid provenance markers"
+  append_gate_history "provenance-gate" "pass" "{\"sections\":$checked}"
+  _pg_record "pass" 0 0 0
+
+  # DoD 자동 기록 (spec-completeness의 기록 패턴 준수 — 존재하는 키만)
+  if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+    jq_inplace "$PROGRESS_FILE" \
+      --arg ev "provenance-gate PASS at $(timestamp) (sections: $checked)" '
+      if (((.dod // {}) | objects | has("provenance_recorded")) // false)
+      then .dod.provenance_recorded = {checked: true, evidence: $ev} else . end'
+  fi
+
+  echo "=== PROVENANCE GATE: PASS ==="
   return 0
 }
 
@@ -1066,5 +1282,121 @@ cmd_spec_to_tests() {
   append_gate_history "spec-to-tests" "pass" "{\"endpoints\":$total_eps}"
   _stt_record "pass"
   echo "=== SPEC-TO-TESTS: PASS ==="
+  return 0
+}
+
+# ─── doc-split: TOO_BIG 문서 분할 기록 (L4 범위 축소 전 단계) ───
+# record-error가 exit 4(SPLIT_REQUIRED)로 요구했을 때만 허용 — pendingSplit 선행 조건이
+# 모델의 자가 에스컬레이션 리셋을 차단한다. 부모를 status="split"으로 전환, 자식(2~5개)을
+# pending으로 등록, errorHistory를 L1로 리셋한다 (단일 jq 트랜잭션 — 고아 split 부모 불가).
+cmd_doc_split() {
+  local sub="${1:-}"
+  [[ "$sub" == "record" ]] || die "Usage: doc-split record --parent <doc.md> --children <a.md,b.md[,...]> [--progress-file <p>]"
+  shift
+  local parent="" children_csv=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --parent)   parent="${2:?--parent requires a value}"; shift 2 ;;
+      --children) children_csv="${2:?--children requires a comma-separated list}"; shift 2 ;;
+      *)          shift ;;
+    esac
+  done
+  [[ -n "$parent" ]]       || die "doc-split: --parent required"
+  [[ -n "$children_csv" ]] || die "doc-split: --children required"
+  require_jq
+  require_progress
+
+  echo "=== DOC-SPLIT ==="
+
+  # 1. 선행 조건: record-error exit 4가 기록한 pendingSplit과 부모 일치 (fail-closed)
+  local pending_doc
+  pending_doc=$(jq -r '.errorHistory.pendingSplit.doc // ""' "$PROGRESS_FILE" 2>/dev/null || echo "")
+  if [[ -z "$pending_doc" ]] || [[ "$pending_doc" != "$parent" ]]; then
+    echo "[doc-split] REFUSED: pendingSplit 없음 또는 부모 불일치 (pendingSplit='${pending_doc:-none}', --parent='$parent')"
+    echo "  doc-split은 record-error가 exit 4(SPLIT_REQUIRED)를 반환했을 때만 실행할 수 있습니다."
+    return 1
+  fi
+
+  # 2. 부모 검증: documents[]에 존재 + in_progress + splitDepth<1 (깊이 1 제한)
+  local parent_info
+  parent_info=$(jq -r --arg p "$parent" '
+    ([(.documents // [])[], (.phases.phase_2.documents // [])[]] | map(select(.name == $p)))
+    | if length >= 1 then "\(.[0].status)\t\(.[0].splitDepth // 0)" else empty end
+  ' "$PROGRESS_FILE" 2>/dev/null || true)
+  if [[ -z "$parent_info" ]]; then
+    echo "[doc-split] REFUSED: 부모 문서('$parent')가 documents[]에 없음"
+    return 1
+  fi
+  local parent_status="${parent_info%%$'\t'*}" parent_depth="${parent_info##*$'\t'}"
+  if [[ "$parent_status" != "in_progress" ]]; then
+    echo "[doc-split] REFUSED: 부모 문서 상태가 in_progress가 아님 (status=$parent_status)"
+    return 1
+  fi
+  if ! [[ "$parent_depth" =~ ^[0-9]+$ ]] || [[ "$parent_depth" -ge 1 ]]; then
+    echo "[doc-split] REFUSED: 분할 깊이 제한 초과 (splitDepth=$parent_depth, 최대 1단계) — L4 범위 축소로 진행하세요"
+    return 1
+  fi
+
+  # 3. 자식 검증: 2~5개, '<부모스템>-*.md' 명명, docs/<child> 파일 존재
+  local parent_stem="${parent%.md}"
+  local children_json="[]" n_children=0 child
+  local _old_ifs="$IFS"
+  IFS=','
+  for child in $children_csv; do
+    IFS="$_old_ifs"
+    child=$(printf '%s' "$child" | sed 's/^ *//; s/ *$//')
+    [[ -n "$child" ]] || continue
+    case "$child" in
+      "${parent_stem}-"*.md) : ;;
+      *)
+        echo "[doc-split] REFUSED: 자식 이름('$child')이 '${parent_stem}-*.md' 패턴이 아님"
+        return 1
+        ;;
+    esac
+    if [[ ! -f "docs/$child" ]]; then
+      echo "[doc-split] REFUSED: docs/$child 파일이 존재하지 않음 — 분할 문서를 먼저 작성하세요"
+      return 1
+    fi
+    children_json=$(jq -cn --argjson base "$children_json" --arg c "$child" '$base + [$c]')
+    n_children=$((n_children + 1))
+    IFS=','
+  done
+  IFS="$_old_ifs"
+  if [[ $n_children -lt 2 ]] || [[ $n_children -gt 5 ]]; then
+    echo "[doc-split] REFUSED: 자식 수는 2~5개여야 함 (지정: $n_children)"
+    return 1
+  fi
+
+  # 4. 단일 트랜잭션: 부모 split 전환 + 자식 등록 + 에스컬레이션 L1 리셋 + pendingSplit 해제
+  #    (환경(L0)은 이미 검증됐고, 새 소형 문서는 빌드/테스트 사이클을 재시작하므로 L1)
+  jq_inplace "$PROGRESS_FILE" --arg p "$parent" --argjson kids "$children_json" '
+    def child_objs($pd): [$kids[] | {name: ., status: "pending", phase: null, tickets: [], splitDepth: 1, parentDoc: $pd}];
+    def upd_arr(arr): (arr | map(if .name == $p then (.status = "split" | .children = $kids) else . end)) + child_objs($p);
+    (if ((.documents // []) | any(.name == $p)) then .documents = upd_arr(.documents) else . end)
+    | (if ((.phases.phase_2.documents // []) | any(.name == $p)) then .phases.phase_2.documents = upd_arr(.phases.phase_2.documents) else . end)
+    | .errorHistory.escalationLevel = "L1"
+    | .errorHistory.escalationBudget = 3
+    | .errorHistory.currentError.count = 0
+    | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + ["L1"])
+    | del(.errorHistory.pendingSplit)
+  '
+
+  append_gate_history "doc-split" "pass" "$(jq -cn --arg p "$parent" --argjson n "$n_children" '{parent: $p, children: $n}')"
+  log_event "doc.split" "$(jq -cn --arg p "$parent" --argjson kids "$children_json" '{parent: $p, children: $kids}' 2>/dev/null || echo '{}')" || true
+
+  # 5. README 문서 목록 동기화 경고 (비차단 — 문서 목록은 README에서 추출되므로)
+  if [[ -f "README.md" ]]; then
+    local _missing_in_readme=""
+    while IFS= read -r child; do
+      grep -qF "$child" "README.md" 2>/dev/null || _missing_in_readme="${_missing_in_readme}${child} "
+    done < <(jq -r '.[]' <<< "$children_json" 2>/dev/null || true)
+    if [[ -n "$_missing_in_readme" ]]; then
+      echo "[doc-split] WARNING: README.md 문서 목록에 없는 자식: ${_missing_in_readme}— README 목록을 갱신하세요"
+    fi
+  fi
+
+  echo "[doc-split] '$parent' → status=split, 자식 $n_children개 등록 (pending), 에스컬레이션 L1 리셋"
+  echo "  다음: 첫 자식 문서부터 구현을 재개하세요. 부모의 AC 합집합이 자식들에 모두 분배되었는지 확인."
+  echo "=== DOC-SPLIT: RECORDED ==="
   return 0
 }

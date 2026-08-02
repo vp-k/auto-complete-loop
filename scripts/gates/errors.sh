@@ -171,8 +171,13 @@ cmd_record_error() {
     | if $level != "" then
         .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + [$level])
       else . end
-    | .errorHistory.escalationLog = ((.errorHistory.escalationLog // []) + [$logEntry])
+    | .errorHistory.escalationLog = (((.errorHistory.escalationLog // []) + [$logEntry])[-200:])
   '
+
+  log_event "error.recorded" "$(jq -cn \
+    --arg type "$err_type" --arg file "$err_file" \
+    --arg level "${err_level:-$current_escalation}" --argjson count "$current_count" \
+    '{type: $type, file: $file, level: $level, count: $count}' 2>/dev/null || echo '{}')" || true
 
   echo "Error recorded: $err_type in $err_file (count: $current_count, escalation: $current_escalation)"
   [[ -n "$err_level" ]] && echo "DIRECTION: $direction (error level: $err_level)"
@@ -182,6 +187,7 @@ cmd_record_error() {
   # exit 1: 현재 레벨 예산 소진 → 다음 레벨로 에스컬레이트
   # exit 2: L2 도달 → codex 분석 필요
   # exit 3: L5 도달 → 사용자 개입 필요
+  # exit 4: L3 예산 소진 + 현재 문서 분할 가능 → TOO_BIG 문서 분할 필요 (doc-split record 후 재개)
   if [[ "$current_escalation" == "L5" ]]; then
     # L5는 최종 단계 — 항상 사용자 개입 필요
     echo "ACTION: L5 → 사용자 개입 필요"
@@ -194,12 +200,38 @@ cmd_record_error() {
       | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + ["L5"])
     '
     _append_escalation_lesson "L5" "$err_file" "$err_type" "$err_msg" || true
+    log_event "escalation.level" "$(jq -cn --arg from "L4" --arg to "L5" \
+      '{from: $from, to: $to, reason: "budget_exhausted"}' 2>/dev/null || echo '{}')" || true
     echo "ACTION: L4 예산 소진 → L5 사용자 개입 필요"
     exit 3
   elif [[ "$current_escalation" == "L2" ]]; then
     echo "ACTION: L2 → codex 분석 필요"
     exit 2
   elif [[ $current_count -ge $current_budget ]]; then
+    # L3 예산 소진 시, L4(범위 축소) 전에 TOO_BIG 문서 분할 기회를 먼저 준다 (증거 기반:
+    # L3 3회 실패 자체가 "문서가 너무 크다"는 증거). 조건: in_progress 문서가 정확히 1개이고
+    # 아직 분할된 적 없음(splitDepth<1 — 깊이 1 제한으로 에스컬레이션 리셋 게이밍 방지).
+    if [[ "$current_escalation" == "L3" ]]; then
+      local _split_info=""
+      _split_info=$(jq -r '
+        ([(.documents // [])[], (.phases.phase_2.documents // [])[]]
+         | map(select(.status == "in_progress")))
+        | if length == 1 then "\(.[0].name)\t\(.[0].splitDepth // 0)" else empty end
+      ' "$PROGRESS_FILE" 2>/dev/null || true)
+      if [[ -n "$_split_info" ]]; then
+        local _split_doc="${_split_info%%$'\t'*}"
+        local _split_depth="${_split_info##*$'\t'}"
+        if [[ "$_split_depth" =~ ^[0-9]+$ ]] && [[ "$_split_depth" -lt 1 ]]; then
+          jq_inplace "$PROGRESS_FILE" --arg d "$_split_doc" --arg ts "$(timestamp)" '
+            .errorHistory.pendingSplit = {doc: $d, ts: $ts}
+          '
+          echo "ACTION: L3 예산 소진 + 현재 문서(${_split_doc}) 과대 의심 → SPLIT_REQUIRED"
+          echo "  문서를 2~5개로 분할하고 'shared-gate.sh doc-split record --parent ${_split_doc} --children <a.md,b.md,...>' 실행 후 첫 자식부터 재개하세요."
+          echo "  (AC 합집합 = 부모 AC — 인수 기준 누락 금지. 분할 불가 판단 시에만 L4 범위 축소로 진행)"
+          exit 4
+        fi
+      fi
+    fi
     # 예산 소진 → 다음 레벨로 자동 전이 + 카운터 리셋
     local next_levels=("L0" "L1" "L2" "L3" "L4" "L5")
     local current_idx=0
@@ -216,6 +248,8 @@ cmd_record_error() {
     '
     # L3 이상으로 자동 상승하는 순간 lesson 기록
     _append_escalation_lesson "$next_level" "$err_file" "$err_type" "$err_msg" || true
+    log_event "escalation.level" "$(jq -cn --arg from "$current_escalation" --arg to "$next_level" \
+      '{from: $from, to: $to, reason: "budget_exhausted"}' 2>/dev/null || echo '{}')" || true
     echo "ACTION: $current_escalation 예산 소진 ($current_count/$current_budget) → $next_level 로 자동 에스컬레이트"
     exit 1
   else

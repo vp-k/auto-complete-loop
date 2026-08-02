@@ -227,6 +227,8 @@ cmd_acceptance_freeze() {
     history_json=$(jq -n --argjson base "$history_json" --arg at "$(timestamp)" --arg gh "$git_head" '
       $base + [{at:$at, gitHead:(if $gh == "" then null else $gh end), approvedByUser:true}]')
     echo "[acceptance-freeze] Approved freeze (recorded in refreezeHistory)"
+    log_event "acceptance.refreeze" "$(jq -cn --arg pf "$prior_freeze" \
+      '{priorFreeze: ($pf == "true"), approvedByUser: true}' 2>/dev/null || echo '{}')" || true
   elif [[ "$prior_freeze" == "true" ]]; then
     echo "[acceptance-freeze] Planning-phase re-freeze (allowed, silent update)"
   fi

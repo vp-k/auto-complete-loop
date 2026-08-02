@@ -535,6 +535,124 @@ cmd_code_review_findings() {
   return 0
 }
 
+# ─── review-escalation-check: 위험 트리거 기반 리뷰 승격 판정/증거 검증 ───
+# ouroboros의 조건부 consensus 채택: 평상시엔 사용자 선택 리뷰 모드로 충분하지만,
+# 위험 트리거(L2+ 에스컬레이션 / 범위 축소 / 인수 테스트 재동결)가 발동한 실행은
+# 추가 승격 리뷰(dual 2차 codex 또는 roundtable)를 의무화한다.
+# - 플래그 없음: 트리거 평가 → reviewEscalation = skip(무트리거) | pending(승격 필요)
+# - --mark-complete: 승격 리뷰 증거(roundResults의 escalated 라운드) 검증 → pass | fail
+# stop-hook은 reviewEscalation이 pass|skip일 때만 완주 허용 (pending/미실행 = 차단).
+
+cmd_review_escalation_check() {
+  local mark_complete=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mark-complete) mark_complete=true; shift ;;
+      *)               shift ;;
+    esac
+  done
+
+  echo "=== Review Escalation Check ==="
+  require_jq
+  require_progress
+
+  _rec_record() {  # $1=result $2=triggers_json $3=mode
+    record_verification "reviewEscalation" \
+      "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --argjson t "${2:-[]}" --arg m "${3:-}" \
+          '{timestamp:$ts,result:$r,triggers:$t} + (if $m != "" then {mode:$m} else {} end)')"
+  }
+
+  # ── 트리거 평가 (모두 결정론적 판독) ──
+  local triggers_json
+  triggers_json=$(jq '
+    [
+      (if ([.errorHistory.levelHistory // [] | .[] | select(test("^L[2-5]$"))] | length) > 0
+       then {type: "escalation", detail: ("levelHistory reached " + ([.errorHistory.levelHistory // [] | .[] | select(test("^L[2-5]$"))] | last))}
+       else empty end),
+      (if (((.phases.phase_2.scopeReductions // []) + (.scopeReductions // [])) | length) > 0
+       then {type: "scope_reduction", detail: ("scopeReductions: " + ((((.phases.phase_2.scopeReductions // []) + (.scopeReductions // [])) | length) | tostring))}
+       else empty end)
+    ]
+  ' "$PROGRESS_FILE" 2>/dev/null || echo "[]")
+
+  # 트리거 3: 인수 테스트 재동결 (구현 단계 승인 동결 이력 — 기획 단계 최초 동결은 미기록)
+  local refreeze_count=0
+  if [[ -f "tests/acceptance/.manifest.json" ]]; then
+    refreeze_count=$(jq '.refreezeHistory // [] | length' "tests/acceptance/.manifest.json" 2>/dev/null || echo 0)
+    [[ "$refreeze_count" =~ ^[0-9]+$ ]] || refreeze_count=0
+  fi
+  if [[ "$refreeze_count" -ge 1 ]]; then
+    triggers_json=$(jq -cn --argjson base "$triggers_json" --argjson n "$refreeze_count" \
+      '$base + [{type: "acceptance_refreeze", detail: ("refreezeHistory: " + ($n | tostring))}]')
+  fi
+
+  local trigger_count
+  trigger_count=$(jq 'length' <<< "$triggers_json" 2>/dev/null || echo 0)
+  [[ "$trigger_count" =~ ^[0-9]+$ ]] || trigger_count=0
+
+  # ── 무트리거 → skip (양 모드 공통, 멱등) ──
+  if [[ "$trigger_count" -eq 0 ]]; then
+    echo "[review-escalation] No risk triggers (L2+/scope-reduction/re-freeze) — standard review is sufficient"
+    jq_inplace "$PROGRESS_FILE" --arg ts "$(timestamp)" '
+      .phases.phase_3.reviewEscalation = {required: false, triggers: [], checkedAt: $ts}'
+    append_gate_history "review-escalation-check" "skip" '{"triggers":0}'
+    _rec_record "skip" "[]" ""
+    echo "=== REVIEW ESCALATION: SKIP ==="
+    return 0
+  fi
+
+  # targetMode: codex CLI 있으면 dual(2차 codex 독립 리뷰), 없으면 roundtable 에이전트
+  local target_mode="roundtable"
+  command -v codex >/dev/null 2>&1 && target_mode="dual"
+
+  if [[ "$mark_complete" == "false" ]]; then
+    # ── 판정 모드: pending 기록 + 오케스트레이터 지시 ──
+    echo "[review-escalation] Risk triggers detected ($trigger_count):"
+    jq -r '.[] | "  - \(.type): \(.detail)"' <<< "$triggers_json" 2>/dev/null || true
+    jq_inplace "$PROGRESS_FILE" --argjson t "$triggers_json" --arg m "$target_mode" --arg ts "$(timestamp)" '
+      .phases.phase_3.reviewEscalation = {required: true, triggers: $t, targetMode: $m, checkedAt: $ts}'
+    append_gate_history "review-escalation-check" "pending" "{\"triggers\":$trigger_count}"
+    _rec_record "pending" "$triggers_json" "$target_mode"
+    echo ""
+    echo "[review-escalation] MANDATE: 승격 리뷰(${target_mode}) 1라운드를 추가로 실행해야 합니다."
+    echo "  - dual: codex 2차 독립 리뷰 1회 추가 / roundtable: roundtable 에이전트 리뷰"
+    echo "  - 승격 리뷰의 finding은 findingHistory에 \"escalated\": true로 append"
+    echo "  - 승격 라운드는 roundResults에 {escalated: true, reviewMode: \"${target_mode}\"} 포함하여 기록 (0-finding이어도 필수)"
+    echo "  - 완료 후: shared-gate.sh review-escalation-check --mark-complete"
+    echo "=== REVIEW ESCALATION: PENDING ==="
+    return 0
+  fi
+
+  # ── --mark-complete: 승격 리뷰 증거 검증 (fail-closed) ──
+  local stored_mode
+  stored_mode=$(jq -r '.phases.phase_3.reviewEscalation.targetMode // ""' "$PROGRESS_FILE" 2>/dev/null || echo "")
+  [[ -n "$stored_mode" ]] || stored_mode="$target_mode"
+
+  local evidence_count
+  evidence_count=$(jq --arg m "$stored_mode" '
+    [ ((.roundResults // []) + (.phases.phase_3.roundResults // []))[]
+      | select(type == "object" and (.escalated == true) and ((.reviewMode // "") == $m)) ]
+    | length
+  ' "$PROGRESS_FILE" 2>/dev/null || echo 0)
+  [[ "$evidence_count" =~ ^[0-9]+$ ]] || evidence_count=0
+
+  if [[ "$evidence_count" -eq 0 ]]; then
+    echo "[review-escalation] FAIL: 승격 리뷰 증거 없음 — roundResults에 {escalated: true, reviewMode: \"${stored_mode}\"} 라운드가 필요합니다"
+    append_gate_history "review-escalation-check" "fail" '{"reason":"no escalated round evidence"}'
+    _rec_record "fail" "$triggers_json" "$stored_mode"
+    echo "=== REVIEW ESCALATION: FAIL ==="
+    return 1
+  fi
+
+  echo "[review-escalation] Escalated review verified (mode: $stored_mode, rounds: $evidence_count)"
+  append_gate_history "review-escalation-check" "pass" "{\"triggers\":$trigger_count}"
+  _rec_record "pass" "$triggers_json" "$stored_mode"
+  log_event "review.escalated" "$(jq -cn --arg m "$stored_mode" --argjson t "$trigger_count" \
+    '{mode: $m, triggers: $t}' 2>/dev/null || echo '{}')" || true
+  echo "=== REVIEW ESCALATION: PASS ==="
+  return 0
+}
+
 # ─── record-dimension: 소프트 품질 차원 기록 (verification.json 직접 편집 대체 경로) ───
 # 가드가 .claude-verification.json 직접 기록(Edit/Write/Bash 리다이렉트)을 차단하므로,
 # 소프트 품질 차원(featureCompleteness/security/performance/codeQuality/documentation/

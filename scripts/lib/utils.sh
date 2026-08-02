@@ -96,6 +96,30 @@ write_json_atomic() {
   mv "$tmp" "$file"
 }
 
+# ─── 이벤트 로그 (append-only JSONL) ───
+# .claude/acl-events.jsonl에 한 줄 JSON 이벤트를 기록한다. 순수 관측용 —
+# 어떤 게이트의 pass/fail 판정도 이 파일을 읽지 않는다 (조작이 게이트에 무영향).
+# 베스트에포트: jq 부재/쓰기 실패 시 조용히 무시, 호출자를 절대 실패시키지 않는다.
+# Usage: log_event <type> [payload_json]   (type은 dot-notation: gate.result, error.recorded, ...)
+EVENTS_FILE=".claude/acl-events.jsonl"
+log_event() {
+  local _le_type="${1:-}" _le_payload="${2:-{\}}" _le_line _le_n
+  [[ -n "$_le_type" ]] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  mkdir -p .claude 2>/dev/null || return 0
+  _le_line=$(jq -cn --arg t "$_le_type" --arg ts "$(timestamp)" --argjson p "$_le_payload" \
+    '{ts: $ts, event: $t} + $p' 2>/dev/null) || return 0
+  printf '%s\n' "$_le_line" >> "$EVENTS_FILE" 2>/dev/null || return 0
+  # 크기 캡: 2000줄 초과 시 최근 1000줄만 유지 (amortized 절단)
+  _le_n=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
+  if [[ "$_le_n" =~ ^[0-9]+$ ]] && [[ "$_le_n" -gt 2000 ]]; then
+    tail -n 1000 "$EVENTS_FILE" > "$EVENTS_FILE.tmp" 2>/dev/null \
+      && mv -f "$EVENTS_FILE.tmp" "$EVENTS_FILE" 2>/dev/null \
+      || rm -f "$EVENTS_FILE.tmp" 2>/dev/null
+  fi
+  return 0
+}
+
 # 안전한 jq 인플레이스 업데이트 (temp 파일 자동 정리 + 무결성 검증 + self-heal + 베스트에포트 락)
 jq_inplace() {
   local file="$1"; shift

@@ -66,13 +66,15 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
 
 **e2e.applicable 기록 규칙**: 모델이 임의로 `phases.phase_2.e2e.applicable = false`를 기록하는 것 금지. 프로젝트 유형 감지 결과에 따라서만 기록한다 — 감지 로직/서브커맨드가 있으면 그 결과를 사용하고, 없으면 AskUserQuestion으로 사용자 확인 후 기록한다.
 
-### Step 2-1.10: 인수 테스트 동결 준수 (수정 금지)
+### Step 2-1.10: 인수 테스트 + SPEC 동결 준수 (수정 금지)
 
-Phase 1에서 생성된 `tests/acceptance/`는 `acceptance-freeze`로 해시 동결된 상태입니다.
+Phase 1에서 생성된 `tests/acceptance/`는 `acceptance-freeze`로 해시 동결된 상태이며,
+**동결 시점의 SPEC 파일 해시도 manifest에 함께 동결**됩니다 (v4.8.0).
 
 - **tests/acceptance/** 수정 금지**: protect-files-guard 훅이 동결 후 Edit/Write를 차단하며, 훅을 우회한 수정도 `acceptance-gate`의 해시 무결성 검사(변조/추가/삭제 감지)가 잡는다. 구현 Phase의 목표는 **자신이 수정할 수 없는 이 테스트를 green으로 만드는 것**이다.
-- **테스트가 틀렸다고 판단되면 = 스펙 문제**: Step 2-1.9 절차를 따른다 — 사용자 승인(AskUserQuestion) → SPEC 갱신 → `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --approved-by-user`로 재동결. `--approved-by-user`는 사용자 승인 후에만 사용 가능한 플래그다.
-- **구현 편의를 위한 테스트 완화는 스펙 변경이 아니다 — 금지.**
+- **SPEC 수정 금지**: `acceptance-gate`가 동결된 SPEC 해시를 대조한다 — 동결 후 SPEC이 조금이라도 바뀌면 완주 불가. 게이트를 재실행해도 우회되지 않는다 (해시 갱신은 승인 재동결로만).
+- **테스트/SPEC이 틀렸다고 판단되면 = 스펙 문제**: Step 2-1.9 절차를 따른다 — 사용자 승인(AskUserQuestion) → SPEC 갱신 → `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --approved-by-user`로 재동결 (테스트 + SPEC 해시가 함께 갱신됨). `--approved-by-user`는 사용자 승인 후에만 사용 가능한 플래그다.
+- **구현 편의를 위한 테스트 완화·스펙 약화는 스펙 변경이 아니다 — 금지.**
 
 ---
 

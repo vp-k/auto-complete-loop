@@ -4,7 +4,13 @@
 #   tests/acceptance/.manifest.json:
 #     { "frozenAt": ts, "gitHead": sha|null, "hashAlgo": "sha256sum|shasum|git-hash-object",
 #       "files": { "<상대경로>": "<sha256>" },     # manifest 자신 제외, tests/acceptance/ 하위 전 파일
+#       "specFile": { "path": "<SPEC 경로>", "hash": "<sha256>" } | null,  # v4.8.0+: SPEC 해시 동결
 #       "refreezeHistory": [ { "at": ts, "gitHead": sha|null, "approvedByUser": true } ] }
+#
+#   SPEC 해시 동결 (v4.8.0): 동결 시점의 SPEC 파일 해시를 함께 기록하고 acceptance-gate가
+#   대조한다. 게이트 통과 후 SPEC을 몰래 수정해 검증 압력을 낮추는 세탁("verify then edit")을
+#   차단 — SPEC 변경은 사용자 승인 → `--approved-by-user` 재동결로만 가능 (Step 2-1.9의 기계적 강제).
+#   specFile이 없는 구(pre-4.8) manifest는 SPEC 대조를 건너뛴다 (하위호환).
 #   verification.json 키:
 #     acceptanceFreeze: { result: "pass"|"fail", files: N }
 #     acceptanceTests:  { result: "pass"|"fail"|"skip", total: N, passed: N, failed: N, tamperedFiles?: [...] }
@@ -86,6 +92,15 @@ _acc_hash_files() {
 
 _acc_git_head() {
   git rev-parse HEAD 2>/dev/null || true
+}
+
+# SPEC 파일 탐색 (spec-completeness/provenance-gate와 동일한 4-후보 우선순위)
+_acc_find_spec() {
+  local candidate
+  for candidate in "SPEC.md" "docs/SPEC.md" "docs/api-spec.md" "spec.md"; do
+    [[ -f "$candidate" ]] && { echo "$candidate"; return 0; }
+  done
+  return 1
 }
 
 # ─── acceptance-freeze: 인수 테스트 동결 (manifest 생성/갱신) ───
@@ -233,14 +248,30 @@ cmd_acceptance_freeze() {
     echo "[acceptance-freeze] Planning-phase re-freeze (allowed, silent update)"
   fi
 
+  # 4.5. SPEC 해시 동결 (v4.8.0): 동결 시점의 SPEC 파일 해시를 manifest에 함께 기록.
+  # SPEC 부재는 경고만 (SPEC 존재 강제는 spec-completeness 소관 — 여기서 이중 차단하지 않음)
+  local spec_json="null" spec_path=""
+  if spec_path=$(_acc_find_spec); then
+    local spec_hash
+    spec_hash=$(_acc_hash_file "$hash_algo" "$spec_path") || {
+      _af_fail "SPEC hashing failed with $hash_algo ($spec_path)"
+      return 1
+    }
+    spec_json=$(jq -n --arg p "$spec_path" --arg h "$spec_hash" '{path:$p, hash:$h}')
+    echo "[acceptance-freeze] SPEC frozen: $spec_path"
+  else
+    echo "[acceptance-freeze] WARNING: no SPEC file found (SPEC.md/docs/SPEC.md/docs/api-spec.md/spec.md) — specFile=null (SPEC 해시 대조 비활성)"
+  fi
+
   # 5. manifest 기록
   jq -n \
     --arg at "$(timestamp)" \
     --arg gh "$git_head" \
     --arg algo "$hash_algo" \
     --argjson files "$files_json" \
+    --argjson spec "$spec_json" \
     --argjson hist "$history_json" \
-    '{frozenAt:$at, gitHead:(if $gh == "" then null else $gh end), hashAlgo:$algo, files:$files, refreezeHistory:$hist}' \
+    '{frozenAt:$at, gitHead:(if $gh == "" then null else $gh end), hashAlgo:$algo, files:$files, specFile:$spec, refreezeHistory:$hist}' \
     > "$ACCEPTANCE_MANIFEST"
 
   _af_record "pass" "$file_count"
@@ -324,6 +355,38 @@ cmd_acceptance_gate() {
     return 1
   fi
   echo "[acceptance-gate] Integrity OK ($(echo "$current_files" | jq 'length') file(s), algo: $algo)"
+
+  # 3.5. SPEC 해시 대조 (v4.8.0): 동결 시점 SPEC과 현재 SPEC이 동일해야 한다.
+  # 게이트 통과 후 SPEC을 수정해 검증 기준을 낮추는 세탁 차단 — 게이트 재실행으로도
+  # 우회 불가 (해시 갱신은 --approved-by-user 재동결로만). pre-4.8 manifest(specFile 부재/null)는 skip.
+  local spec_frozen_path spec_frozen_hash
+  spec_frozen_path=$(jq -r '.specFile.path // ""' "$ACCEPTANCE_MANIFEST" 2>/dev/null || echo "")
+  if [[ -n "$spec_frozen_path" ]]; then
+    spec_frozen_hash=$(jq -r '.specFile.hash // ""' "$ACCEPTANCE_MANIFEST" 2>/dev/null || echo "")
+    local spec_fail_reason=""
+    if [[ ! -f "$spec_frozen_path" ]]; then
+      spec_fail_reason="frozen SPEC file '$spec_frozen_path' is missing (deleted/moved after freeze)"
+    else
+      local spec_now_hash
+      spec_now_hash=$(_acc_hash_file "$algo" "$spec_frozen_path" 2>/dev/null || echo "")
+      if [[ -z "$spec_now_hash" ]] || [[ "$spec_now_hash" != "$spec_frozen_hash" ]]; then
+        spec_fail_reason="SPEC ('$spec_frozen_path') was modified after freeze"
+      fi
+    fi
+    if [[ -n "$spec_fail_reason" ]]; then
+      echo "[acceptance-gate] FAIL: $spec_fail_reason"
+      echo "  스펙 변경은 사용자 승인 없이는 불가합니다 (Step 2-1.9)."
+      echo "  Remedy: SPEC을 동결 시점 내용으로 되돌리거나, 사용자 승인(AskUserQuestion) 후"
+      echo "          'shared-gate.sh acceptance-freeze --approved-by-user'로 재동결하세요."
+      _ag_record "fail" 0 0 0 "$spec_fail_reason" "$(jq -cn --arg p "$spec_frozen_path" '[$p]')"
+      append_gate_history "acceptance-gate" "fail" "$(jq -n --arg p "$spec_frozen_path" '{reason:"spec tampered",spec:$p}')"
+      echo "=== ACCEPTANCE GATE: FAIL ==="
+      return 1
+    fi
+    echo "[acceptance-gate] SPEC integrity OK ($spec_frozen_path)"
+  else
+    echo "[acceptance-gate] NOTE: manifest has no frozen SPEC (pre-4.8 freeze) — SPEC 대조 skip"
+  fi
 
   # 4. 러너 실행
   # green 세탁 방지 (M2): 외부 URL 조향 env를 제거하고 실행 — 테스트가 목 서버로

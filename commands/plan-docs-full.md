@@ -249,10 +249,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-to-tests \
   --progress-file {PROGRESS_FILE}
 # 실패 → tests/api-smoke.sh에 누락된 엔드포인트 curl 호출 추가
 
-# 게이트 5: acceptance-freeze (HARD_FAIL — 인수 테스트 해시 동결)
+# 게이트 5: acceptance-freeze (HARD_FAIL — 인수 테스트 + SPEC 해시 동결)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze \
   --progress-file {PROGRESS_FILE}
-# tests/acceptance/ 전체(run.sh 필수)를 해시 동결 → tests/acceptance/.manifest.json 생성
+# tests/acceptance/ 전체(run.sh 필수) + SPEC 파일 해시를 동결 → tests/acceptance/.manifest.json 생성
+# (v4.8.0: 구현 Phase에서 SPEC이 수정되면 acceptance-gate가 해시 불일치로 완주 차단 —
+#  스펙 변경은 사용자 승인 → --approved-by-user 재동결로만)
 # 인수 테스트 생성 자체는 Phase 1 스킬 Step 1-7.5가 수행 — 이 게이트는 동결 실행/확인만 담당
 # 실패(run.sh 없음 등) → Phase 1 재진입, Step 1-7.5에서 tests/acceptance/ 생성 후 재실행
 # 주의: 이 시점 인수 테스트는 red가 정상 (앱 미구현 — TDD red→green). 동결은 실행 결과와 무관.

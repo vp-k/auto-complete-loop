@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.7.1**
+**v4.8.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -191,15 +191,15 @@ Phase 4: Verification     runtime-gate + live-testing + acceptance-gate
 
 ### Acceptance Freeze & Gate (TDD red→green, 3중 방어선)
 
-Planning (Phase 1 / `/plan-docs-full`) generates executable acceptance tests from SPEC's acceptance criteria into `tests/acceptance/` (with `run.sh`), then **freezes them by hash** (`acceptance-freeze` → `tests/acceptance/.manifest.json`). At freeze time the tests are **red — that is correct** (the app doesn't exist yet). Implementation must turn them green without touching them.
+Planning (Phase 1 / `/plan-docs-full`) generates executable acceptance tests from SPEC's acceptance criteria into `tests/acceptance/` (with `run.sh`), then **freezes them by hash** (`acceptance-freeze` → `tests/acceptance/.manifest.json`) — **and freezes the SPEC file's hash alongside them** (v4.8.0). At freeze time the tests are **red — that is correct** (the app doesn't exist yet). Implementation must turn them green without touching them.
 
 Three lines of defense keep the tests honest:
 
 1. **protect-files-guard hook** — blocks any Edit/Write to frozen `tests/acceptance/**` during implementation
-2. **acceptance-gate hash integrity** — even out-of-band tampering is detected against the frozen manifest, then `run.sh` is executed for real
+2. **acceptance-gate hash integrity** — even out-of-band tampering is detected against the frozen manifest (tests **and SPEC** — quietly weakening the SPEC after gates passed no longer works; re-running gates doesn't help since only an approved re-freeze updates the hash), then `run.sh` is executed for real
 3. **stop-hook (fail-closed)** — full-auto requires `acceptanceTests=pass` (skip is NOT accepted — `tests/acceptance/` is mandatory); plan-docs-full requires `acceptanceFreeze=pass`. Missing key = gate never ran = no completion
 
-Spec changed legitimately? Only via user approval → SPEC update → `acceptance-freeze --approved-by-user` re-freeze.
+Spec changed legitimately? Only via user approval → SPEC update → `acceptance-freeze --approved-by-user` re-freeze (updates test + SPEC hashes together). Pre-4.8 manifests (no frozen SPEC) skip the SPEC comparison for backward compatibility.
 
 ### Lesson Memory Loop (기억 = 다음 실행 조건)
 
@@ -221,8 +221,8 @@ The ~40 `shared-gate.sh` subcommands include the following user-facing gates (se
 | `quality-gate` | HARD | Build/typecheck/lint/test failures (auto-records DoD `build_pass`/`test_pass`) |
 | `runtime-gate` | HARD | One server boot → runs smoke-check + integration-smoke + functional-flow together (Phase 4) |
 | `smoke-check` | HARD | Server startup failures (`soft_fail` = failure; server is "up" if it answers HTTP at all — 404 counts) |
-| `acceptance-freeze` | HARD | Missing/unrunnable acceptance tests at planning exit (plan-docs-full) |
-| `acceptance-gate` | HARD | Tampered or red acceptance tests at verification (full-auto; skip = fail) |
+| `acceptance-freeze` | HARD | Missing/unrunnable acceptance tests at planning exit (plan-docs-full); freezes SPEC hash alongside |
+| `acceptance-gate` | HARD | Tampered or red acceptance tests, or SPEC modified after freeze (full-auto; skip = fail) |
 | `live-testing-gate` | HARD | Open LIVE-CRITICAL/HIGH findings from real-app testing |
 | `layer-coverage` | HARD | Declared frontend/backend layers missing on filesystem |
 | `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed |

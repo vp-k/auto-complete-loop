@@ -460,7 +460,7 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 L3 예산 소진 시 record-error가 자동 판정 (in_progress 문서 1개 + 미분할):
 1. 부모 문서 + SPEC을 재독하여 2~5개 자식 문서(`docs/<부모스템>-part1.md`, ...) 작성 — **AC 합집합 = 부모 AC (누락 금지)**
 2. README.md 문서 목록에 자식 추가
-3. `shared-gate.sh doc-split record --parent <부모.md> --children <a.md,b.md,...>` 실행 (부모 split 전환 + 자식 등록 + L1 리셋 원자 처리)
+3. `shared-gate.sh doc-split record --parent <부모.md> --children <a.md,b.md,...> --progress-file .claude-progress.json` 실행 (부모 split 전환 + 자식 등록 + L1 리셋 원자 처리 — `--progress-file` 생략 시 다른 워크플로우의 progress를 오탐지할 수 있음)
 4. 첫 자식 문서부터 구현 재개
 5. 분할 불가(내용이 원자적) 또는 자식이 다시 L3 소진 시 → L4로 진행
 

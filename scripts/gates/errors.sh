@@ -198,6 +198,7 @@ cmd_record_error() {
       .errorHistory.escalationLevel = "L5"
       | .errorHistory.escalationBudget = 0
       | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + ["L5"])
+      | del(.errorHistory.pendingSplit)
     '
     _append_escalation_lesson "L5" "$err_file" "$err_type" "$err_msg" || true
     log_event "escalation.level" "$(jq -cn --arg from "L4" --arg to "L5" \
@@ -211,7 +212,12 @@ cmd_record_error() {
     # L3 예산 소진 시, L4(범위 축소) 전에 TOO_BIG 문서 분할 기회를 먼저 준다 (증거 기반:
     # L3 3회 실패 자체가 "문서가 너무 크다"는 증거). 조건: in_progress 문서가 정확히 1개이고
     # 아직 분할된 적 없음(splitDepth<1 — 깊이 1 제한으로 에스컬레이션 리셋 게이밍 방지).
-    if [[ "$current_escalation" == "L3" ]]; then
+    # 재발화 가드: 이미 exit 4로 분할을 요구한 적 있으면(pendingSplit 존재) 다시 제안하지
+    # 않고 L4로 진행한다 — "분할 불가(원자적 문서)" 판단 시의 탈출 경로. pendingSplit은
+    # 아래 레벨 전이 시 함께 삭제되어 L4 진입 후 doc-split으로 L1 리셋하는 게이밍을 차단.
+    local _prior_pending
+    _prior_pending=$(jq -r '.errorHistory.pendingSplit.doc // ""' "$PROGRESS_FILE" 2>/dev/null || echo "")
+    if [[ "$current_escalation" == "L3" ]] && [[ -z "$_prior_pending" ]]; then
       local _split_info=""
       _split_info=$(jq -r '
         ([(.documents // [])[], (.phases.phase_2.documents // [])[]]
@@ -245,6 +251,7 @@ cmd_record_error() {
       | .errorHistory.escalationBudget = $nb
       | .errorHistory.currentError.count = 0
       | .errorHistory.levelHistory = ((.errorHistory.levelHistory // []) + [$nl])
+      | del(.errorHistory.pendingSplit)
     '
     # L3 이상으로 자동 상승하는 순간 lesson 기록
     _append_escalation_lesson "$next_level" "$err_file" "$err_type" "$err_msg" || true

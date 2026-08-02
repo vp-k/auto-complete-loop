@@ -550,8 +550,9 @@ cmd_spec_completeness() {
   local dim_goal="ok" dim_sc="ok" dim_constraints="ok" dim_context="ok"
 
   # [Goal] overview.md에 문제/목표 헤딩 존재 (본문 공백은 위 빈 섹션 검사가 커버)
+  # 영문 키워드는 단어 경계 요구 — '## Non-Goals'가 Goal로 오탐 통과하는 것 방지
   if [[ -f "overview.md" ]]; then
-    if ! grep -qiE '^#+[ 	].*(문제|Problem|목표|Goal|비전|Vision)' "overview.md" 2>/dev/null; then
+    if ! grep -qiE '^#+[ 	](.*[^A-Za-z-])?(Problem|Goal|Vision)|^#+[ 	].*(문제|목표|비전)' "overview.md" 2>/dev/null; then
       dim_goal="missing"
       major=$((major + 1))
       issues="${issues}MAJOR: [Goal] overview.md에 문제 정의/목표 헤딩 없음 (문제|Problem|목표|Goal|비전)\n"
@@ -562,13 +563,26 @@ cmd_spec_completeness() {
 
   if [[ -n "$spec_file" ]]; then
     # [SuccessCriteria] SC-N 항목 ≥1 (검증 불가능한 성공 기준 = 미완성 스펙 → CRITICAL)
+    # 단, Phase 1을 skip-phases로 건너뛴 실행(pre-4.7 SPEC 재진입)은 MAJOR로 완화 —
+    # provenance-gate의 skip 계약과 동일 증거를 사용 (하위호환: --start-phase 완주 하드블록 방지)
     local sc_count
     sc_count=$({ grep -coE 'SC-[0-9]+' "$spec_file" 2>/dev/null || true; } | tr -d '[:space:]')
     [[ "$sc_count" =~ ^[0-9]+$ ]] || sc_count=0
     if [[ "$sc_count" -eq 0 ]]; then
       dim_sc="missing"
-      critical=$((critical + 1))
-      issues="${issues}CRITICAL: [SuccessCriteria] $spec_file에 SC-N 성공 기준 항목 없음 (최소 1개 필수)\n"
+      local _sc_skip="false"
+      if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
+        local _sc_skip_ev
+        _sc_skip_ev=$(jq -r '.dod.all_docs_complete.evidence // ""' "$PROGRESS_FILE" 2>/dev/null || echo "")
+        [[ "$_sc_skip_ev" == *"skipped by user"* ]] && _sc_skip="true"
+      fi
+      if [[ "$_sc_skip" == "true" ]]; then
+        major=$((major + 1))
+        issues="${issues}MAJOR: [SuccessCriteria] $spec_file에 SC-N 성공 기준 항목 없음 (Phase 1 skip 하위호환으로 완화 — 추가 권장)\n"
+      else
+        critical=$((critical + 1))
+        issues="${issues}CRITICAL: [SuccessCriteria] $spec_file에 SC-N 성공 기준 항목 없음 (최소 1개 필수)\n"
+      fi
     elif ! grep -qiE 'North Star' "$spec_file" 2>/dev/null; then
       minor=$((minor + 1))
       issues="${issues}MINOR: [SuccessCriteria] North Star Metric 미정의\n"
@@ -680,7 +694,8 @@ cmd_provenance_gate() {
   fi
 
   # 마커 문법 (assumption은 비어있지 않은 근거 강제)
-  local marker_re='^<!--[ ]*provenance:[ ]*(user-fact|repo-fact(:[^>]+)?|assumption:[ ]*[^[:space:]>][^>]*|blocker)[ ]*-->[ ]*$'
+  # CRLF 내성: 끝 앵커는 [[:space:]]*$ (\r 포함). repo-fact는 경로 필수 (실존 검증은 아래에서)
+  local marker_re='^<!--[ ]*provenance:[ ]*(user-fact|repo-fact:[^ >][^>]*|assumption:[ ]*[^[:space:]>][^>]*|blocker)[ ]*-->[[:space:]]*$'
 
   # 하위호환 skip 계약: 마커가 전혀 없고 Phase 1이 skip-phases로 건너뛰어진 경우
   # (pre-4.7 문서로 --start-phase 재진입) → skip 기록. 그 외 마커 0개는 fail-closed.
@@ -725,9 +740,10 @@ cmd_provenance_gate() {
     grep -qE "$full_re" "$spec_file" 2>/dev/null || continue
     checked=$((checked + 1))
 
-    # 섹션 본문 캡처 (코드블록 제외, 하위 헤딩 본문 포함)
+    # 섹션 본문 캡처 (코드블록 제외, 하위 헤딩 본문 포함, CR 제거 — CRLF SPEC 내성)
     local body
     body=$(awk -v re="$full_re" '
+      { sub(/\r$/, "") }
       /^```/ { inblock = !inblock; next }
       inblock { next }
       /^#+[ \t]/ {
@@ -758,7 +774,19 @@ cmd_provenance_gate() {
 
     # 마커 타입 추출
     local ptype
-    ptype=$(printf '%s' "$first_line" | sed -E 's/^<!--[ ]*provenance:[ ]*//; s/[ ]*-->[ ]*$//' | cut -d: -f1 | tr -d ' ')
+    ptype=$(printf '%s' "$first_line" | sed -E 's/^<!--[ ]*provenance:[ ]*//; s/[[:space:]]*-->[[:space:]]*$//' | cut -d: -f1 | tr -d ' \r')
+
+    # repo-fact 경로 실존 검증 — 유일하게 기계 검증 가능한 마커는 실제로 검증한다
+    # (템플릿 플레이스홀더 '[확인한 경로]'도 여기서 거부됨)
+    if [[ "$ptype" == "repo-fact" ]]; then
+      local rf_path
+      rf_path=$(printf '%s' "$first_line" | sed -E 's/^<!--[ ]*provenance:[ ]*repo-fact:[ ]*//; s/[[:space:]]*-->[[:space:]]*$//')
+      if [[ -z "$rf_path" ]] || [[ "$rf_path" == *"["* ]] || [[ ! -e "$rf_path" ]]; then
+        missing=$((missing + 1))
+        issues="${issues}CRITICAL: [$sec_name] repo-fact 경로('${rf_path:0:60}')가 존재하지 않음 — 실제 확인한 파일/디렉토리 경로를 인용\n"
+        continue
+      fi
+    fi
 
     if [[ "$ptype" == "blocker" ]]; then
       blockers=$((blockers + 1))

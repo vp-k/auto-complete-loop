@@ -102,6 +102,43 @@ do_pending_split() {
   [[ "$output" == *"존재하지 않음"* ]]
 }
 
+@test "split: exit 4 does not re-fire — second exhaustion falls to L4 and clears pendingSplit" {
+  seed_l3_exhausted
+  run run_gate record-error --file "src/a.ts" --type "runtime" --msg "same err" --progress-file "$PF"
+  [ "$status" -eq 4 ]
+  # 분할 불가 판단 → 같은 에러 1회 더 기록 → L4 전이 + pendingSplit 삭제
+  run run_gate record-error --file "src/a.ts" --type "runtime" --msg "same err" --progress-file "$PF"
+  [ "$status" -eq 1 ]
+  [ "$(jq -r '.errorHistory.escalationLevel' "$PF")" = "L4" ]
+  [ "$(jq '.errorHistory | has("pendingSplit")' "$PF")" = "false" ]
+  # pendingSplit이 사라졌으므로 doc-split으로 L1 리셋 게이밍 불가
+  mkdir -p docs
+  printf '# p1\n' > docs/auth-part1.md
+  printf '# p2\n' > docs/auth-part2.md
+  run run_gate doc-split record --parent auth.md --children auth-part1.md,auth-part2.md --progress-file "$PF"
+  [ "$status" -ne 0 ]
+}
+
+@test "split: works with top-level documents[] (implement template shape)" {
+  PF2=".claude-progress.json"
+  jq -n '{
+    documents: [{name:"auth.md",status:"in_progress",phase:null,tickets:[]}],
+    errorHistory: {
+      currentError: {type:"runtime",file:"src/a.ts",message:"same err",msgNormalized:"same err",count:2,escalationLevel:"L3"},
+      attempts: [], escalationLevel: "L3", escalationBudget: 3, levelHistory: ["L3"]
+    }
+  }' > "$PF2"
+  run run_gate record-error --file "src/a.ts" --type "runtime" --msg "same err" --progress-file "$PF2"
+  [ "$status" -eq 4 ]
+  mkdir -p docs
+  printf '# p1\n' > docs/auth-part1.md
+  printf '# p2\n' > docs/auth-part2.md
+  run run_gate doc-split record --parent auth.md --children auth-part1.md,auth-part2.md --progress-file "$PF2"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.documents[] | select(.name=="auth.md") | .status' "$PF2")" = "split" ]
+  [ "$(jq '[.documents[] | select(.parentDoc=="auth.md")] | length' "$PF2")" = "2" ]
+}
+
 @test "stop-hook completion: split parent + completed children counts as complete" {
   result=$(jq -n '{documents:[{name:"auth.md",status:"split"},{name:"auth-part1.md",status:"completed"},{name:"auth-part2.md",status:"completed"}]}
     | [.documents[] | select(.status != "split")] | (length > 0) and all(.status == "completed")')

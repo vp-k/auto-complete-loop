@@ -122,7 +122,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
 | 분류 | 조건 |
 |------|------|
 | `user-fact` | 요구사항 원문 또는 사용자 답변(AskUserQuestion/NEEDS-CLARIFICATION 해소)에 근거 |
-| `repo-fact:<path>` | 기존 레포 코드/설정에서 확인 (브라운필드) — 확인한 경로를 반드시 인용 |
+| `repo-fact:<path>` | 기존 레포 코드/설정에서 확인 (브라운필드) — 확인한 경로를 반드시 인용 (**게이트가 경로 실존을 검증** — 플레이스홀더/가짜 경로는 거부됨) |
 | `assumption: <근거>` | 국소적·가역적·비파괴적 기본값만 허용. 근거 없는 assumption은 게이트가 거부 |
 | `blocker` | 인간 권한/외부 비용/파괴적 선택이 걸린 결정 — 추정 금지 |
 

@@ -80,14 +80,14 @@ L3 예산 3회 소진 자체가 "현재 문서가 한 번에 구현하기에 너
 3. README.md 문서 목록에 자식 문서를 추가
 4. 분할 기록 (게이트가 부모 split 전환 + 자식 등록 + 에스컬레이션 L1 리셋을 원자 처리):
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-split record --parent <부모.md> --children <a.md,b.md,...>
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-split record --parent <부모.md> --children <a.md,b.md,...> --progress-file {PROGRESS_FILE}
    ```
 5. 첫 자식 문서부터 구현 재개 (L1부터 재시작)
 
 **제약**:
 - `doc-split record`는 record-error `exit 4`가 기록한 `pendingSplit` 선행 조건 없이는 거부된다 (자가 에스컬레이션 리셋 방지)
 - 분할은 문서당 1회만 가능 — 자식 문서(`splitDepth=1`)가 다시 L3 예산을 소진하면 기존 L4 범위 축소로 진행
-- 분할 불가 판단(내용이 원자적) 시에도 L4로 진행
+- **분할 불가 판단(내용이 원자적) 시**: doc-split을 실행하지 말고 같은 에러를 `record-error`로 1회 더 기록하면 자동으로 L4로 전이된다 — `exit 4`는 재발화하지 않으며(`pendingSplit` 존재 시 L4 경로), `pendingSplit`은 레벨 전이 시 자동 삭제되어 L4 진입 후 분할로 되돌아갈 수 없다
 
 ## Scope Reduction (범위 축소)
 

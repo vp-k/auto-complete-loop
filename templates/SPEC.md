@@ -15,8 +15,10 @@
 - When [상황], I want to [행동], So I can [가치]
 
 ## Context & Existing System
-<!-- provenance: repo-fact:[확인한 경로] -->
-(브라운필드: 기존 스택/통합 제약/깨지면 안 되는 파일·API를 명시. 그린필드면 아래 리터럴 유지)
+<!-- provenance: user-fact -->
+(브라운필드: 기존 스택/통합 제약/깨지면 안 되는 파일·API를 명시하고 마커를
+`repo-fact:<실제 확인한 경로>`로 교체 — 게이트가 경로 실존을 검증한다.
+그린필드면 user-fact 마커와 아래 리터럴 유지)
 - 해당 없음 — greenfield
 
 ## Success Criteria

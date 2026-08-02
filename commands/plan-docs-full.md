@@ -18,7 +18,7 @@ argument-hint: <요구사항 (자연어)>
 **핵심 원칙**:
 - Phase 0에서만 사용자 질문 (overview.md 승인 + Critical 잔존 시 결정 위임)
 - MVP 금지, 릴리즈 수준 기획
-- **게이트 6종이 모두 PASS해야 promise 발행** (임의 판단 자동 차단)
+- **게이트 7종이 모두 PASS해야 promise 발행** (임의 판단 자동 차단)
 - **인수 테스트 선작성+동결**: SPEC의 AC로부터 실행 가능한 인수 테스트를 만들어 해시 동결 — 구현 Phase는 이 테스트를 수정할 수 없음
 - 스크립트로 토큰 절약
 
@@ -139,8 +139,8 @@ Phase 0: PM Planning ───── 사용자 승인 (유일한 상호작용)
     ↓ pm_approved.checked, assumptions_documented.checked, premortem_done.checked
 Phase 1: Doc Planning ──── {PHASE_1_SKILL}로 기획문서 + SPEC.md + smoke 스크립트 + 인수 테스트(tests/acceptance/) 완성
     ↓ all_docs_complete.checked, spec_md_generated.checked, smoke_scripts_generated.checked
-[게이트 6종 검증]
-    ↓ doc_completeness_passed, doc_consistency_passed, definition_conflict_resolved, spec_to_tests_passed, acceptance_frozen
+[게이트 7종 검증]
+    ↓ spec_completeness_passed, provenance_recorded, doc_completeness_passed, doc_consistency_passed, definition_conflict_resolved, spec_to_tests_passed, acceptance_frozen
 [기존 게이트 2종 검증]
     ↓ clarification_resolved (placeholder는 자동)
 <promise>{PROMISE_TAG}</promise>

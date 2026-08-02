@@ -138,12 +138,6 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 |---|---|
 | 모든 문서 공통 규칙 — Step 1-2 진입 시 1회 | `${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md` |
 | SPEC.md — 작성 시작 시점 | `${CLAUDE_PLUGIN_ROOT}/templates/SPEC.md` (구조 스켈레톤) |
-
-**SPEC 작성 시 Provenance 마커 필수**: 핵심 섹션(Success Criteria, User Stories, Data Model,
-API Contract, Constraints, Context)마다 헤딩 직후 첫 줄에 출처 마커 1개를 기록한다 —
-`user-fact` / `repo-fact:<경로>` / `assumption: <근거>` / `blocker`(→ `[NEEDS-CLARIFICATION]` 전환).
-unsafe 도메인 포함 섹션은 assumption 금지. Phase 1 완료 전 `shared-gate.sh provenance-gate`를
-clarification-gate 직전에 실행해 통과해야 한다 (프로토콜: doc-planning-common.md).
 | 인수 테스트(tests/acceptance/) — Step 1-7.5 진입 시에만 | `${CLAUDE_PLUGIN_ROOT}/templates/acceptance-tests-guide.md` |
 | 보안 문서(security-authn-authz.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/security-authn-authz.md` |
 | 에러 정책 문서(error-policy.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/error-policy.md` |
@@ -151,6 +145,13 @@ clarification-gate 직전에 실행해 통과해야 한다 (프로토콜: doc-pl
 | 프로젝트 CLAUDE.md — Phase 0(pm-planning)에서 처리 | `templates/project-claude-md.md`는 **cp 전용**, Read 불필요 |
 
 지금 작성 중인 문서와 무관한 템플릿은 읽지 않는다. 다음 문서로 넘어갈 때 그 문서에 필요한 템플릿을 그 시점에 Read한다.
+
+**SPEC 작성 시 Provenance 마커 필수**: 핵심 섹션(Success Criteria, User Stories, Data Model,
+API Contract, Constraints, Context)마다 헤딩 직후 첫 줄에 출처 마커 1개를 기록한다 —
+`user-fact` / `repo-fact:<실존 경로>`(게이트가 경로 실존 검증) / `assumption: <근거>` /
+`blocker`(→ `[NEEDS-CLARIFICATION]` 전환). unsafe 도메인 포함 섹션은 assumption 금지.
+Phase 1 완료 전 `shared-gate.sh provenance-gate`를 clarification-gate 직전에 실행해
+통과해야 한다 (프로토콜: doc-planning-common.md).
 
 ### Step 1-3: Iteration 관리
 

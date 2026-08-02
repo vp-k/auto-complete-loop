@@ -111,7 +111,8 @@ log_event() {
     '{ts: $ts, event: $t} + $p' 2>/dev/null) || return 0
   printf '%s\n' "$_le_line" >> "$EVENTS_FILE" 2>/dev/null || return 0
   # 크기 캡: 2000줄 초과 시 최근 1000줄만 유지 (amortized 절단)
-  _le_n=$(wc -l < "$EVENTS_FILE" 2>/dev/null || echo 0)
+  # BSD wc는 선행 공백을 붙이므로 tr로 제거 (macOS에서 캡이 무력화되는 것 방지)
+  _le_n=$(wc -l < "$EVENTS_FILE" 2>/dev/null | tr -d ' ' || echo 0)
   if [[ "$_le_n" =~ ^[0-9]+$ ]] && [[ "$_le_n" -gt 2000 ]]; then
     tail -n 1000 "$EVENTS_FILE" > "$EVENTS_FILE.tmp" 2>/dev/null \
       && mv -f "$EVENTS_FILE.tmp" "$EVENTS_FILE" 2>/dev/null \

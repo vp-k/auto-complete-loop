@@ -153,13 +153,6 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 |---|---|
 | 모든 문서 공통 규칙 — Step 1-2 진입 시 1회 | `${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md` |
 | SPEC.md — 작성 시작 시점 | `${CLAUDE_PLUGIN_ROOT}/templates/SPEC.md` (구조 스켈레톤) |
-
-**SPEC 작성 시 Provenance 마커 필수**: 핵심 섹션(Success Criteria, User Stories, Data Model,
-API Contract, Constraints, Context)마다 헤딩 직후 첫 줄에 출처 마커 1개를 기록하며 작성한다 —
-`user-fact`(요구/답변 근거) / `repo-fact:<경로>`(레포 확인) / `assumption: <근거>`(안전 기본값) /
-`blocker`(사용자 결정 필요 → `[NEEDS-CLARIFICATION]` 전환). unsafe 도메인(자격증명/결제/프로덕션
-배포/파괴적 데이터 작업/개인정보) 포함 섹션은 assumption 금지. 판정 기준: doc-planning-common.md의
-"Provenance 마커 프로토콜". Step 1-9의 `provenance-gate`가 HARD_FAIL로 검증한다.
 | 인수 테스트(tests/acceptance/) — Step 1-7.5 진입 시에만 | `${CLAUDE_PLUGIN_ROOT}/templates/acceptance-tests-guide.md` |
 | docs/security-authn-authz.md — 해당 문서 토론 시 | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지) |
 | docs/error-policy.md — 해당 문서 토론 시 | `docs/error-policy.md` 사본 (원본 템플릿 중복 Read 금지) |
@@ -167,6 +160,13 @@ API Contract, Constraints, Context)마다 헤딩 직후 첫 줄에 출처 마커
 | 프로젝트 CLAUDE.md — Phase 0(pm-planning)에서 처리 | `templates/project-claude-md.md`는 **cp 전용**, Read 불필요 |
 
 지금 작성 중인 문서와 무관한 템플릿은 읽지 않는다. 다음 문서로 넘어갈 때 그 문서에 필요한 템플릿을 그 시점에 Read한다.
+
+**SPEC 작성 시 Provenance 마커 필수**: 핵심 섹션(Success Criteria, User Stories, Data Model,
+API Contract, Constraints, Context)마다 헤딩 직후 첫 줄에 출처 마커 1개를 기록하며 작성한다 —
+`user-fact`(요구/답변 근거) / `repo-fact:<실존 경로>`(레포 확인 — 게이트가 경로 실존을 검증) /
+`assumption: <근거>`(안전 기본값) / `blocker`(사용자 결정 필요 → `[NEEDS-CLARIFICATION]` 전환).
+unsafe 도메인(자격증명/결제/프로덕션 배포/파괴적 데이터 작업/개인정보) 포함 섹션은 assumption 금지.
+판정 기준: doc-planning-common.md의 "Provenance 마커 프로토콜". Step 1-9의 `provenance-gate`가 HARD_FAIL로 검증한다.
 
 ### Step 1-3: Iteration 관리
 

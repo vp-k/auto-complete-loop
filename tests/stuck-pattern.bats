@@ -77,7 +77,8 @@ run_hook() {
 }
 
 @test "stuck: 6 consecutive failures with >=3 distinct signatures trigger DIMINISHING_RETURNS" {
-  printf 'hash-one\nhash-two\nhash-three\nhash-four\nhash-five\n' > "$HISTORY"
+  # 상이한 게이트 집합(부분집합 관계 아님) → 수렴 예외 미적용 → DR 발동
+  printf 'hash-one\tgateA\nhash-two\tgateB\nhash-three\tgateC\nhash-four\tgateD\nhash-five\tgateE\n' > "$HISTORY"
   run_hook                                # 6번째 append → 상이 서명 >= 3
   [ "$status" -eq 0 ]
   [[ "$output" == *"DIMINISHING_RETURNS"* ]]
@@ -85,13 +86,40 @@ run_hook() {
   grep -q "stop-hook-diminishing-returns" "$LEARNINGS"
 }
 
-@test "stuck: legacy bare-hash lines (no tab) parse without error" {
-  printf 'legacyhashnotab\n' > "$HISTORY"
+@test "stuck: DR skipped when failing-gate set monotonically shrinks (converging run)" {
+  # full-auto 픽스처: _require_vgate missing 사유가 'key=missing' 게이트 토큰을 생성
+  cat > "$STATE" <<'EOF'
+---
+iteration: 1
+max_iterations: 30
+completion_promise: "DONE"
+progress_file: .claude-full-auto-progress.json
+---
+loop prompt
+EOF
+  rm -f .claude-progress.json
+  printf '{"steps":[{"name":"phase_0","status":"completed"}],"dod":{"k":{"checked":true,"evidence":"e"}}}\n' > .claude-full-auto-progress.json
+  printf '{}\n' > .claude-verification.json
+  run_hook
+  [ -f "$HISTORY" ]
+  G=$(tail -1 "$HISTORY" | cut -f2)
+  [ -n "$G" ]
+  # 시드 5개: 상이 해시 + 현재 게이트 집합의 상위집합(+zzzExtra) → 단조 축소 형상
+  { for i in 1 2 3 4 5; do printf 'seedhash-%s\t%s,zzzExtra\n' "$i" "$G"; done; } > "$HISTORY"
+  run_hook
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"converging"* ]]
+  [ -f "$STATE" ]                         # DR 미발동 — 루프 계속
+}
+
+@test "stuck: legacy bare-hash lines (no tab) are excluded from detection" {
+  # 구 포맷 5줄 시드 — 감지에서 제외되므로 가짜 DIMINISHING_RETURNS가 발동하면 안 됨
+  printf 'legacy-a\nlegacy-b\nlegacy-c\nlegacy-d\nlegacy-e\n' > "$HISTORY"
   run_hook
   [ "$status" -eq 0 ]
   [ -f "$STATE" ]
   lines=$(wc -l < "$HISTORY" | tr -d ' ')
-  [ "$lines" -eq 2 ]
+  [ "$lines" -eq 6 ]
 }
 
 @test "stuck: verify_failed event emitted on each failed verification" {

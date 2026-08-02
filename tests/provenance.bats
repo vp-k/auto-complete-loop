@@ -7,6 +7,8 @@ setup() { setup_temp_dir; }
 teardown() { teardown_temp_dir; }
 
 write_valid_spec() {
+  mkdir -p src
+  printf '// routes\n' > src/routes.ts
   cat > SPEC.md <<'EOF'
 # Specification
 
@@ -130,4 +132,35 @@ EOF
   run run_gate provenance-gate --progress-file .claude-progress.json
   [ "$status" -eq 0 ]
   [ "$(jq -r '.dod.provenance_recorded.checked' .claude-progress.json)" = "true" ]
+}
+
+@test "provenance: repo-fact with nonexistent path fails" {
+  write_valid_spec
+  rm -f src/routes.ts
+  run run_gate provenance-gate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"repo-fact 경로"* ]]
+}
+
+@test "provenance: repo-fact with template placeholder brackets fails" {
+  write_valid_spec
+  sed 's|repo-fact:src/routes.ts|repo-fact:[확인한 경로]|' SPEC.md > tmp.md && mv tmp.md SPEC.md
+  run run_gate provenance-gate
+  [ "$status" -eq 1 ]
+}
+
+@test "provenance: bare repo-fact without path is malformed" {
+  write_valid_spec
+  sed 's|repo-fact:src/routes.ts|repo-fact|' SPEC.md > tmp.md && mv tmp.md SPEC.md
+  run run_gate provenance-gate
+  [ "$status" -eq 1 ]
+}
+
+@test "provenance: CRLF SPEC with valid markers still passes" {
+  write_valid_spec
+  # 전체 파일을 CRLF로 변환 (Windows 사용자 SPEC 시뮬레이션)
+  sed 's/$/\r/' SPEC.md > tmp.md && mv tmp.md SPEC.md
+  run run_gate provenance-gate
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.provenanceGate.result' .claude-verification.json)" = "pass" ]
 }

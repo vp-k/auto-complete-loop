@@ -574,11 +574,28 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         '{iteration: $it, gates: $g}' 2>/dev/null || echo '{}')" || true
 
       # 최근 6개 서명 로드 (성공/탈출 시 파일이 클리어되므로 엔트리 수 = 연속 실패 검증 수)
+      # 탭 없는 구 포맷(pre-4.7) 라인은 감지에서 제외 — 구 해시는 비정규화 텍스트 기반이라
+      # 신 해시와 절대 일치하지 않아, 남겨두면 업그레이드 직후 가짜 DIMINISHING_RETURNS만 유발한다
       _H=()
+      _G=()
       while IFS= read -r _hl; do
+        [[ "$_hl" == *$'\t'* ]] || continue
         _H+=("${_hl%%$'\t'*}")
+        _G+=("${_hl#*$'\t'}")
       done < <(tail -n 6 "$FAILURE_HISTORY_FILE" 2>/dev/null || true)
       _n=${#_H[@]}
+
+      # 게이트 CSV 부분집합 판정 헬퍼 ($1 ⊆ $2 이면 0)
+      _is_subset() {
+        local _t _rest="$1"
+        while [[ -n "$_rest" ]]; do
+          _t="${_rest%%,*}"
+          [[ "$_rest" == *,* ]] && _rest="${_rest#*,}" || _rest=""
+          [[ -z "$_t" ]] && continue
+          [[ ",$2," == *",$_t,"* ]] || return 1
+        done
+        return 0
+      }
 
       # 패턴 판정 (구체적 우선: 3-strike → OSCILLATION → DIMINISHING_RETURNS)
       # - 3-strike: 동일 서명 3회 "연속" (기존 구현은 파일 전체 누적 카운트였음 — 연속으로 교정.
@@ -598,7 +615,32 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       elif [[ $_n -ge 6 ]]; then
         _distinct=$(printf '%s\n' "${_H[@]}" | sort -u | wc -l | tr -d ' ' || true)
         if [[ "$_distinct" =~ ^[0-9]+$ ]] && [[ $_distinct -ge 3 ]]; then
-          STUCK_PATTERN="diminishing_returns"
+          # 수렴 예외: 실패 게이트 집합이 단조 축소 중이면(각 iteration의 게이트 집합이
+          # 직전의 부분집합 + 총 개수 순감소) "iteration마다 게이트를 하나씩 해결하며
+          # 수렴 중"인 정상 진행이다 — 서명은 매번 달라지지만 DR로 죽이면 안 된다.
+          # 게이트명이 비어 있는 라인이 하나라도 있으면 판정 불가 → DR 발동(보수적).
+          _converging="true"
+          _first_gates_cnt=-1
+          _last_gates_cnt=-1
+          for ((_gi = 0; _gi < _n; _gi++)); do
+            _g="${_G[$_gi]}"
+            if [[ -z "$_g" ]]; then
+              _converging="false"
+              break
+            fi
+            _gcnt=$(printf '%s' "$_g" | awk -F',' '{print NF}')
+            [[ "$_first_gates_cnt" -lt 0 ]] && _first_gates_cnt=$_gcnt
+            _last_gates_cnt=$_gcnt
+            if [[ $_gi -gt 0 ]] && ! _is_subset "$_g" "${_G[$_gi-1]}"; then
+              _converging="false"
+              break
+            fi
+          done
+          if [[ "$_converging" == "true" ]] && [[ $_last_gates_cnt -lt $_first_gates_cnt ]]; then
+            echo "Auto Complete Loop: NOTE - 6 consecutive failures but failing-gate set is monotonically shrinking (${_first_gates_cnt} -> ${_last_gates_cnt}) — converging, loop continues."
+          else
+            STUCK_PATTERN="diminishing_returns"
+          fi
         fi
       fi
 

@@ -32,12 +32,22 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
 각 라운드에서:
 
+0. **소스 지문 캡처** (리뷰어 실행 전 — v4.9.0 필수):
+   ```bash
+   SOURCE_HASH=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash)
+   ```
+   이 값을 이번 라운드 `roundResults.sourceHash`로 기록한다. `code-review-findings` 게이트가
+   마지막 라운드의 sourceHash를 현재 지문과 대조하므로, 캡처~라운드 기록 사이에 소스 파일을
+   편집하지 않는다 (수정은 아래 2단계에서).
+
 1. **codex-cli에 리뷰 요청**
 
    > 리뷰 관점·리뷰 원칙·심각도 기준·Few-shot 예시·출력 형식은 `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`를 단일 출처로 따른다.
    > 호출 전에 이 파일을 Read하고, 아래 호출 블록의 자리 표시자에 다음을 삽입한다:
    > - `{리뷰 관점 블록}` ← "리뷰 관점 (전체)" 섹션 전체 (full-auto Phase 3이므로 IMPL/E2E 포함)
    > - `{리뷰 규칙 블록}` ← "리뷰 원칙 (회의적 리뷰어 역할)" + "심각도 기준" + "심각도 판정 기준 (Few-shot 참고)" + "Finding 출력 형식" 섹션 내용
+   > - **라운드 2+**: "라운드 2+ 래칫" 섹션(5규칙)을 {리뷰 규칙 블록}에 추가 — 범위는 직전 리뷰
+   >   sourceHash 이후 diff + 이전 open finding, 미변경 코드 신규 지적은 novelty justification 필수
 
    ```bash
    codex exec --skip-git-repo-check '## 코드 리뷰 Round N

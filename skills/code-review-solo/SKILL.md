@@ -23,7 +23,14 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
 > 리뷰 관점(서브카테고리 정의)·리뷰 원칙·심각도 기준·Few-shot 예시·출력 형식은 `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`를 단일 출처로 따른다. (관점 분할은 "관점 분할 가이드" 섹션 참조)
 
-**라운드 2+**: `git diff --name-only`로 변경된 파일만 리뷰 범위로 사용. 이전 finding 목록은 **참고용으로만** 포함 (범위 제한 금지). 새로운 이슈도 반드시 보고.
+**라운드 시작 시 소스 지문 캡처** (서브에이전트 호출 전 — v4.9.0 필수):
+```bash
+SOURCE_HASH=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash)
+ROUND_BASE=$(git rev-parse HEAD 2>/dev/null || echo "")
+```
+`SOURCE_HASH`를 이번 라운드 `roundResults.sourceHash`로 기록한다. 캡처~라운드 기록 사이 소스 파일 편집 금지.
+
+**라운드 2+**: `git diff --name-only <직전 라운드의 ROUND_BASE>..HEAD`로 변경된 파일만 리뷰 범위로 사용 (base 없는 `git diff`는 커밋 후 빈 목록이 되므로 금지). 이전 open finding 전체를 포함하고, **review-perspectives.md의 "라운드 2+ 래칫" 5규칙을 각 서브에이전트 프롬프트에 포함**한다 (미변경 코드 신규 지적은 novelty justification 필수).
 
 #### 병렬 실행 방법
 
@@ -31,7 +38,8 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
 1. **담당 관점 페어** (아래 표 참조) — "다른 관점은 무시하라" 지시 포함
 2. **리뷰 scope**: 파일 목록(라운드 2+는 git diff 목록) 또는 자연어 scope
-3. **기준 로드 지시**: `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`를 Read하여 "리뷰 관점 (전체)"에서 담당 카테고리 정의를, "리뷰 원칙 (회의적 리뷰어 역할)"·"심각도 기준"·"심각도 판정 기준 (Few-shot 참고)"·"Finding 출력 형식"을 기준으로 삼을 것
+3. **기준 로드 지시**: `${CLAUDE_PLUGIN_ROOT}/templates/review-perspectives.md`를 Read하여 "리뷰 관점 (전체)"에서 담당 카테고리 정의를, "리뷰 원칙 (회의적 리뷰어 역할)"·"심각도 기준"·"심각도 판정 기준 (Few-shot 참고)"·"Finding 출력 형식"을 기준으로 삼을 것 (라운드 2+는 "라운드 2+ 래칫" 섹션 포함)
+3.5. **동일 스냅샷 고정**: 세 에이전트 모두 같은 `SOURCE_HASH` 상태를 리뷰한다 — 프롬프트에 해시를 명시하고 "리뷰 중 파일을 편집하지 말 것, 다른 상태의 리뷰는 무효" 지시 포함
    - ⚠️ 서브에이전트는 `${CLAUDE_PLUGIN_ROOT}` 변수를 해석하지 못한다 — 프롬프트에 넣을 때 반드시 **절대 경로로 치환**하여 전달할 것
 4. **finding 출력 형식**: `{CATEGORY}-{SEVERITY}-{번호}` 형식, 카테고리별 001부터 부여 (에이전트마다 관점 prefix가 다르므로 번호 충돌 없음)
 

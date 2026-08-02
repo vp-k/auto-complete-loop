@@ -437,20 +437,37 @@ cmd_skip_phases() {
   echo "OK: Starting from Phase $start_phase ($target_phase)"
 }
 
+# ─── source-hash: 리뷰 라운드 귀속용 소스 지문 출력 ───
+# 각 리뷰 라운드 시작 시 이 출력을 roundResults.sourceHash로 기록한다 (gajae-code의
+# frozen sourceHash cohort 채택). code-review-findings가 마지막 라운드 해시를 현재
+# 상태와 대조해 "리뷰 후 무리뷰 수정" 세탁을 차단한다.
+# 출력 계약: 한 줄 — "<HEAD>-<statehash>" 또는 리터럴 "no-git" (비-git). 항상 exit 0.
+
+cmd_source_hash() {
+  local fp
+  fp=$(quality_fingerprint) || { echo "no-git"; return 0; }
+  echo "$fp"
+}
+
 # ─── code-review-findings: progress의 findingHistory/roundResults에서 open CRITICAL/HIGH 계수 (HARD_FAIL) ───
 # 코드 리뷰 finding(비-LIVE)의 open CRITICAL/HIGH가 남아 있으면 fail.
 # LIVE-* finding은 live-testing-gate가 담당하므로 여기서 제외한다.
+# v4.9.0: 마지막 라운드의 sourceHash를 현재 quality_fingerprint와 대조 (불일치/부재 = fail,
+# 비-git = skip) — 리뷰 pass 이후의 무리뷰 코드 변경을 fail-closed로 차단한다.
 
 cmd_code_review_findings() {
   echo "=== Code Review Findings Gate ==="
   require_jq
   require_progress
 
-  # 기록 헬퍼 — 계약: codeReviewFindings {result: pass|fail, criticalOpen: N, highOpen: N}
+  # 기록 헬퍼 — 계약: codeReviewFindings {result: pass|fail, criticalOpen: N, highOpen: N, sourceHashCheck}
+  # $5(sourceHashCheck) 생략 시 "skip" (기존 호출부 호환)
   _crf_record() {
     record_verification "codeReviewFindings" \
       "$(jq -n --arg ts "$(timestamp)" --arg r "$1" --argjson c "$2" --argjson h "$3" --arg note "${4:-}" \
-          '{timestamp:$ts,result:$r,criticalOpen:$c,highOpen:$h} + (if $note != "" then {note:$note} else {} end)')"
+          --arg shc "${5:-skip}" \
+          '{timestamp:$ts,result:$r,criticalOpen:$c,highOpen:$h,sourceHashCheck:$shc}
+           + (if $note != "" then {note:$note} else {} end)')"
   }
 
   # findingHistory (최상위: review 템플릿 / phases.phase_3: full-auto 템플릿)에서 open 계수
@@ -473,9 +490,12 @@ cmd_code_review_findings() {
                                       or ((.id // "") | test("-CRITICAL-")))) | length),
         high:     ($open | map(select((.severity // "") == "HIGH"
                                       or ((.id // "") | test("-HIGH-")))) | length),
-        lastRound: ((.roundResults // (.phases.phase_3.roundResults // [])) | if length > 0 then .[-1] else null end)
+        lastRound: ((.roundResults // (.phases.phase_3.roundResults // [])) | if length > 0 then .[-1] else null end),
+        lastRoundHash: (((.roundResults // []) + (.phases.phase_3.roundResults // []))
+                       | map(select(type == "object"))
+                       | if length > 0 then (.[-1].sourceHash // "") else "" end)
       }
-  ' "$PROGRESS_FILE" 2>/dev/null || echo '{"hasHistory":false,"total":0,"critical":0,"high":0,"lastRound":null}')
+  ' "$PROGRESS_FILE" 2>/dev/null || echo '{"hasHistory":false,"total":0,"critical":0,"high":0,"lastRound":null,"lastRoundHash":""}')
 
   local has_history critical_open high_open note=""
   has_history=$(echo "$counts" | jq -r '.hasHistory')
@@ -513,17 +533,45 @@ cmd_code_review_findings() {
 
   echo "[code-review-findings] Open code-review findings: CRITICAL=$critical_open, HIGH=$high_open"
 
+  # sourceHash 대조 (v4.9.0): 마지막 리뷰 라운드가 귀속된 소스 지문 == 현재 지문.
+  # open-count 검사보다 먼저 — stale 0-finding 라운드도 fail되어야 한다.
+  local sh_check="skip" last_hash cur_fp
+  last_hash=$(echo "$counts" | jq -r '.lastRoundHash // ""' 2>/dev/null || echo "")
+  if cur_fp=$(quality_fingerprint); then
+    if [[ -z "$last_hash" ]]; then
+      sh_check="missing"
+    elif [[ "$last_hash" != "$cur_fp" ]]; then
+      sh_check="stale"
+    else
+      sh_check="pass"
+    fi
+  fi
+  if [[ "$sh_check" == "stale" ]] || [[ "$sh_check" == "missing" ]]; then
+    echo "[code-review-findings] FAIL: last review round sourceHash=$sh_check"
+    if [[ "$sh_check" == "stale" ]]; then
+      echo "  마지막 리뷰 이후 코드가 변경되었습니다 (미리뷰 변경으로 완주 불가)."
+    else
+      echo "  마지막 리뷰 라운드가 소스 지문에 귀속되지 않았습니다 (pre-4.9 기록 또는 누락)."
+    fi
+    echo "  Remedy: 수정을 커밋하고 'shared-gate.sh source-hash'로 지문을 캡처한 뒤,"
+    echo "          그 지문을 sourceHash로 기록하는 리뷰 라운드를 1회 더 실행하세요."
+    append_gate_history "code-review-findings" "fail" "$(jq -n --arg s "$sh_check" '{reason:("sourceHash " + $s)}')"
+    _crf_record "fail" "$critical_open" "$high_open" "sourceHash $sh_check — unreviewed changes" "$sh_check"
+    echo "=== CODE REVIEW FINDINGS: FAIL ==="
+    return 1
+  fi
+
   if [[ $((critical_open + high_open)) -gt 0 ]]; then
     echo "[code-review-findings] FAIL: open CRITICAL/HIGH finding(s) remain"
     echo "  Fix them (or record dismissal with rationale) and set status=fixed in findingHistory."
     append_gate_history "code-review-findings" "fail" "{\"criticalOpen\":$critical_open,\"highOpen\":$high_open}"
-    _crf_record "fail" "$critical_open" "$high_open" "$note"
+    _crf_record "fail" "$critical_open" "$high_open" "$note" "$sh_check"
     echo "=== CODE REVIEW FINDINGS: FAIL ==="
     return 1
   fi
 
   append_gate_history "code-review-findings" "pass" '{"criticalOpen":0,"highOpen":0}'
-  _crf_record "pass" 0 0 "$note"
+  _crf_record "pass" 0 0 "$note" "$sh_check"
   # DoD 갱신: dod.code_review_pass는 이 게이트가 유일한 기록자 (모델 직접 세팅 금지)
   if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "$PROGRESS_FILE" ]]; then
     jq_inplace "$PROGRESS_FILE" --arg ev "code-review-findings PASS at $(timestamp) (open CRITICAL/HIGH: 0)" '

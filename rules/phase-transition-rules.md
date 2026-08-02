@@ -206,10 +206,14 @@ Phase 3 완료 시:
   reviewEscalation이 pending이면 승격 리뷰 1라운드를 추가 실행한다:
   - targetMode=dual: codex 2차 독립 리뷰 1회 (code-review 스킬의 codex 라운드 절차 재사용, 관점 분할)
   - targetMode=roundtable: Agent tool로 `roundtable` 에이전트 호출 (입력: 변경 파일 + 트리거 사유)
+  - 승격 라운드도 시작 시 `shared-gate.sh source-hash`를 캡처해 sourceHash로 기록 (v4.9.0)
   - 승격 리뷰 finding은 findingHistory에 "escalated": true로 append (동일 스키마)
-  - 승격 라운드를 roundResults에 {escalated: true, reviewMode: "<targetMode>"} 포함해 기록 (0-finding이어도 필수)
+  - 승격 라운드를 roundResults에 {escalated: true, reviewMode: "<targetMode>", sourceHash: "<캡처값>"} 포함해 기록 (0-finding이어도 필수)
   - bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh review-escalation-check --mark-complete --progress-file {PROGRESS_FILE}
   - 증거 없으면 FAIL → 승격 리뷰 수행 후 재실행 (stop-hook이 reviewEscalation=pass|skip을 fail-closed로 요구)
+  - **승격 finding 수정이 있었던 경우**: 수정을 커밋한 뒤, 새 지문으로 sourceHash를 기록하는
+    비승격 리뷰 라운드를 1회 더 실행해야 code-review-findings의 sourceHash 대조를 통과한다
+    (0-finding 승격 라운드는 지문 불변이므로 추가 조치 불필요)
 
   *** Code Review Findings 게이트 (Director 전 필수 — HARD gate) ***
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}

@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.8.0**
+**v4.9.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -225,7 +225,7 @@ The ~40 `shared-gate.sh` subcommands include the following user-facing gates (se
 | `acceptance-gate` | HARD | Tampered or red acceptance tests, or SPEC modified after freeze (full-auto; skip = fail) |
 | `live-testing-gate` | HARD | Open LIVE-CRITICAL/HIGH findings from real-app testing |
 | `layer-coverage` | HARD | Declared frontend/backend layers missing on filesystem |
-| `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed |
+| `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed; code changed after the last review round (sourceHash mismatch) |
 | `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections, 4-dimension clarity (Goal/Constraints/SC/Context) (auto-records plan-template DoD keys) |
 | `provenance-gate` | HARD | SPEC core sections without provenance markers (user-fact/repo-fact/assumption/blocker); assumptions in unsafe domains (credentials/payments/prod deploy/destructive data/PII); unresolved blockers |
 | `clarification-gate` | HARD | `[NEEDS-CLARIFICATION]` tags left in docs |
@@ -273,6 +273,10 @@ No override (including directorOverride) can bypass the 훅-강제 tier.
 **Spec Provenance Contract**: every SPEC core section carries an origin marker (`user-fact` / `repo-fact:<path>` / `assumption: <rationale>` / `blocker`). Unsafe domains (credentials, payments, prod deploy authority, destructive data ops, PII) can never be assumptions. Blockers convert to `[NEEDS-CLARIFICATION]` batch questions. Adopted from ouroboros's interview convergence contract, enforced deterministically by `provenance-gate`.
 
 **Trigger-Based Review Escalation**: normal runs use the user-selected review mode; runs that hit risk triggers (L2+ escalation, scope reduction, acceptance re-freeze) must add one escalated review round (2nd codex pass if available, else the roundtable agent) with deterministic evidence, or the stop-hook blocks completion.
+
+**Review Source-Hash Binding** (v4.9.0, from gajae-code's frozen sourceHash cohort): every review round captures `shared-gate.sh source-hash` (HEAD + dirty-state fingerprint, `.claude*` excluded) and records it as `roundResults.sourceHash`. `code-review-findings` compares the last round's hash to the current state — reviewing then quietly editing code can no longer complete (the freeze trilogy: acceptance tests + SPEC + reviewed-code binding). Parallel reviewers (solo 3-way, dual 2×codex) are pinned to one captured hash. Non-git projects skip gracefully.
+
+**Review Ratchet (round 2+)**: five convergence rules keep repeated rounds from diverging — delta-only scope (diff since last reviewed hash + open findings), novelty justification for new findings on unchanged code, verdict monotonicity (no re-opening without new evidence), severity scoping (no inflation on re-report), and counter-review (dual's 2nd call audits the 1st call's scope inflation). Prompt-layer rules in review-perspectives.md; they never weaken the 0-finding recording obligation.
 
 **Event Log**: append-only `.claude/acl-events.jsonl` (gate results, errors, escalations, loop exits, splits, re-freezes — dot-notation event types, capped, archived on success). Observability only — no gate reads it, so it can't be gamed.
 

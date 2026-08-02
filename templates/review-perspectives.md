@@ -149,13 +149,20 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
 `code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 완료를 차단한다
 (빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail).
 **finding 0건 리뷰도 반드시 `roundResults`에 해당 라운드 1항목(critical/high/medium/low 모두 0)을 기록한다** —
-이것이 리뷰 수행 증거가 되어 `code-review-findings`가 통과한다. 기록을 생략하면 리뷰 미수행 fail로 처리된다:
+이것이 리뷰 수행 증거가 되어 `code-review-findings`가 통과한다. 기록을 생략하면 리뷰 미수행 fail로 처리된다.
+
+**sourceHash 귀속 (v4.9.0 필수)**: 각 라운드 **시작 시**(리뷰어 실행 전)
+`bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash` 출력을 캡처해 그 라운드의
+`sourceHash`로 기록한다 (`no-git` 출력 시에만 생략 가능). `code-review-findings` 게이트가
+**마지막 라운드의 sourceHash를 현재 소스 지문과 대조**한다 — 불일치(리뷰 후 무리뷰 변경) 또는
+부재 시 FAIL. 리뷰 라운드 진행 중(캡처~기록 사이)에는 소스 파일을 편집하지 않는다:
 ```json
 "phase_3": {
   "currentRound": 2,
   "roundResults": [
     {
       "round": 1,
+      "sourceHash": "<라운드 시작 시 source-hash 출력>",
       "critical": 0, "high": 2, "medium": 3, "low": 1,
       "fixed": 5,
       "dismissed": 1,
@@ -166,6 +173,24 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
   ]
 }
 ```
+
+## 라운드 2+ 래칫 (수렴 규칙)
+
+라운드 반복이 "전체 재훑기 + 잣대 변경 + 지적 무한 증식"으로 발산하는 것을 막는다.
+2라운드부터 모든 리뷰어(codex/서브에이전트/2차 호출)에 다음 5규칙을 적용한다:
+
+1. **Delta-only**: 리뷰 범위 = 마지막 리뷰 sourceHash 이후의 diff + 이전 라운드의 open finding 전체.
+   변경되지 않은 코드를 처음부터 다시 훑지 않는다.
+2. **Novelty justification**: 미변경 코드에 대한 신규 지적은 "이전 라운드가 왜 놓쳤는지"를
+   finding에 명시해야 한다. 정당화 없으면 LOW/advisory로만 기록한다.
+3. **Verdict monotonicity**: fixed/dismissed 처리된 finding의 재오픈은 새 증거(변경된 라인,
+   새로운 실패 로그)를 인용할 때만 허용한다.
+4. **Severity scoping**: 동일 finding 재보고 시 심각도 인플레이션 금지 — 위 Severity 분류
+   기준을 그대로 따른다.
+5. **Counter-review (dual 모드)**: 2차 codex 호출은 자기 차원 리뷰에 더해, 1차 호출 결과의
+   스코프 인플레이션·중복·정당화 없는 신규 지적을 역검토해 보고한다.
+
+**래칫은 0-finding 라운드 기록 의무와 findingHistory 계약을 완화하지 않는다.**
 
 ## Suppression List 적용
 

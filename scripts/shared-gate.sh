@@ -49,6 +49,7 @@
 #   provenance-gate                                     - SPEC 핵심 섹션 provenance 마커 검증 (HARD_FAIL)
 #   doc-split record --parent <p> --children <a,b>      - TOO_BIG 문서 분할 기록 (record-error exit 4 후에만)
 #   review-escalation-check [--mark-complete]           - 위험 트리거 기반 리뷰 승격 판정/증거 검증
+#   source-hash                                         - 리뷰 라운드 귀속용 소스 지문 출력 (비-git이면 no-git)
 #   record-dimension <key> <result> [evidence...]        - 소프트 품질 차원 기록 (qualityDimensions.<key>, layerCoverage 금지)
 #   implementation-depth [--threshold N] [--dir D]       - stub/빈 함수 탐지 (SOFT gate, 임계값 기반)
 #   test-quality                                        - 테스트 assertion 비율/skip 비율/US 커버리지 (SOFT gate)
@@ -128,6 +129,7 @@ main() {
     provenance-gate)   cmd_provenance_gate "$@" ;;
     doc-split)         cmd_doc_split "$@" ;;
     review-escalation-check) cmd_review_escalation_check "$@" ;;
+    source-hash)       cmd_source_hash "$@" ;;
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
@@ -181,6 +183,8 @@ main() {
       echo "                                               Parent -> status=split, children registered pending, escalation reset to L1"
       echo "  review-escalation-check [--mark-complete]    - Evaluate risk triggers (L2+ escalation / scope reduction / re-freeze)"
       echo "                                               No flag: record required/skip. --mark-complete: verify escalated review evidence"
+      echo "  source-hash                                  - Print source fingerprint for review-round binding (or 'no-git')"
+      echo "                                               Record output as roundResults.sourceHash at each review round start"
       echo "  runtime-gate [port] [--timeout S] [--strict] - Start server ONCE, run endpoint smoke + FE-BE integration + functional flows, stop once"
       echo "                                               Records smokeCheck/integrationSmoke/functionalFlow in .claude-verification.json"
       echo "  live-testing-gate                            - Count open LIVE-CRITICAL/HIGH findings in progress (HARD_FAIL; skip if no live records)"

@@ -130,17 +130,21 @@ solo 모드에서는 Claude가 직접 대상 파일을 탐색합니다.
 
 ## 2단계: 리뷰 실행 (모드별 분기)
 
-**라운드 1**: 자연어 scope를 리뷰어에게 전달하여 자체 탐색. 라운드 시작 시 기준 커밋 SHA 기록:
+**라운드 1**: 자연어 scope를 리뷰어에게 전달하여 자체 탐색. 라운드 시작 시 기준 SHA + 소스 지문 기록:
 ```bash
 ROUND_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+# v4.9.0: 이 라운드가 리뷰하는 소스 지문 — 라운드 결과의 sourceHash로 기록 (게이트가 대조)
+SOURCE_HASH=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash)
 ```
-**라운드 2+**: `git diff --name-only <roundStartSha>..HEAD` 목록을 전달 (커밋 후 uncommitted diff가 비는 문제 방지). 이전 finding 목록은 **참고용으로만** 프롬프트에 포함 (범위 제한 금지). 리뷰어가 Claude가 놓친 새로운 이슈를 독립적으로 발견할 수 있어야 함.
+**라운드 2+**: `git diff --name-only <roundStartSha>..HEAD` 목록을 전달 (커밋 후 uncommitted diff가 비는 문제 방지). 이전 finding 목록은 open 항목 전체를 프롬프트에 포함. **라운드 2+에는 review-perspectives.md의 "라운드 2+ 래칫" 5규칙을 리뷰어 프롬프트에 포함한다** (delta-only/novelty/monotonicity/severity/counter-review — 발산 방지). 리뷰어가 Claude가 놓친 새로운 이슈를 보고하는 것은 여전히 허용되나, 미변경 코드에 대한 신규 지적은 래칫 규칙 2(novelty justification)를 따른다.
+
+**리뷰 중 편집 금지**: `SOURCE_HASH` 캡처부터 라운드 결과 기록까지 소스 파일을 편집하지 않는다 (수정은 3단계 이후에).
 
 ### 모드별 리뷰 실행
 
 - **codex 모드**: 아래 "codex-cli 호출" 섹션을 실행
 - **solo 모드**: `Read ${CLAUDE_PLUGIN_ROOT}/skills/code-review-solo/SKILL.md`를 읽고 해당 스킬의 3관점 병렬 리뷰(서브에이전트 3개: SEC+ERR / DATA+PERF / CODE+IMPL, Agent 툴 불가 시 순차 3-pass 폴백) 지침을 따름
-- **dual 모드**: 아래 "codex-cli 호출" 섹션(SEC/ERR/DATA만)과 "codex-cli 2차 호출" 섹션(PERF/CODE)을 **병렬 실행** — 두 codex 호출을 별개의 Bash 호출로 만들어 **둘 다 `run_in_background: true`로 동시에 띄우고**, BashOutput으로 두 호출의 완료를 폴링하여 결과 수집 (multi-ai-roundtable의 `--both` 패턴과 동일). 두 호출은 서로 결과를 참조하지 않으므로 병렬 실행으로 이 조건이 자연 충족됨
+- **dual 모드**: 아래 "codex-cli 호출" 섹션(SEC/ERR/DATA만)과 "codex-cli 2차 호출" 섹션(PERF/CODE)을 **병렬 실행** — 두 codex 호출을 별개의 Bash 호출로 만들어 **둘 다 `run_in_background: true`로 동시에 띄우고**, BashOutput으로 두 호출의 완료를 폴링하여 결과 수집 (multi-ai-roundtable의 `--both` 패턴과 동일). 두 호출은 서로 결과를 참조하지 않으므로 병렬 실행으로 이 조건이 자연 충족됨. **두 호출 모두 라운드 시작 시 캡처한 동일 `SOURCE_HASH` 상태를 리뷰한다** — 라운드 시작~두 호출 완료 사이 파일 편집 금지 (다른 상태를 본 리뷰는 무효)
 
 ### codex-cli 호출 (codex 모드: SEC/ERR/DATA/PERF/CODE 전 관점, dual 모드: SEC/ERR/DATA만)
 
@@ -211,6 +215,8 @@ codex exec --skip-git-repo-check '## 역할
 ```
 
 **codex 2차 호출 실패 시**: 재시도 1회 → 여전히 실패 시 Claude가 PERF/CODE 직접 리뷰.
+
+**라운드 2+ counter-review (래칫 규칙 5)**: 2차 호출 프롬프트에 1차 호출의 이전 라운드 finding 요약을 포함하고, "1차 리뷰 결과의 스코프 인플레이션·중복·정당화 없는 신규 지적을 역검토해 별도 섹션으로 보고하라"를 추가한다.
 
 ---
 
@@ -319,10 +325,11 @@ git add -A && git commit -m "[auto] 코드 리뷰 Round {currentRound} {COMMIT_M
 `.claude-review-loop-progress.json` 업데이트:
 
 - `currentRound` 증가
-- `roundResults`에 현재 라운드 결과 추가:
+- `roundResults`에 현재 라운드 결과 추가 (`sourceHash` = 2단계에서 캡처한 `SOURCE_HASH` — 게이트가 마지막 라운드의 이 값을 현재 지문과 대조):
   ```json
   {
     "round": 1,
+    "sourceHash": "<라운드 시작 시 shared-gate.sh source-hash 출력>",
     "findings": {
       "total": 12,
       "confirmed": 10,

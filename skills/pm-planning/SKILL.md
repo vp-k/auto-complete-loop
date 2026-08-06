@@ -44,6 +44,49 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mappe
 
 ---
 
+### Step 0-0.5: 명확성 선행 인터뷰 (Ambiguity Gate)
+
+**목적**: 문서 작성 **전에** 요구사항의 애매함을 정량 채점해, 임의 해석으로 잘못 구현→재작업하는 낭비를 차단한다. 목표는 "무애매(100%)"가 아니라 **"임의 해석이 재작업을 부를 부분만 충분히 해소"** — 과잉 질문으로 시간을 낭비하지 않는다.
+
+**핵심 원칙 — 아껴야 할 자원은 사용자 주의(개입)이지 모델 토큰이 아니다:**
+> 레포로 풀 수 있는 건 서브에이전트가 스스로 확인하고, 사용자만 답할 수 있는 것만 딱 한 번(batch) 묻는다.
+
+#### 루브릭 (4차원 가중 채점, 0.0~1.0)
+
+| 차원 | 가중 | 무엇을 보는가 | 만점(1.0) 기준 |
+|------|------|--------------|----------------|
+| **Goal** | 0.30 | 무엇을/왜 만드는가 | 문제·목표·대상 사용자가 한 문장으로 확정, 해석 여지 없음 |
+| **SuccessCriteria** | 0.25 | 완료·검증을 어떻게 판정하나 | 측정 가능한 성공 기준이 관측 가능한 형태로 존재 |
+| **Constraints** | 0.25 | 성능/보안/기술/범위 제약 | 스택·성능·보안·Non-Goals가 결정됨 (미정 없음) |
+| **Context** | 0.20 | 기존 시스템/브라운필드 제약 | 통합 대상·기존 코드 제약 파악 (greenfield면 1.0) |
+
+채점은 요구사항 원문(`$ARGUMENTS`)을 근거로, 재현성을 위해 **보수적으로(낮게)** 매긴다. 근거 없이 높게 주지 않는다. (Phase 1 완료 시 `spec-completeness`가 같은 4축을 파일 기반으로 재검증하므로 거짓 고득점은 뒤에서 잡힌다.)
+
+#### 루프 (PASS 또는 ESCALATED까지)
+
+1. 현재 정보로 4차원을 채점하고 게이트 실행 (greenfield면 `--greenfield`로 Context 자동 1.0):
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh ambiguity-score \
+     --goal <0.0~1.0> --sc <0.0~1.0> --constraints <0.0~1.0> --context <0.0~1.0> \
+     --round <N> [--greenfield]
+   ```
+2. **PASS** (exit 0): 인터뷰 종료 → Step 0-1로 진행.
+3. **CONTINUE** (exit 1, **오류 아님**): 게이트가 지목한 **가장 약한 차원**의 애매점만, 아래 순서로 해소 (개입 최소):
+   - **repo-fact**(기존 코드로 확인 가능): `Explore`/`general-purpose` 서브에이전트를 포크해 레포에서 자동 확인 — **사용자에게 묻지 않는다** (auto-research).
+     - 가드: 한 애매점에 서브에이전트가 3회 연속 "확인됨"을 주장하면 환각 의심 → 사용자 확인으로 라우팅.
+   - **safe assumption**(국소·가역·비파괴 기본값): 기본값을 정하고 나중에 SPEC에 `assumption` provenance로 기록.
+   - **user-fact / blocker**(사용자만 답할 수 있음): 큐에 적재 → 큐가 비지 않으면 **한 번의 AskUserQuestion으로 batch 질의** (N번 왕복 금지).
+   - 답변/확인 반영 → `--round`를 1 올려 1로 돌아가 재채점.
+4. **ESCALATED** (exit 0): max-rounds(기본 3) 도달 → 잔여 애매점을 문서에 `[NEEDS-CLARIFICATION: ...]`로 남기고 Step 0-1로 진행. (문서 완료 직전 batch-ask + `clarification-gate`/`provenance-gate`가 최종 fail-closed 차단)
+
+#### 규모별 처리 (효율 우선)
+- **Small**: 요구사항이 대개 이미 명확 → 보통 round 1에서 PASS. 억지 질문 금지.
+- **Medium/Large**: 애매하면 CONTINUE 루프. 단 max-rounds로 무한 인터뷰 차단.
+
+정량 게이트라 **명확한 요구사항엔 자동으로 적게, 애매한 요구사항엔만 더** 작동한다 — 이것이 "명확하게 하고 시작해 시간을 아낀다"의 구현이다. (AskUserQuestion 가용성은 기존 batch-ask 플로우와 동일 — 비대화형 실행에선 ESCALATED 경로로 잔여를 뒤 게이트에 넘긴다.)
+
+---
+
 ### Step 0-1: 사용자/가치 이해
 
 기능 도출 **전에** 다음을 먼저 정의합니다:

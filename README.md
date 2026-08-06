@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.9.1**
+**v4.10.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -277,6 +277,8 @@ No override (including directorOverride) can bypass the 훅-강제 tier.
 **Review Source-Hash Binding** (v4.9.0, from gajae-code's frozen sourceHash cohort): every review round captures `shared-gate.sh source-hash` (HEAD + dirty-state fingerprint, `.claude*` excluded) and records it as `roundResults.sourceHash`. `code-review-findings` compares the last round's hash to the current state — reviewing then quietly editing code can no longer complete (the freeze trilogy: acceptance tests + SPEC + reviewed-code binding). Parallel reviewers (solo 3-way, dual 2×codex) are pinned to one captured hash. Non-git projects skip gracefully.
 
 **Review Ratchet (round 2+)**: five convergence rules keep repeated rounds from diverging — delta-only scope (diff since last reviewed hash + open findings), novelty justification for new findings on unchanged code, verdict monotonicity (no re-opening without new evidence), severity scoping (no inflation on re-report), and counter-review (dual's 2nd call audits the 1st call's scope inflation). Prompt-layer rules in review-perspectives.md; they never weaken the 0-finding recording obligation.
+
+**Upfront Ambiguity Gate** (v4.10.0, from ouroboros/gajae deep-interview): before writing any planning doc, Phase 0 scores requirement clarity across 4 weighted dimensions — Goal (.30) / SuccessCriteria (.25) / Constraints (.25) / Context (.20). The AI supplies the scores; `ambiguity-score` computes the weighted composite and decides deterministically — pass needs composite ≥ 0.8 **and** every dimension ≥ 0.6 (a floor that stops one clear dimension from masking a blank one). Below threshold, the interview loops on the weakest dimension. Intervention-minimizing order (user attention > model tokens): `repo-fact` gaps are auto-resolved by forked subagents (never asked), safe assumptions auto-filled, and only genuine `user-fact`/`blocker` items go to a single batch AskUserQuestion. A max-rounds cap (3) prevents infinite interviews — residual ambiguity converts to `[NEEDS-CLARIFICATION]` for the downstream fail-closed gates. Scoring is AI, arithmetic/verdict/recording is script; false high scores are caught later when `spec-completeness` re-checks the same 4 axes from the files.
 
 **Event Log**: append-only `.claude/acl-events.jsonl` (gate results, errors, escalations, loop exits, splits, re-freezes — dot-notation event types, capped, archived on success). Observability only — no gate reads it, so it can't be gamed.
 

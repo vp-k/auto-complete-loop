@@ -660,6 +660,157 @@ cmd_spec_completeness() {
   return 0
 }
 
+# ─── ambiguity-score: 명확성 4차원 정량 채점 + 선행 인터뷰 게이트 ───
+# Phase 0 초입(문서 작성 前)에서 AI가 매긴 4차원 명확도(0.0~1.0)를 받아 가중 합성점수를
+# 결정론적으로 계산하고 임계값/차원 하한으로 pass/continue/escalated를 판정한다.
+# 채점은 AI(루브릭 기반), 산술·판정·기록은 스크립트 — "프롬프트 기반 임의 해석"을 게이트로 고정.
+# (거짓 고득점 backstop: Phase 1 완료 시 spec-completeness가 같은 4축을 파일 기반으로 재검증)
+#
+# 루브릭 (가중치 합 = 1.00):
+#   Goal            0.30  무엇을/왜 (틀리면 전면 재작업)
+#   SuccessCriteria 0.25  완료·검증 기준 (인수 테스트 동결의 입력)
+#   Constraints     0.25  성능/보안/기술 제약 (틀리면 아키텍처 재작업)
+#   Context         0.20  기존 시스템/브라운필드 (greenfield는 --greenfield로 1.0)
+#
+# 판정:
+#   pass       composite ≥ threshold(0.8) AND 모든 차원 ≥ floor(0.6) → 인터뷰 종료, 문서 작성 허용 (exit 0)
+#   continue   미달 AND round < max-rounds → 가장 약한 차원 공략 지시 (exit 1)
+#   escalated  미달 AND round ≥ max-rounds → 잔여를 [NEEDS-CLARIFICATION]로 이관 (exit 0)
+cmd_ambiguity_score() {
+  require_jq
+
+  local goal="" sc="" constraints="" context="" context_explicit="false"
+  local round=1 threshold="0.8" floor="0.6" max_rounds=3 greenfield="false"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --goal) goal="$2"; shift 2 ;;
+      --sc|--success-criteria) sc="$2"; shift 2 ;;
+      --constraints) constraints="$2"; shift 2 ;;
+      --context) context="$2"; context_explicit="true"; shift 2 ;;
+      --round) round="$2"; shift 2 ;;
+      --threshold) threshold="$2"; shift 2 ;;
+      --floor) floor="$2"; shift 2 ;;
+      --max-rounds) max_rounds="$2"; shift 2 ;;
+      --greenfield) greenfield="true"; shift ;;
+      *) die "ambiguity-score: unknown arg '$1'" ;;
+    esac
+  done
+
+  # --greenfield는 인자 순서와 무관하게 Context=1.0을 강제한다 (파싱 후 해소 — 순서 의존성 제거).
+  # 사용자가 non-1.0 Context를 명시했는데 greenfield도 준 경우는 모순이므로 거부(조용한 폐기 방지).
+  if [[ "$greenfield" == "true" ]]; then
+    if [[ "$context_explicit" == "true" && "$context" != "1.0" && "$context" != "1" ]]; then
+      die "ambiguity-score: --greenfield 와 --context '$context' 충돌 (greenfield는 Context=1.0 강제) — 둘 중 하나만 지정하라"
+    fi
+    context="1.0"
+  fi
+
+  # 0.0~1.0 float 검증 (선행 0 요구 — '.8' 등 모호 표기 거부, 루브릭이 '0.8' 형식 지정)
+  _as_valid() { [[ "$1" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; }
+  local d v
+  for d in goal sc constraints context; do
+    v="${!d}"
+    [[ -n "$v" ]] || die "ambiguity-score: --$d 점수 필수 (0.0~1.0, 예: 0.85)"
+    _as_valid "$v" || die "ambiguity-score: --$d '$v' 는 0.0~1.0 범위 소수여야 함 (예: 0.85, 1.0)"
+  done
+  [[ "$round" =~ ^[0-9]+$ && "$round" -ge 1 ]] || die "ambiguity-score: --round 는 1 이상 정수"
+  [[ "$max_rounds" =~ ^[0-9]+$ && "$max_rounds" -ge 1 ]] || die "ambiguity-score: --max-rounds 는 1 이상 정수"
+  _as_valid "$threshold" || die "ambiguity-score: --threshold '$threshold' 범위 오류"
+  _as_valid "$floor" || die "ambiguity-score: --floor '$floor' 범위 오류"
+
+  # 가중 합성 + floor 검사 + 최약 차원 (awk 단일 패스)
+  # 출력: <composite> <weakest_name> <weakest_val> <floor_ok(0/1)>
+  # LC_ALL=C: comma-decimal 로케일(gawk POSIX 모드)이 "0,85"를 출력해 아래 jq --argjson이
+  #           유효하지 않은 JSON 숫자로 die하는 것을 방지 — 항상 period 소수 보장.
+  local composite weakest_name weakest_val floor_ok
+  read -r composite weakest_name weakest_val floor_ok < <(LC_ALL=C awk \
+    -v g="$goal" -v s="$sc" -v c="$constraints" -v x="$context" -v fl="$floor" '
+    BEGIN {
+      comp = g*0.30 + s*0.25 + c*0.25 + x*0.20
+      wn="Goal"; wv=g
+      if (s < wv) { wn="SuccessCriteria"; wv=s }
+      if (c < wv) { wn="Constraints";     wv=c }
+      if (x < wv) { wn="Context";         wv=x }
+      fok = (g>=fl && s>=fl && c>=fl && x>=fl) ? 1 : 0
+      printf "%.4f %s %.4f %d\n", comp, wn, wv, fok
+    }') || true
+
+  local meets_threshold
+  meets_threshold=$(LC_ALL=C awk -v c="$composite" -v t="$threshold" 'BEGIN{print (c>=t)?1:0}')
+
+  local result exit_code
+  if [[ "$meets_threshold" == "1" && "$floor_ok" == "1" ]]; then
+    result="pass"; exit_code=0
+  elif [[ "$round" -ge "$max_rounds" ]]; then
+    result="escalated"; exit_code=0
+  else
+    result="continue"; exit_code=1
+  fi
+
+  # ── 출력 ──
+  echo "=== Ambiguity Score (round $round/$max_rounds) ==="
+  printf '  Goal:%s(.30)  SuccessCriteria:%s(.25)  Constraints:%s(.25)  Context:%s(.20)%s\n' \
+    "$goal" "$sc" "$constraints" "$context" \
+    "$( [[ "$greenfield" == "true" ]] && echo '  [greenfield]' || true )"
+  printf '  Composite: %s (threshold %s)   Floor: %s (min=%s @ %s, floor %s)\n' \
+    "$composite" "$threshold" \
+    "$( [[ "$floor_ok" == "1" ]] && echo ok || echo BREACHED )" \
+    "$weakest_val" "$weakest_name" "$floor"
+
+  # ── 기록: verification.json + gate-history + event (감사 가능성) ──
+  record_verification "ambiguityScore" \
+    "$(jq -n --arg ts "$(timestamp)" --arg r "$result" \
+        --argjson comp "$composite" --argjson th "$threshold" --argjson fl "$floor" \
+        --argjson rd "$round" --argjson mr "$max_rounds" \
+        --argjson g "$goal" --argjson s "$sc" --argjson c "$constraints" --argjson x "$context" \
+        --arg weak "$weakest_name" --argjson weakv "$weakest_val" \
+        --arg gf "$greenfield" \
+        '{timestamp:$ts,result:$r,composite:$comp,threshold:$th,floor:$fl,
+          round:$rd,maxRounds:$mr,greenfield:($gf=="true"),
+          weakest:{dimension:$weak,score:$weakv},
+          dimensions:{goal:$g,successCriteria:$s,constraints:$c,context:$x}}')"
+
+  # 주의: result 어휘는 pass|continue|escalated — 의도적으로 다른 게이트의 pass|fail|skip와 다르다.
+  # progress.sh의 3-strike 감지기는 "fail"만 계수하므로 이 게이트는 연속-fail 트립을 유발하지 않는다.
+  # 무한 인터뷰 방지는 max_rounds(escalated 종료)가 담당 — 3-strike 우회는 설계상 의도된 것.
+  append_gate_history "ambiguity-score" "$result" \
+    "$(jq -n --argjson comp "$composite" --argjson rd "$round" --arg weak "$weakest_name" \
+        '{composite:$comp,round:$rd,weakest:$weak}')"
+
+  log_event "gate.ambiguity" \
+    "$(jq -cn --arg r "$result" --argjson comp "$composite" --argjson rd "$round" \
+        '{result:$r,composite:$comp,round:$rd}' 2>/dev/null)" 2>/dev/null || true
+
+  # ── 판정별 안내 ──
+  case "$result" in
+    pass)
+      echo ""
+      echo "[ambiguity-score] PASS — 4차원 명확도 충족. 인터뷰 종료, 문서 작성 진입 허용."
+      echo "=== AMBIGUITY SCORE: PASS ==="
+      ;;
+    continue)
+      echo ""
+      echo "[ambiguity-score] CONTINUE (오류 아님) — 최약 차원 '$weakest_name'($weakest_val) 공략 필요."
+      echo "  개입 최소화 순서 (사용자 주의 > 모델 토큰):"
+      echo "    1) repo-fact  → Explore/general-purpose 서브에이전트로 레포에서 자동 확인 (사용자에게 묻지 않음)"
+      echo "       가드: 한 애매점에 3회 연속 '확인됨' 주장 시 환각 의심 → 사용자 확인으로 라우팅"
+      echo "    2) safe assumption → 국소·가역·비파괴 기본값을 정하고 SPEC에 assumption provenance로 기록"
+      echo "    3) user-fact/blocker → 큐 적재 후 단 1회 AskUserQuestion(batch)로 질의 (N번 왕복 금지)"
+      echo "  반영 후 --round $((round + 1)) 로 재채점하라."
+      echo "=== AMBIGUITY SCORE: CONTINUE ==="
+      ;;
+    escalated)
+      echo ""
+      echo "[ambiguity-score] ESCALATED — max-rounds($max_rounds) 도달, composite $composite < $threshold."
+      echo "  무한 인터뷰 방지: 잔여 애매점을 문서에 [NEEDS-CLARIFICATION: <질문>] 태그로 남기고 진행."
+      echo "  → 문서 완료 직전 batch-ask + clarification-gate/provenance-gate가 최종 fail-closed 차단."
+      echo "=== AMBIGUITY SCORE: ESCALATED ==="
+      ;;
+  esac
+
+  return "$exit_code"
+}
+
 # ─── provenance-gate: SPEC 핵심 섹션 출처(provenance) 마커 검증 (HARD_FAIL) ───
 # 계약: SPEC의 핵심 섹션마다 헤딩 직후 첫 비공백 줄에 정확히 1개의 마커가 있어야 한다.
 #   <!-- provenance: user-fact -->                      사용자 요구/답변에서 직접 확인된 사실

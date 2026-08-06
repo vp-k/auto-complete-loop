@@ -123,6 +123,7 @@ main() {
     docker-build-check) cmd_docker_build_check "$@" ;;
     clarification-gate) cmd_clarification_gate "$@" ;;
     spec-completeness) cmd_spec_completeness "$@" ;;
+    ambiguity-score)   cmd_ambiguity_score "$@" ;;
     doc-completeness)  cmd_doc_completeness "$@" ;;
     definition-conflict) cmd_definition_conflict "$@" ;;
     spec-to-tests)     cmd_spec_to_tests "$@" ;;
@@ -172,6 +173,10 @@ main() {
       echo "  docker-build-check                           - Dockerfile build verification"
       echo "  clarification-gate [docs_dir]                - Block on unresolved [NEEDS-CLARIFICATION] tags (HARD_FAIL)"
       echo "  spec-completeness                            - Planning doc completeness check (HARD on CRITICAL)"
+      echo "  ambiguity-score --goal N --sc N --constraints N --context N [--round R] [--greenfield]"
+      echo "                                             - Quantitative 4-dim clarity gate BEFORE doc-writing (upfront interview)"
+      echo "                                               Weights: Goal .30 / SuccessCriteria .25 / Constraints .25 / Context .20"
+      echo "                                               pass (composite>=0.8 & all>=0.6) | continue (exit 1) | escalated (max-rounds)"
       echo "  doc-completeness [docs_dir]                  - Quantitative API/section thresholds for plan-docs-full (HARD_FAIL)"
       echo "  definition-conflict [docs_dir]               - Detect Non-Goals violations across docs (SOFT_FAIL)"
       echo "  spec-to-tests                                - Verify SPEC.md endpoints map 1:1 to tests/api-smoke.sh (HARD_FAIL)"

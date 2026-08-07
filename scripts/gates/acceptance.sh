@@ -63,12 +63,16 @@ _acc_resolve_algo() {
 }
 
 # Usage: _acc_hash_file <algo> <file>
+# 개행 정규화 (M6): CR(\r)을 제거한 내용을 해시한다. Linux(LF)에서 동결한 manifest를
+# Windows Git Bash(autocrlf, CRLF)에서 검증할 때 원시 바이트 해시는 달라져 무고한
+# tamper FAIL이 발생한다. freeze/verify가 모두 이 헬퍼를 거치므로 여기서 정규화하면
+# 양측이 항상 동일한 입력을 해시한다.
 _acc_hash_file() {
   local algo="$1" f="$2"
   case "$algo" in
-    sha256sum)       sha256sum "$f" | awk '{print $1}' ;;
-    shasum)          shasum -a 256 "$f" | awk '{print $1}' ;;
-    git-hash-object) git hash-object "$f" ;;
+    sha256sum)       tr -d '\r' < "$f" | sha256sum | awk '{print $1}' ;;
+    shasum)          tr -d '\r' < "$f" | shasum -a 256 | awk '{print $1}' ;;
+    git-hash-object) tr -d '\r' < "$f" | git hash-object --stdin ;;
     *)               return 1 ;;
   esac
 }
@@ -422,10 +426,23 @@ cmd_acceptance_gate() {
 
   echo "[acceptance-gate] Result: total=$total passed=$passed failed=$failed (exit=$run_ec)"
 
-  if [[ "$run_ec" -ne 0 ]] || [[ "$failed" -gt 0 ]]; then
+  # 테스트가 실제로 돌았는지 강제 (H2): exit 0 + failed=0 만으로는
+  # total=0(스텁 러너) 또는 total>passed(일부 error로 미실행)도 통과해 버린다.
+  # PASS는 total>0 AND passed==total 일 때만 인정한다 (fail-closed).
+  if [[ "$total" -eq 0 ]]; then
+    echo "[acceptance-gate] FAIL: no acceptance tests discovered (total=0) — runner ran zero tests"
+    _ag_record "fail" "$total" "$passed" "$failed" "no acceptance tests discovered (total=0)"
+    append_gate_history "acceptance-gate" "fail" "{\"reason\":\"no tests discovered\",\"total\":0}"
+    echo "=== ACCEPTANCE GATE: FAIL ==="
+    return 1
+  fi
+
+  if [[ "$run_ec" -ne 0 ]] || [[ "$failed" -gt 0 ]] || [[ "$passed" -ne "$total" ]]; then
     local reason
     if [[ "$failed" -gt 0 ]]; then
       reason="$failed acceptance test(s) failed"
+    elif [[ "$passed" -ne "$total" ]]; then
+      reason="passed<total (total=$total passed=$passed) — some tests did not pass (errored?)"
     else
       reason="runner exited non-zero ($run_ec)"
     fi

@@ -60,6 +60,18 @@
 
 set -euo pipefail
 
+# ─── bash 4+ 요구 검사 (M4) ───
+# gates/errors.sh는 `local -A`(연관 배열), gates/security.sh는 `local -A`,
+# 그리고 여러 게이트가 `${var^^}`(대문자 확장)를 사용한다 — 모두 bash 4+ 문법이다.
+# macOS 기본 /bin/bash는 3.2라 이 파일들을 source하는 순간 파싱/실행 에러로
+# shared-gate.sh 전체가 중단된다. 명확한 안내와 함께 조기 종료한다.
+if [[ -z "${BASH_VERSINFO:-}" ]] || (( BASH_VERSINFO[0] < 4 )); then
+  echo "ERROR: shared-gate.sh requires bash 4 or newer (current: ${BASH_VERSION:-unknown})." >&2
+  echo "  macOS ships bash 3.2 by default. Install a newer bash (e.g. 'brew install bash')" >&2
+  echo "  and run with bash>=4." >&2
+  exit 1
+fi
+
 # ─── 모듈 로드 ───
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

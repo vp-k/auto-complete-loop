@@ -486,9 +486,9 @@ cmd_code_review_findings() {
     | {
         hasHistory: ((rawitems | length) > 0),
         total: ($all | length),
-        critical: ($open | map(select((.severity // "") == "CRITICAL"
+        critical: ($open | map(select((.severity // "" | ascii_upcase) == "CRITICAL"
                                       or ((.id // "") | test("-CRITICAL-")))) | length),
-        high:     ($open | map(select((.severity // "") == "HIGH"
+        high:     ($open | map(select((.severity // "" | ascii_upcase) == "HIGH"
                                       or ((.id // "") | test("-HIGH-")))) | length),
         lastRound: (((.roundResults // []) + (.phases.phase_3.roundResults // []))
                    | map(select(type == "object"))

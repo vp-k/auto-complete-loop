@@ -79,7 +79,9 @@ write_json_atomic() {
   local file="${1:?write_json_atomic: file argument required}"
   local json="${2:-}"
   local tmp
-  tmp=$(mktemp)
+  # 대상과 같은 디렉토리에 temp 생성 (M5): 기본 mktemp은 $TMPDIR에 만들어
+  # 크로스-볼륨(Windows/CI에서 흔함) mv가 비원자적 copy+unlink가 된다.
+  tmp=$(mktemp "${file}.XXXXXX")
   if [[ -n "$json" ]]; then
     printf '%s\n' "$json" > "$tmp"
   else
@@ -152,7 +154,8 @@ jq_inplace() {
   fi
 
   local tmp
-  tmp=$(mktemp)
+  # 대상과 같은 디렉토리에 temp 생성 (M5): 크로스-볼륨 mv의 비원자성 방지 (같은 FS 리네임 보장)
+  tmp=$(mktemp "${file}.XXXXXX")
   if jq "$@" "$file" > "$tmp"; then
     # 출력이 비어 있으면 die (mv 시 대상 파일이 빈 파일로 파괴되는 것 방지)
     if [[ ! -s "$tmp" ]]; then

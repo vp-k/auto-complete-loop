@@ -28,6 +28,11 @@ fi
 # (fail-closed로 block하면 jq 없는 환경에서 사용자가 무한 루프에 갇히므로 의도적으로 fail-open)
 if ! command -v jq &>/dev/null; then
   echo "Auto Complete Loop: ERROR - jq is required but not found. Install jq to use Ralph Loop."
+  # 감사 (M2): jq 부재로 인한 fail-open 우회(증거 없이 완료 승인)를 이벤트 로그에 남긴다.
+  # jq가 없으므로 portable하게 직접 append (best-effort — 실패해도 우회는 진행).
+  _sh_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
+  { mkdir -p .claude 2>/dev/null \
+    && printf '{"ts":"%s","event":"jq_missing_bypass","hook":"stop-hook"}\n' "$_sh_ts" >> .claude/acl-events.jsonl 2>/dev/null; } || true
   echo '{"decision": "approve"}'
   exit 0
 fi
@@ -205,7 +210,8 @@ fi
 LAST_OUTPUT=""
 if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
   # JSONL에서 마지막 assistant 메시지 추출
-  LAST_ASSISTANT_LINE=$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" | tail -1 || true)
+  # 콜론 주변 공백 내성 (M3): "role": "assistant" 포맷도 매칭해야 LAST_OUTPUT이 비지 않는다.
+  LAST_ASSISTANT_LINE=$(grep -E '"role"[[:space:]]*:[[:space:]]*"assistant"' "$TRANSCRIPT_PATH" | tail -1 || true)
   if [[ -n "$LAST_ASSISTANT_LINE" ]]; then
     LAST_OUTPUT=$(echo "$LAST_ASSISTANT_LINE" | jq -r '
       if .message.content then
@@ -697,10 +703,21 @@ NEXT_ITERATION=$((ITERATION + 1))
 PROMPT_TEXT=$(awk '/^---$/{i++; next} i>=2' "$RALPH_STATE_FILE")
 
 # iteration 업데이트
-TEMP_FILE=$(mktemp)
+# fail-open 방지 (M1): set -euo pipefail 하에서 mktemp/sed/mv 중 하나라도 실패하면
+# 스크립트가 중단되어 block이 emit되지 않고 Stop이 허용(검증 미완료인데 완료)된다.
+# 실패해도 반드시 block-continue JSON을 emit하고 exit 0 하도록 가드한다.
+_emit_continue_and_exit() {
+  jq -n \
+    --arg prompt "$PROMPT_TEXT" \
+    --arg msg "Auto Complete Loop: iteration 파일 업데이트 실패 — 검증 미완료이므로 루프를 계속합니다 (Stop 차단)." \
+    '{"decision": "block", "reason": $prompt, "systemMessage": $msg}'
+  exit 0
+}
+# 대상과 같은 디렉토리에 temp 생성 (크로스-볼륨 mv 비원자성도 방지)
+TEMP_FILE=$(mktemp "${RALPH_STATE_FILE}.XXXXXX" 2>/dev/null) || _emit_continue_and_exit
 TEMP_FILES+=("$TEMP_FILE")
-sed "s/^iteration: .*/iteration: $NEXT_ITERATION/" "$RALPH_STATE_FILE" > "$TEMP_FILE"
-mv "$TEMP_FILE" "$RALPH_STATE_FILE"
+sed "s/^iteration: .*/iteration: $NEXT_ITERATION/" "$RALPH_STATE_FILE" > "$TEMP_FILE" 2>/dev/null || _emit_continue_and_exit
+mv "$TEMP_FILE" "$RALPH_STATE_FILE" 2>/dev/null || _emit_continue_and_exit
 
 # JSON 출력으로 stop 차단 및 프롬프트 되돌림
 SYSTEM_MSG="Auto Complete Loop iteration $NEXT_ITERATION | $(date '+%H:%M:%S')"

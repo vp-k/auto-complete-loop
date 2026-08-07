@@ -119,9 +119,18 @@ fi
 
 # --- Phase 판별 (1회만 실행, 결과 공유) ---
 
-PROGRESS_FILE=".claude-full-auto-progress.json"
-if [[ ! -f "$PROGRESS_FILE" ]]; then
-  # full-auto 워크플로우가 아님 → 통과 (무출력)
+# full-auto(solo) / teams 워크플로우의 활성 progress 파일 탐지.
+# 하드코딩 시 teams 워크플로우(.claude-full-auto-teams-progress.json)가 미보호되어
+# SPEC.md/overview.md/docs가 구현 중 은밀히 재작성될 수 있으므로 두 이름을 모두 검사한다.
+PROGRESS_FILE=""
+for _pf in .claude-full-auto-progress.json .claude-full-auto-teams-progress.json; do
+  if [[ -f "$_pf" ]]; then
+    PROGRESS_FILE="$_pf"
+    break
+  fi
+done
+if [[ -z "$PROGRESS_FILE" ]]; then
+  # full-auto 워크플로우가 아님 (어느 progress 파일도 없음) → 통과 (무출력)
   exit 0
 fi
 

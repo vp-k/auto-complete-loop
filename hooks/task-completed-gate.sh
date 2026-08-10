@@ -26,6 +26,10 @@ fi
 # 환경변수가 없으면 검증을 스킵하고 리드에게 위임
 TASK_OUTPUT="${CLAUDE_TASK_OUTPUT:-}"
 
+# CRLF 내성: 윈도우 체크아웃/전달 시 섞인 CR(\r)이 grep 앵커($)·문자열 비교를
+# 깨뜨려 FINDING_COUNT 추출·개수 대조가 오작동하는 것을 방지 (전역 정규화)
+TASK_OUTPUT=$(printf '%s' "$TASK_OUTPUT" | tr -d '\r')
+
 if [[ -z "$TASK_OUTPUT" ]]; then
   # 환경변수가 전달되지 않는 경우 리드가 직접 검증하도록 통과
   exit 0

@@ -25,16 +25,24 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null) || {
   exit 0
 }
 
-# --no-verify 차단
-if echo "$COMMAND" | grep -qE -- '--no-verify'; then
-  echo "$BLOCK_MSG"
-  exit 0
+# git global option(-C, -c, --git-dir, --work-tree)이 앞에 있어도 서브커맨드를 검사
+GIT_OPTS='([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+\S+=\S+|--git-dir[[:space:]]+\S+|--work-tree[[:space:]]+\S+))*'
+GIT_COMMIT_RE="git${GIT_OPTS}[[:space:]]+commit"
+GIT_PUSH_RE="git${GIT_OPTS}[[:space:]]+push"
+
+# --no-verify 차단: git commit/push에 한정 + 워드 경계
+# (오탐 방지: '--no-verify-tls' 같은 더 긴 플래그의 부분 문자열이나
+#  git과 무관한 명령의 --no-verify를 잘못 차단하지 않음)
+if echo "$COMMAND" | grep -qE "$GIT_COMMIT_RE|$GIT_PUSH_RE"; then
+  if echo "$COMMAND" | grep -qE -- '--no-verify([^-a-zA-Z0-9]|$)'; then
+    echo "$BLOCK_MSG"
+    exit 0
+  fi
 fi
 
 # git commit의 -n (short form of --no-verify) 차단
 # 주의: git push -n은 dry-run이므로 차단하지 않음
-# git global option(-C, -c, --git-dir, --work-tree)이 앞에 있어도 commit을 포함하면 검사
-if echo "$COMMAND" | grep -qE 'git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+\S+=\S+|--git-dir[[:space:]]+\S+|--work-tree[[:space:]]+\S+))*[[:space:]]+commit'; then
+if echo "$COMMAND" | grep -qE "$GIT_COMMIT_RE"; then
   if echo "$COMMAND" | grep -qE '(^|[[:space:]])-[a-zA-Z]*n([[:space:]]|$)'; then
     echo "$BLOCK_MSG"
     exit 0

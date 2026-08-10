@@ -206,14 +206,22 @@ cmd_secret_scan() {
     'AKIA[0-9A-Z]{16}'
     # OpenAI
     'sk-[a-zA-Z0-9]{20,}'
-    # GitHub PAT
+    # GitHub PAT (classic)
     'ghp_[a-zA-Z0-9]{36}'
+    # GitHub OAuth/App/Server/Refresh tokens (gho_/ghu_/ghs_/ghr_)
+    'gh[ousr]_[a-zA-Z0-9]{36}'
+    # GitHub fine-grained PAT
+    'github_pat_[a-zA-Z0-9_]{22,}'
     # GitLab PAT
     'glpat-[a-zA-Z0-9\-]{20,}'
     # Private Key
     '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
-    # Slack
-    'xox[bps]-[a-zA-Z0-9\-]+'
+    # Slack (bot/user/app/refresh/legacy: xoxb/xoxp/xoxa/xoxr/xoxs)
+    'xox[baprs]-[a-zA-Z0-9\-]+'
+    # Google API key
+    'AIza[0-9A-Za-z_\-]{35}'
+    # Bearer token (Authorization header leakage)
+    'Bearer[[:space:]]+[a-zA-Z0-9._\-]{20,}'
     # JWT
     'eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.'
     # Azure

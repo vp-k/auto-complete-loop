@@ -55,29 +55,102 @@ GIT_COMMIT_RE='git([[:space:]]+(-C[[:space:]]+\S+|-c[[:space:]]+\S+=\S+|--git-di
 
 NO_VERIFY_MSG='--no-verify는 사용할 수 없습니다. pre-commit hook을 우회하면 품질 게이트가 무력화됩니다. hook 실패 시 근본 원인을 해결하세요.'
 
-check_no_verify() {
-  local stripped segs _seg
-  # 인용부(커밋 메시지 등) 제거 후 명령 토큰 위치의 플래그만 검사
-  # (예: git commit -m "docs: --no-verify 설명" 은 오탐하지 않음)
-  stripped=$(strip_quotes "$COMMAND")
-
-  # --no-verify: 토큰 위치(공백 경계)에서만 매칭
-  if printf '%s' "$stripped" | grep -qE -- '(^|[[:space:]])--no-verify([[:space:]]|$)'; then
-    block "$NO_VERIFY_MSG"
-  fi
-
-  # git commit의 -n (short form of --no-verify) 차단
-  # 주의: git push -n은 dry-run이므로 차단하지 않음
-  # 오탐 방지: 명령을 구분자(;|&)로 세그먼트 분할 → git commit이 포함된
-  # 세그먼트 안의 플래그만 검사 (후속 `grep -n` 등 다른 명령에 매칭 금지)
-  segs=$(printf '%s\n' "$stripped" | tr ';|&' '\n')
-  while IFS= read -r _seg; do
-    if printf '%s' "$_seg" | grep -qE "$GIT_COMMIT_RE"; then
-      if printf '%s' "$_seg" | grep -qE '(^|[[:space:]])-[a-zA-Z]*n([[:space:]]|$)'; then
-        block "$NO_VERIFY_MSG"
-      fi
+# 셸 어휘 분석기 (인용부/백슬래시 인식).
+# 정규식·strip_quotes(줄 단위 sed)의 두 결함을 근본 해결한다:
+#   (1) 오탐: 여러 줄 큰따옴표 메시지 안의 --no-verify 가 flag 로 오인됨
+#   (2) 오검: -nm 처럼 n 이 마지막이 아닌 결합 단축 플래그 미검출
+# 출력: 토큰당 1줄, 접두 1문자로 인용 여부 표기 —
+#   'u' = 완전 비인용(플래그 후보) / 'q' = 인용·이스케이프 포함(값, 플래그 판정 제외)
+#   세그먼트 경계(비인용 ; | &)는 0x1f(US) 단독 줄로 방출.
+# bash 3.2 호환: mapfile/연상배열 미사용, 문자 슬라이스만 사용.
+_acl_lex() {
+  # 주의: `local s="$1" n=${#s}` 는 set -u 하에서 s 미바운드 오류 —
+  # 단일 local 문의 우변은 할당 전에 평가되므로 s 선언을 분리한다.
+  local s="$1"
+  local n=${#s} i=0 c nc q='' tok='' started=0 quoted=0
+  _emit() {
+    if (( started )); then
+      if (( quoted )); then printf 'q%s\n' "$tok"; else printf 'u%s\n' "$tok"; fi
     fi
-  done <<< "$segs"
+    tok=''; started=0; quoted=0
+  }
+  while (( i < n )); do
+    c=${s:i:1}
+    if [[ -n $q ]]; then
+      if [[ $q == '"' && $c == '\' ]]; then
+        # 큰따옴표 안 백슬래시는 다음 문자를 이스케이프
+        i=$((i+1)); nc=${s:i:1}; tok+=$nc; started=1; quoted=1
+      elif [[ $c == "$q" ]]; then
+        q=''            # 닫는 따옴표 — 문자 자체는 버림
+      else
+        tok+=$c; started=1; quoted=1
+      fi
+    else
+      case $c in
+        "'")  q="'"; started=1; quoted=1 ;;   # 여는 작은따옴표
+        '"')  q='"'; started=1; quoted=1 ;;   # 여는 큰따옴표
+        '\')  i=$((i+1)); nc=${s:i:1}; tok+=$nc; started=1; quoted=1 ;;  # 이스케이프
+        [[:space:]]) _emit ;;
+        ';'|'|'|'&') _emit; printf '\037\n' ;;   # 세그먼트 경계
+        *)   tok+=$c; started=1 ;;
+      esac
+    fi
+    i=$((i+1))
+  done
+  _emit
+}
+
+# 한 세그먼트(토큰 배열 seg[])가 git commit/push 인지 판별하고 no-verify 플래그를 차단.
+# 접두는 '토큰 pfx' 형태: pfx 는 seg[i]:0:1, 값은 ${seg[i]:1}
+_acl_scan_seg() {
+  local count=${#seg[@]}
+  (( count )) || return 0
+  # 첫 토큰이 git 이어야 함 (인용 여부 무관)
+  [[ ${seg[0]:1} == git ]] || return 0
+  local idx=1 t sub=''
+  # git 글로벌 옵션(-C/-c/--git-dir/--work-tree 는 인자 1개 소비) 건너뛰기
+  while (( idx < count )); do
+    t=${seg[idx]:1}
+    case $t in
+      -C|-c|--git-dir|--work-tree) idx=$((idx+2)); continue ;;
+      -*) idx=$((idx+1)); continue ;;
+      *)  sub=$t; break ;;
+    esac
+  done
+  [[ -n $sub ]] || return 0
+  [[ $sub == commit || $sub == push ]] || return 0
+
+  local j pfx val
+  # --no-verify: commit·push 공통 차단 (비인용 토큰만)
+  for (( j=idx+1; j<count; j++ )); do
+    pfx=${seg[j]:0:1}; val=${seg[j]:1}
+    [[ $pfx == u && $val == '--no-verify' ]] && block "$NO_VERIFY_MSG"
+  done
+  # 단축 -n(그리고 -nm/-vn 등 결합) 차단: commit 한정 (push -n 은 dry-run)
+  if [[ $sub == commit ]]; then
+    for (( j=idx+1; j<count; j++ )); do
+      pfx=${seg[j]:0:1}; val=${seg[j]:1}
+      [[ $pfx == u ]] || continue         # 인용된 값은 플래그 아님
+      [[ $val == --* ]] && continue        # 롱 플래그는 이 검사 대상 아님
+      [[ $val == -*n* ]] && block "$NO_VERIFY_MSG"   # 단일 대시 번들에 n 포함
+    done
+  fi
+  return 0
+}
+
+check_no_verify() {
+  local line
+  local -a seg=()
+  # 프로세스 치환으로 메인 셸에서 읽어야 block()의 exit 가 훅을 종료시킴
+  while IFS= read -r line; do
+    if [[ $line == $'\037' ]]; then
+      _acl_scan_seg
+      seg=()
+    else
+      seg+=("$line")
+    fi
+  done < <(_acl_lex "$COMMAND")
+  _acl_scan_seg
   return 0
 }
 

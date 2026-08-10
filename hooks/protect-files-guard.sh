@@ -8,7 +8,7 @@
 # 입력: stdin JSON { "tool_input": { "file_path": "..." } }
 # 출력: {"decision": "block"|"approve", "reason": "..."} 또는 {"decision": "approve"}
 
-# --- 공통 boilerplate (block-no-verify.sh 패턴 준수) ---
+# --- 공통 boilerplate (bash-guards.sh 패턴 준수) ---
 
 set -euo pipefail
 

@@ -438,6 +438,18 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: result-based gates have failures (fail). "
       fi
 
+      # exit4 doc-split fail-closed: record-error가 SPLIT_REQUIRED(exit 4)로 pendingSplit을
+      # 기록했는데 아직 doc-split도 L4 전이도 하지 않은 채 완주하려는 경우 차단.
+      # (doc-split record와 레벨 전이는 pendingSplit을 삭제하므로, 잔존 = 분할 요구 무시)
+      for _pf in "${VERIFIED_PROGRESS_FILES[@]:-}"; do
+        [[ -z "$_pf" ]] || [[ ! -f "$_pf" ]] && continue
+        _pending_doc=$(jq -r '.errorHistory.pendingSplit.doc // ""' "$_pf" 2>/dev/null || echo "")
+        if [[ -n "$_pending_doc" ]]; then
+          VERIFICATION_PASSED="false"
+          FAILURE_REASONS="${FAILURE_REASONS}${_pf}: 미해결 문서 분할 요구(pendingSplit='${_pending_doc}') — 'shared-gate.sh doc-split record --parent ${_pending_doc} --children <a.md,b.md,...>'로 분할하거나 record-error로 L4(범위 축소)까지 진행하라. "
+        fi
+      done
+
       # ─── 워크플로우 스코프 게이트 검증 (fail-closed: 키 부재 = 게이트 미실행 = 미검증) ───
       # progress 파일명으로 워크플로우를 판별해 해당 워크플로우가 요구하는
       # verification.json 게이트 결과 키를 검사한다. standalone 워크플로우(review 등)에는
@@ -470,6 +482,10 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       # (WF_FULL_AUTO / WF_PLAN_DOCS_FULL은 위 워크플로우 판별에서 계산됨)
       if [[ "$WF_FULL_AUTO" == "true" ]]; then
         # full-auto: 기획 게이트(pass) + live/layer/일관성(pass|skip) + 코드리뷰 finding(pass)
+        # 착수 전 명확화(ambiguity-score)를 하드로: pass(4차원 충족) 또는 escalated(max-rounds
+        # 도달→[NEEDS-CLARIFICATION] 이관, clarificationGate가 최종 차단)만 허용. 키 부재=인터뷰
+        # 통째 스킵 → 차단(G1 봉쇄). 자기신고 고득점은 specCompleteness가 파일 기반으로 backstop.
+        _require_vgate "ambiguityScore"     "pass escalated" "shared-gate.sh ambiguity-score --goal <g> --sc <s> --constraints <c> --context <x> --round 1"
         _require_vgate "specCompleteness"   "pass"      "shared-gate.sh spec-completeness"
         # provenance: skip 허용 (--start-phase로 Phase 1을 건너뛴 pre-4.7 문서 하위호환)
         _require_vgate "provenanceGate"     "pass skip" "shared-gate.sh provenance-gate"
@@ -489,6 +505,8 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
 
       if [[ "$WF_PLAN_DOCS_FULL" == "true" ]]; then
         # plan-docs-full: 기획 게이트 모두 pass (provenance 포함 — 신규 기획은 마커 필수)
+        # 순수 기획 워크플로우 → 착수 전 명확화는 항상 수행되어야 함 (pass|escalated 강제)
+        _require_vgate "ambiguityScore"    "pass escalated" "shared-gate.sh ambiguity-score --goal <g> --sc <s> --constraints <c> --context <x> --round 1"
         _require_vgate "specCompleteness"  "pass" "shared-gate.sh spec-completeness"
         _require_vgate "provenanceGate"    "pass" "shared-gate.sh provenance-gate"
         _require_vgate "clarificationGate" "pass" "shared-gate.sh clarification-gate"

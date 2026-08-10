@@ -641,6 +641,36 @@ cmd_spec_completeness() {
         '{timestamp:$ts,result:$r,critical:$c,major:$mj,minor:$mn,
           dimensions:{goal:$dg,successCriteria:$ds,constraints:$dc,context:$dx}}')"
 
+  # ── 자기신고 세탁 감지 (ambiguity-score ↔ spec-completeness 교차검증) ──
+  # ambiguity-score(자기신고)가 result=pass로 통과했는데, 파일 기반 재검증(이 게이트)에서
+  # 특정 차원이 약함(ok 아님)에도 그 차원의 자기신고 점수가 floor(0.6) 이상이었다면,
+  # "인터뷰에서 명확하다고 신고 → 실제 문서엔 반영 안 됨"의 세탁 신호다.
+  # 관측 전용: log_event + 경고만 (차단 승격 안 함 — pre-4.7 --start-phase 재진입 오탐 방지).
+  if command -v jq >/dev/null 2>&1 && [[ -f "$VERIFICATION_FILE" ]]; then
+    local _amb_result _amb_mismatch
+    _amb_result=$(jq -r '.ambiguityScore.result // ""' "$VERIFICATION_FILE" 2>/dev/null || echo "")
+    if [[ "$_amb_result" == "pass" ]]; then
+      # 파일 재검증에서 약한(ok 아님) 차원 중, 자기신고 점수 >= 0.6 인 것을 수집
+      _amb_mismatch=$(jq -r --arg dg "$dim_goal" --arg ds "$dim_sc" \
+        --arg dc "$dim_constraints" --arg dx "$dim_context" '
+        (.ambiguityScore.dimensions // {}) as $d
+        | [ {k:"goal",           spec:$dg, amb:($d.goal            // 0)},
+            {k:"successCriteria",spec:$ds, amb:($d.successCriteria // 0)},
+            {k:"constraints",    spec:$dc, amb:($d.constraints     // 0)},
+            {k:"context",        spec:$dx, amb:($d.context         // 0)} ]
+        | map(select(.spec != "ok" and (.amb|tonumber) >= 0.6))
+        | map("\(.k)(신고 \(.amb) → 실측 \(.spec))") | join(", ")' \
+        "$VERIFICATION_FILE" 2>/dev/null || echo "")
+      if [[ -n "$_amb_mismatch" ]]; then
+        echo ""
+        echo "⚠️  자기신고 세탁 신호: ambiguity-score는 pass였으나 문서 재검증에서 다음 차원이 약함 — $_amb_mismatch"
+        echo "    (인터뷰 신고 점수가 실제 문서에 반영되지 않았습니다. SPEC을 보강하거나 재채점하십시오.)"
+        log_event "gate.ambiguity.mismatch" \
+          "$(jq -cn --arg m "$_amb_mismatch" '{gate:"spec-completeness",mismatch:$m}')"
+      fi
+    fi
+  fi
+
   # DoD 자동 기록 (plan 템플릿 계약): 이 게이트가 user_story/data_model/api_contract/error_scenarios의
   # 스크립트 기록자다 (code-review-findings의 dod.code_review_pass 기록 패턴 준수).
   # PASS(critical=0) 시 존재하는 키만 checked:true — 미기록 시 plan 워크플로우가 소프트 데드락에 빠진다.

@@ -98,3 +98,47 @@ EOF
   [[ "$output" == *"[Goal]"* ]]
   [ "$(jq -r '.specCompleteness.dimensions.goal' .claude-verification.json)" = "missing" ]
 }
+
+# ── 자기신고 세탁 감지 (ambiguity-score pass ↔ spec-completeness 약함 교차검증) ──
+
+@test "laundering: ambiguity pass but spec finds weak dim (>=floor) emits mismatch event" {
+  # ambiguity-score가 goal=0.9(신고 명확)로 pass였다고 시드
+  echo '{"ambiguityScore":{"result":"pass","dimensions":{"goal":0.9,"successCriteria":0.9,"constraints":0.9,"context":0.9}}}' \
+    > .claude-verification.json
+  # 실제 문서에선 goal 헤딩 제거 → 재검증에서 goal=missing
+  cat > overview.md <<'EOF'
+## 배경
+어떤 배경.
+EOF
+  run run_gate spec-completeness --progress-file "$PF"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"자기신고 세탁 신호"* ]]
+  [[ "$output" == *"goal"* ]]
+  # log_event로 mismatch 이벤트 기록됨
+  run jq -r 'select(.event=="gate.ambiguity.mismatch") | .gate' .claude/acl-events.jsonl
+  [[ "$output" == *"spec-completeness"* ]]
+}
+
+@test "laundering: dim below floor (0.6) is NOT flagged as laundering" {
+  # goal 자기신고 0.5(<floor) → 실측이 약해도 세탁으로 보지 않음
+  echo '{"ambiguityScore":{"result":"pass","dimensions":{"goal":0.5,"successCriteria":0.9,"constraints":0.9,"context":0.9}}}' \
+    > .claude-verification.json
+  cat > overview.md <<'EOF'
+## 배경
+어떤 배경.
+EOF
+  run run_gate spec-completeness --progress-file "$PF"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"자기신고 세탁 신호"* ]]
+}
+
+@test "laundering: no ambiguityScore recorded → no mismatch check (backward compat)" {
+  # ambiguity 키 부재(pre-4.10 재개) → 세탁 검사 스킵, 경고 없음
+  cat > overview.md <<'EOF'
+## 배경
+어떤 배경.
+EOF
+  run run_gate spec-completeness --progress-file "$PF"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"자기신고 세탁 신호"* ]]
+}

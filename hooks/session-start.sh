@@ -44,6 +44,41 @@ if [[ -f "$LEARNINGS_FILE" ]] && grep -q '^## LESSON |' "$LEARNINGS_FILE" 2>/dev
   fi
 fi
 
+# ─── 교차 실행 반복 감지 (acl-events.jsonl 소비) ───
+# acl-learnings/LESSON과 달리 events는 성공 시에도 유지(append-only)되므로,
+# stop-hook의 stuck-pattern(성공 시 failure-history가 초기화되어 교차 실행을 놓침)이
+# 못 보는 "여러 실행에 걸친 반복 실패"를 여기서 집계해 다음 세션에 경고로 주입한다.
+# 관측 데이터 → 실행 조건 전환: 근본 원인 제거 없이 같은 접근을 반복하지 못하게 한다.
+ACL_EVENTS_FILE=".claude/acl-events.jsonl"
+CROSSRUN_SECTION=""
+if command -v jq &>/dev/null && [[ -f "$ACL_EVENTS_FILE" ]]; then
+  # -rs 슬럽: 한 줄이라도 깨지면 전체 실패 → 2>/dev/null||true 로 관측 전용 폴백(무주입)
+  CROSSRUN_LINES=$(jq -rs '
+    (if length > 200 then .[-200:] else . end) as $ev
+    | ( [ $ev[] | select(.event=="error.recorded") | .type // empty ]
+        | group_by(.) | map({t:.[0], n:length}) | map(select(.n>=3)) ) as $errs
+    | ( [ $ev[] | select(.event=="gate.ambiguity.mismatch") ] | length ) as $mm
+    | ( [ $ev[] | select(.event=="escalation.level" and ((.to=="L4") or (.to=="L5"))) ] | length ) as $esc
+    | ( [ $errs[] | "반복 오류 [\(.t)] ×\(.n)회 — 근본 원인 미제거 신호" ]
+        + (if $mm>0 then ["명확성 세탁(ambiguity mismatch) ×\($mm)회 — 인터뷰 신고가 문서에 미반영"] else [] end)
+        + (if $esc>0 then ["심층 에스컬레이션(L4/L5) ×\($esc)회 — 과거 접근이 반복 실패"] else [] end)
+      ) | .[]
+  ' "$ACL_EVENTS_FILE" 2>/dev/null || true)
+  if [[ -n "$CROSSRUN_LINES" ]]; then
+    CROSSRUN_SECTION=$(printf '## 교차 실행 반복 경고 (acl-events)\n여러 실행에 걸쳐 반복된 신호다. 같은 접근을 반복하기 전에 근본 원인을 먼저 제거하라:\n%s' \
+      "$(printf '%s\n' "$CROSSRUN_LINES" | sed 's/^/- /')")
+  fi
+fi
+
+# 두 메모리 섹션 병합 — 다운스트림 주입 지점은 LESSONS_SECTION만 참조하므로 여기에 합친다
+if [[ -n "$CROSSRUN_SECTION" ]]; then
+  if [[ -n "$LESSONS_SECTION" ]]; then
+    LESSONS_SECTION=$(printf '%s\n\n%s' "$LESSONS_SECTION" "$CROSSRUN_SECTION")
+  else
+    LESSONS_SECTION="$CROSSRUN_SECTION"
+  fi
+fi
+
 # 우리 progress 스키마인지 판별 (타 도구의 .claude-*progress*.json 오탐 방지)
 # 실제 템플릿(scripts/gates/init.sh)은 schemaVersion/dod/handoff/documents 중
 # 최소 하나를 항상 포함한다. 아니면 우리 파일이 아님 → 건드리지 않는다.
@@ -76,12 +111,21 @@ if [[ -z "$PROGRESS_FILE" ]]; then
     [[ -f "$_spec" ]] && { CONTEXT_HINTS="${CONTEXT_HINTS}\n- ${_spec} (기술 사양)"; break; }
   done
 
+  # 출력 조건: 문서 힌트가 있거나(기존), LESSON/교차 실행 경고가 있으면(신규) 주입.
+  # 후자 단독 케이스: overview/SPEC/learnings 없이 events만 남은 fresh 세션에서도
+  # 교차 실행 반복 경고를 반드시 전달해야 하므로 CONTEXT_HINTS 없이도 emit 한다.
+  CTX_MSG=""
   if [[ -n "$CONTEXT_HINTS" ]]; then
     CTX_MSG=$(printf '[Project Context] 이전 작업 컨텍스트가 감지되었습니다. 참고할 문서:%b' "$CONTEXT_HINTS")
-    # 최근 LESSON을 실행 조건으로 병합 (없으면 기존 출력 그대로)
-    if [[ -n "$LESSONS_SECTION" ]]; then
+  fi
+  if [[ -n "$LESSONS_SECTION" ]]; then
+    if [[ -n "$CTX_MSG" ]]; then
       CTX_MSG=$(printf '%s\n\n%s' "$CTX_MSG" "$LESSONS_SECTION")
+    else
+      CTX_MSG="$LESSONS_SECTION"
     fi
+  fi
+  if [[ -n "$CTX_MSG" ]]; then
     jq -n --arg ctx "$CTX_MSG" '{
       "hookSpecificOutput": {
         "hookEventName": "SessionStart",

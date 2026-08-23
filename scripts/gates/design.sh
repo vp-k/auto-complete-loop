@@ -1,5 +1,21 @@
 # gates/design.sh — 디자인 폴리시 게이트(WCAG), 페이지 렌더링 검증
 
+# 신규 계약 위반으로 인한 soft_fail만 SOFT→HARD 승격 후보다 (순수 판정 — 단위 테스트 대상).
+# WCAG 위반으로 인한 soft_fail은 래칫이 없어 승격 시 레거시 a11y 부채를 가진 프로젝트가
+# 2회차부터 완주 불가가 된다(브라운필드 데드락). 계약 위반은 baseline 이후 신규분만 세므로
+# 승격시켜도 이번 실행이 스스로 만든 드리프트만 차단한다.
+#
+# Usage: _dp_escalation_candidate <result> <contract_enabled> <new_violations>
+# 반환: 0 = 승격 후보 / 1 = 아님
+_dp_escalation_candidate() {
+  local result="${1:-}" enabled="${2:-false}" new_count="${3:-0}"
+  [[ "$result" == "soft_fail" ]] || return 1
+  [[ "$enabled" == "true" ]] || return 1
+  [[ "$new_count" =~ ^[0-9]+$ ]] || return 1
+  [[ "$new_count" -gt 0 ]] || return 1
+  return 0
+}
+
 cmd_design_polish_gate() {
   local strict=false
 
@@ -204,6 +220,56 @@ cmd_design_polish_gate() {
     echo "[design-polish-gate] Health Score: $hs_score (diff: $hs_diff, status: $hs_status)"
   fi
 
+  # 디자인 계약(토큰 드리프트) 수집 — .design-polish/design-decisions.json이 있을 때만 의미가 있다.
+  # newViolationCount는 래칫 기준선(token-baseline.json) 이후 "새로 생긴" 위반 수 —
+  # 기존 부채는 동결되고 신규 위반만 게이트를 움직인다.
+  local dp_mode="heuristic" dp_total=0 dp_new=0 dp_enabled="false" dp_label=""
+  if [[ -f ".design-polish/health-score.json" ]]; then
+    dp_enabled=$(jq -r '.tokenDrift.enabled // false' .design-polish/health-score.json 2>/dev/null || echo "false")
+    [[ "$dp_enabled" == "true" ]] || dp_enabled="false"
+    if [[ "$dp_enabled" == "true" ]]; then
+      dp_mode=$(jq -r '.styleMode // "contract"' .design-polish/health-score.json 2>/dev/null || echo "contract")
+      dp_total=$(jq '.tokenDrift.totalViolations // 0' .design-polish/health-score.json 2>/dev/null || echo "0")
+      dp_new=$(jq '.tokenDrift.newViolationCount // 0' .design-polish/health-score.json 2>/dev/null || echo "0")
+      [[ "$dp_total" =~ ^[0-9]+$ ]] || dp_total=0
+      [[ "$dp_new" =~ ^[0-9]+$ ]] || dp_new=0
+      dp_label=", token drift: $dp_new new / $dp_total total"
+      echo "[design-polish-gate] Token drift: $dp_total violation(s), $dp_new new (mode: $dp_mode)"
+    fi
+  fi
+
+  # 신규 계약 위반은 "합의된 결정을 코드가 배신한 것" — WCAG 위반과 동급으로 다룬다.
+  # 기존 부채(baseline)는 승격시키지 않는다 — 브라운필드 도입이 교착되지 않도록.
+  if [[ "$dp_enabled" == "true" ]] && [[ "$dp_new" -gt 0 ]]; then
+    if [[ "$strict" == "true" ]]; then
+      result="fail"
+      echo "[design-polish-gate] STRICT MODE: $dp_new new token contract violation(s) -> FAIL"
+    elif [[ "$result" == "pass" ]]; then
+      result="soft_fail"
+      echo "[design-polish-gate] $dp_new new token contract violation(s) -> soft_fail"
+    fi
+  fi
+
+  # SOFT → HARD 승격 (v4.3.0 정책 재사용): 직전 실행도 fail/warn이면 이번엔 하드 fail.
+  # soft_gate_escalation은 이번 실행의 append_gate_history 호출 **전에** 불러야 한다.
+  #
+  # 승격 대상은 **신규 계약 위반으로 인한 soft_fail만**이다. WCAG 위반으로 인한 soft_fail은
+  # 래칫이 없어(기존 부채가 그대로 계측됨) 승격시키면 레거시 a11y 부채를 가진
+  # 프로젝트가 2회차부터 완주 불가가 된다 — 브라운필드 데드락. 계약 위반은 baseline
+  # 이후 "새로 생긴 것"만 세므로 승격시켜도 스스로 만든 드리프트만 차단한다.
+  #
+  # 연속성 판정은 게이트 전체 결과가 아니라 **계약 전용 이력**(design-polish-contract)으로 본다.
+  # 게이트 전체 이력을 쓰면 WCAG 부채로 매번 warn이 찍히는 프로젝트에서 계약 위반이 처음
+  # 발생한 순간 곧바로 HARD가 되어, "2연속 계약 위반" 정책과 어긋난다.
+  local dp_escalated=false
+  if _dp_escalation_candidate "$result" "$dp_enabled" "$dp_new"; then
+    if soft_gate_escalation "design-polish-contract" "warn"; then
+      result="fail"
+      dp_escalated=true
+      echo "[design-polish-gate] ESCALATED: 연속 계약 위반 soft_fail -> HARD 승격, pass까지 유지"
+    fi
+  fi
+
   # Before/After 스크린샷 경로 수집
   local has_before="false" has_after="false"
   [[ -f ".design-polish/screenshots/before-main.png" ]] && has_before="true"
@@ -213,18 +279,26 @@ cmd_design_polish_gate() {
     jq_inplace "$VERIFICATION_FILE" \
       --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
       --argjson hs_score "$hs_score" --argjson hs_diff "$hs_diff" --arg hs_status "$hs_status" \
+      --argjson dp_total "$dp_total" --argjson dp_new "$dp_new" --arg dp_mode "$dp_mode" --argjson dp_enabled "$dp_enabled" \
+      --argjson dp_escalated "$dp_escalated" \
       --argjson has_before "$has_before" --argjson has_after "$has_after" \
       '.designPolish = {
         "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
+        "tokenDrift": {"enabled": $dp_enabled, "styleMode": $dp_mode, "totalViolations": $dp_total, "newViolationCount": $dp_new},
+        "escalated": $dp_escalated,
         "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
         "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": (if $has_after then ".design-polish/screenshots/current-main.png" else null end)}
       }'
   else
     jq -n --arg ts "$ts" --argjson violations "$wcag_violations" --arg result "$result" --arg summary "$wcag_summary" \
       --argjson hs_score "$hs_score" --argjson hs_diff "$hs_diff" --arg hs_status "$hs_status" \
+      --argjson dp_total "$dp_total" --argjson dp_new "$dp_new" --arg dp_mode "$dp_mode" --argjson dp_enabled "$dp_enabled" \
+      --argjson dp_escalated "$dp_escalated" \
       --argjson has_before "$has_before" --argjson has_after "$has_after" \
       '{"designPolish": {
         "timestamp": $ts, "wcagViolations": $violations, "result": $result, "summary": $summary,
+        "tokenDrift": {"enabled": $dp_enabled, "styleMode": $dp_mode, "totalViolations": $dp_total, "newViolationCount": $dp_new},
+        "escalated": $dp_escalated,
         "healthScore": {"score": $hs_score, "diff": $hs_diff, "status": $hs_status},
         "screenshots": {"before": (if $has_before then ".design-polish/screenshots/before-main.png" else null end), "after": (if $has_after then ".design-polish/screenshots/current-main.png" else null end)}
       }}' | write_json_atomic "$VERIFICATION_FILE"
@@ -239,9 +313,30 @@ cmd_design_polish_gate() {
       local dq_checked="true"
       [[ "$result" == "hard_fail" || "$result" == "fail" ]] && dq_checked="false"
       jq_inplace "$PROGRESS_FILE" \
-        --argjson checked "$dq_checked" --arg ev "design-polish-gate: $result ($wcag_summary)" \
+        --argjson checked "$dq_checked" --arg ev "design-polish-gate: $result ($wcag_summary$dp_label)" \
         '.dod.design_quality.checked = $checked | .dod.design_quality.evidence = $ev'
     fi
+  fi
+
+  # gateHistory 기록 — soft_gate_escalation이 다음 실행에서 "직전 결과"로 읽는다.
+  # skip 경로는 기록하지 않는다 (계측이 아예 없었던 실행이 연속성을 끊지 않도록).
+  local dp_hist="warn"
+  case "$result" in
+    pass) dp_hist="pass" ;;
+    fail) dp_hist="fail" ;;
+    soft_fail) dp_hist="warn" ;;
+  esac
+  append_gate_history "design-polish-gate" "$dp_hist" "$(jq -n -c \
+    --argjson v "$wcag_violations" --argjson n "$dp_new" --argjson t "$dp_total" --argjson e "$dp_escalated" \
+    '{"wcagViolations": $v, "newTokenViolations": $n, "totalTokenViolations": $t, "escalated": $e}')"
+
+  # 계약 전용 이력 — 승격 연속성의 유일한 근거. 계약이 없는 프로젝트(heuristic)는 기록하지
+  # 않으므로 연속성 자체가 성립하지 않는다.
+  if [[ "$dp_enabled" == "true" ]]; then
+    local dp_chist="pass"
+    [[ "$dp_new" -gt 0 ]] && dp_chist="warn"
+    append_gate_history "design-polish-contract" "$dp_chist" "$(jq -n -c \
+      --argjson n "$dp_new" --argjson t "$dp_total" '{"newViolations": $n, "totalViolations": $t}')"
   fi
 
   echo "=== DESIGN POLISH GATE: ${result^^} ==="

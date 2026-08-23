@@ -513,6 +513,35 @@ cmd_spec_completeness() {
     fi
   fi
 
+  # ── 디자인 계약 검사 (hasFrontend=true) ──
+  # SPEC이 기능을 정의한다면 DESIGN.md는 제품의 성격을 정의한다. 없으면 구현 중
+  # 색·간격·모서리·폰트가 매 화면 임의로 정해져 "일관되게 틀린" UI가 만들어진다.
+  if [[ "$has_frontend" == "true" ]]; then
+    local design_file=""
+    if [[ -f "docs/DESIGN.md" ]]; then
+      design_file="docs/DESIGN.md"
+    elif [[ -f "DESIGN.md" ]]; then
+      design_file="DESIGN.md"
+    fi
+    if [[ -z "$design_file" ]]; then
+      major=$((major + 1))
+      issues="${issues}MAJOR: hasFrontend=true but no docs/DESIGN.md (디자인 계약 — templates/DESIGN.md 복사 후 작성)\n"
+    else
+      # 템플릿 플레이스홀더가 그대로 남아 있으면 미작성으로 간주
+      if grep -qF '<이 제품은 ___한' "$design_file" 2>/dev/null; then
+        major=$((major + 1))
+        issues="${issues}MAJOR: $design_file가 템플릿 상태 (제품 성격 한 문장 정의 미작성)\n"
+      fi
+      # 제품 성격/브랜드 정체성 섹션은 assumption 금지 — user-fact 또는 blocker만 허용
+      local char_assumption
+      char_assumption=$(awk '/^## [12][.] /{insec=1; next} /^## [3-9][.] /{insec=0} insec && /provenance: assumption/{print; exit}' "$design_file" 2>/dev/null)
+      if [[ -n "$char_assumption" ]]; then
+        major=$((major + 1))
+        issues="${issues}MAJOR: $design_file 제품 성격/브랜드 섹션에 assumption 마커 (user-fact 또는 blocker만 허용 — 추측한 성격은 전 화면에 전파되어 되돌리기가 가장 비싸다)\n"
+      fi
+    fi
+  fi
+
   # ── Fullstack 검사 ──
   if [[ "$has_frontend" == "true" ]] && [[ "$has_backend" == "true" ]] && [[ -n "$spec_file" ]]; then
     # 데이터 흐름 추적 (MINOR — 권장)
@@ -541,6 +570,19 @@ cmd_spec_completeness() {
       if ! grep -qiE 'UI States|화면별 상태|빈 상태|empty state' "$spec_file" 2>/dev/null; then
         major=$((major + 1))
         issues="${issues}MAJOR: Frontend US exists but no UI States section (빈/로딩/에러/유효성 상태 명세 — templates/SPEC.md 'UI States' 참조)\n"
+      else
+        # UI States 표만 있고 AC에 반영되지 않으면 인수 테스트(AC에서 파생)가
+        # happy path만 검증하게 된다 — 표가 장식으로 끝나는 것을 차단한다.
+        local acf_state
+        # AC 본문이 ID와 같은 줄이 아닌 표기(ID 줄 + 다음 줄 서술)도 흔하므로 -A2로 뒤 2줄까지 본다.
+        acf_state=$({ grep -A2 -E 'AC-F-[0-9]+' "$spec_file" 2>/dev/null || true; } \
+          | { grep -ciE '빈 ?상태|0건|없습니다|없을 때|로딩|스켈레톤|스피너|에러|실패|재시도|유효성|유효하지|입력 오류|empty|loading|skeleton|error|invalid|retry' 2>/dev/null || true; } \
+          | tr -d '[:space:]')
+        [[ "$acf_state" =~ ^[0-9]+$ ]] || acf_state=0
+        if [[ "$acf_state" -eq 0 ]]; then
+          major=$((major + 1))
+          issues="${issues}MAJOR: UI States 표는 있으나 AC-F-*에 빈/로딩/에러/유효성 상태가 하나도 반영되지 않음 (인수 테스트가 happy path만 검증하게 됨)\n"
+        fi
       fi
     fi
   fi

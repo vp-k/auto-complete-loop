@@ -173,7 +173,7 @@ Phase 0: PM Planning      User approval (only interaction point)
     |  API list, data models, key flows, page list
     v
 Phase 1: Doc Planning     Document refinement + smoke scripts + acceptance tests
-    |  SPEC.md, tests/api-smoke.sh, tests/acceptance/ (frozen, red — TDD)
+    |  SPEC.md, docs/DESIGN.md (frontend), tests/api-smoke.sh, tests/acceptance/ (frozen, red — TDD)
     |  Hard gates: spec-completeness, clarification-gate, smoke scripts must exist
     v
 Phase 2: Implementation   TDD coding + per-document depth check
@@ -201,6 +201,29 @@ Three lines of defense keep the tests honest:
 
 Spec changed legitimately? Only via user approval → SPEC update → `acceptance-freeze --approved-by-user` re-freeze (updates test + SPEC hashes together). Pre-4.8 manifests (no frozen SPEC) skip the SPEC comparison for backward compatibility.
 
+### Design Contract (v4.13.0 — frontend projects)
+
+SPEC.md is the contract for **what** gets built; `docs/DESIGN.md` is the contract for **how it feels**.
+Without it, every screen re-invents its colors, spacing, corners and fonts — the result is not "undesigned",
+it is *consistently wrong*.
+
+- **Planning (Phase 1)**: when `projectScope.hasFrontend=true`, doc-planning copies `templates/DESIGN.md`
+  into `docs/` and treats it as a required document — product character, design principles (each must state
+  what it gives up), the decision table (DD-NNN), screen-state rules, accessibility baseline, Korean typography,
+  anti-goals. Structural choices (framework, state management) stay in `docs/adr/` — no second numbering system.
+- **Provenance**: the same markers as SPEC. The **product-character and brand sections forbid `assumption`**
+  (`user-fact` or `blocker` only) — a guessed character propagates consistently across every screen and is
+  the most expensive thing to undo. Unresolved `blocker` → `[NEEDS-CLARIFICATION]` → clarification-gate.
+- **Implementation (Phase 2)**: design values are treated as behavior contract, not as free implementation
+  detail — a value that is not in DESIGN.md must be added there *before* it appears in code.
+- **Verification**: `spec-completeness` fails MAJOR on a missing/still-template DESIGN.md and on a
+  `UI States` table that no `AC-F-*` reflects (so the frozen acceptance tests can't cover happy path only).
+  With the design-polish plugin installed, `design-polish-gate` records `tokenDrift` into
+  `.claude-verification.json`; **new** contract violations (`newViolationCount`) demote a pass to
+  `soft_fail` and fail under `--strict`, while pre-existing debt stays ratcheted so brownfield adoption
+  doesn't deadlock. Two consecutive contract-violation `soft_fail`s escalate SOFT→HARD (v4.3.0 policy) —
+  WCAG-driven `soft_fail`s never do, because they carry no ratchet.
+
 ### Lesson Memory Loop (기억 = 다음 실행 조건)
 
 Memory is not storage — every lesson is written as a **condition for the next run**:
@@ -226,7 +249,7 @@ The ~40 `shared-gate.sh` subcommands include the following user-facing gates (se
 | `live-testing-gate` | HARD | Open LIVE-CRITICAL/HIGH findings from real-app testing |
 | `layer-coverage` | HARD | Declared frontend/backend layers missing on filesystem |
 | `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed; code changed after the last review round (sourceHash mismatch) |
-| `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections, 4-dimension clarity (Goal/Constraints/SC/Context) (auto-records plan-template DoD keys) |
+| `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections, 4-dimension clarity (Goal/Constraints/SC/Context), missing/unwritten `docs/DESIGN.md` on frontend projects, UI States table not reflected in any `AC-F-*` (auto-records plan-template DoD keys) |
 | `provenance-gate` | HARD | SPEC core sections without provenance markers (user-fact/repo-fact/assumption/blocker); assumptions in unsafe domains (credentials/payments/prod deploy/destructive data/PII); unresolved blockers |
 | `clarification-gate` | HARD | `[NEEDS-CLARIFICATION]` tags left in docs |
 | `review-escalation-check` | HARD | Risk-triggered runs (L2+ escalation / scope reduction / acceptance re-freeze) finishing without an extra escalated review round (dual/roundtable) |
@@ -244,9 +267,9 @@ The ~40 `shared-gate.sh` subcommands include the following user-facing gates (se
 | `test-quality` | SOFT* | Empty/skipped tests, low assertion coverage |
 | `page-render-check` | SOFT | Blank pages, console errors (non-strict records `soft_fail`, never blocks) |
 | `artifact-check` | SOFT | Missing build artifact (`soft_fail`, never blocks) |
-| `design-polish-gate` | SOFT | WCAG accessibility violations |
+| `design-polish-gate` | SOFT* | WCAG accessibility violations; **new** design-token contract violations (`tokenDrift.newViolationCount` — pre-existing debt is ratcheted, only new drift moves the gate; `--strict` fails on either) |
 
-\* `implementation-depth` and `test-quality` **auto-escalate SOFT→HARD after 2 consecutive fails/warns** (exit 1 until a pass; the "no tests" warn of test-quality is exempt from escalation).
+\* `implementation-depth` and `test-quality` **auto-escalate SOFT→HARD after 2 consecutive fails/warns** (exit 1 until a pass; the "no tests" warn of test-quality is exempt from escalation). `design-polish-gate` escalates the same way but **only for contract-violation soft_fails** — WCAG-driven soft_fails are never escalated, since they have no ratchet and would deadlock a codebase carrying legacy a11y debt.
 
 ### Gate Enforcement Tiers
 

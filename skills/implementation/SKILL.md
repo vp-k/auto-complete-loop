@@ -19,6 +19,7 @@ No Ralph/progress/promise code — managed by the orchestrator.
 1. overview.md (정의 문서) 읽기 — 기술 스택, 아키텍처 파악
 2. SPEC.md 확인 (없으면 기획 문서들로부터 자동 생성)
 3. README.md에서 구현할 문서 목록 추출
+3.5. **hasFrontend=true이면 `docs/DESIGN.md` 읽기** — 색·간격·모서리·폰트·상태 표현의 계약. UI 코드를 쓰기 전에 반드시 로드한다 (이 문서 없이 UI를 구현하면 매 화면 값이 새로 발명된다).
 4. 구현 순서 결정:
    - progress 파일의 `phases.phase_0.outputs.implementationOrder` 확인
    - 배열이 존재하고 비어있지 않으면 → 해당 순서대로 구현 (Phase 0에서 의존성 분석 완료)
@@ -61,6 +62,12 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
 - **(a) 자유 구현 허용 범위**: 사소하고 스펙과 모순 없는 구현 세부(변수명, 내부 구조, private 헬퍼 분리 등)는 자유롭게 결정. 단, **"동작 계약"에 영향을 주는 것(API 응답 형태, 저장 스키마, 사용자 가시 동작, 외부 연동)은 전부 (b) 또는 (c)로** 처리한다.
 - **(b) 보류 + 태깅**: 스펙 문서(SPEC.md 또는 해당 기획 문서)에 `[NEEDS-CLARIFICATION: 질문]` 태그를 추가하고, 해당 US 구현을 보류한 뒤 다른 태스크를 진행한다. clarification-gate가 잔존 태그를 차단하므로 질문이 조용히 묻히지 않는다.
 - **(c) 즉시 질의**: 즉답이 필요하면 AskUserQuestion으로 사용자에게 질문한다. 결정되면 **스펙 문서에 먼저 반영한 후** 구현한다 (스펙이 항상 코드보다 먼저 갱신된다).
+
+**디자인 값도 동작 계약이다 (hasFrontend=true)**: 색상·간격·모서리·폰트·그림자·상태 표현(빈/로딩/에러/disabled/focus)은
+사용자에게 보이는 결정이므로 위 (a)의 "자유 구현 세부"가 **아니다**. `docs/DESIGN.md`에 있는 값만 사용하고,
+없는 값이 필요하면 코드에 넣기 전에 DESIGN.md의 결정 표를 먼저 고친다(= (c) 절차). 근거 없이 새 값을 코드에
+넣는 것이 디자인 드리프트의 유일한 발생 경로다. design-polish 계약(`.design-polish/design-decisions.json`)이
+설정된 프로젝트에서는 이 위반이 `design-polish-gate`의 `tokenDrift.newViolationCount`로 계측된다.
 
 **Scope 추가 금지**: 스펙에 없는 기능을 "있으면 좋을 것 같아서" 추가하지 않는다. 리뷰에서 IMPL-* finding으로 잡히는 것과 별개로, 구현 단계에서 사전 차단한다.
 

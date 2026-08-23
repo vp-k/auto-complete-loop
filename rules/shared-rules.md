@@ -120,8 +120,9 @@ Rejected: session-based auth (stateless 요구)
 | 4 | `docs/*.md` (기능별 문서) | 기능 상세 |
 | 5 | `docs/error-policy.md` | 에러 응답 포맷/코드 체계 |
 | 6 | `docs/logging-standard.md` | 관측성 세부 |
-| 7 | `overview.md` 디자인 원칙 / UI 명세 | 시각 결정 |
-| 8 | 기타 | 용어집/README 등 |
+| 7 | `docs/DESIGN.md` (디자인 계약) | 시각 결정 — 색/간격/모서리/폰트/상태 표현 |
+| 8 | `overview.md` 디자인 원칙 / UI 명세 | DESIGN.md 이전에 적힌 초안 |
+| 9 | 기타 | 용어집/README 등 |
 
 **적용 시점**:
 - Phase 1 Doc Planning 중 2자 토론에서 문서 간 모순 발견 시 → 상위 문서 유지, 하위 문서 수정

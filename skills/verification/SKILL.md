@@ -291,7 +291,15 @@ design-polish-gate 실행 후, Before/After 비교를 수행합니다.
      - 요소 누락/추가 확인
    - `before`가 없으면 (첫 실행) 시각 비교 건너뜀
 
-3. **결과 기록**
+3. **디자인 계약 위반 확인** (계약이 설정된 프로젝트)
+   `.claude-verification.json`의 `designPolish.tokenDrift`를 읽고:
+   - `tokenDrift`가 없거나(게이트 skip/구버전 기록) `enabled == false` → 계약 미설정. 이 항목 건너뜀 (heuristic 모드)
+   - `newViolationCount > 0` → **합의된 결정을 코드가 배신한 것**. 스코어가 올랐더라도 완료로 보지 않는다.
+     위반 토큰을 `docs/DESIGN.md`의 결정 표와 대조해 (a) 코드를 계약에 맞추거나 (b) 사용자 승인 후
+     계약을 갱신한다. 임의로 계약을 넓혀 위반을 지우는 것은 금지.
+   - `totalViolations > 0` && `newViolationCount == 0` → 래칫으로 동결된 기존 부채. 차단하지 않되 리포트에 명시.
+
+4. **결과 기록**
    `record-dimension` 서브커맨드로 `qualityDimensions.visualRegression`에 기록 (verification.json 직접 편집은 가드가 차단함):
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension visualRegression pass "healthScore 85 (diff +5), Before/After 비교 완료, 레이아웃 정상"

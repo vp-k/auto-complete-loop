@@ -16,6 +16,15 @@ No Ralph/progress/promise code — managed by the orchestrator.
 1. overview.md (정의 문서) 읽기 — 프로젝트 핵심 원칙, 경계, 책임 파악
 2. README.md에서 작성할 문서 목록 추출
 3. 각 문서의 현재 상태 확인 (완료/미작성)
+4. **프론트엔드 필수 문서 검증** (`projectScope.hasFrontend=true`인 경우):
+   - `docs/DESIGN.md` — 없으면 `${CLAUDE_PLUGIN_ROOT}/templates/DESIGN.md`를 docs/로 복사 후 문서 목록에 pending으로 추가
+
+   ```bash
+   [[ -f "docs/DESIGN.md" ]] || cp "${CLAUDE_PLUGIN_ROOT}/templates/DESIGN.md" "docs/DESIGN.md"
+   ```
+
+   - lazy-load: 여기서는 `cp`만 하고 내용은 해당 문서를 작성하는 시점에 읽는다.
+   - 제품 성격·브랜드 정체성 섹션은 `assumption` 금지 (`user-fact` 또는 `blocker`만 허용).
 
 #### overview.md 구조 검증 (PM Planning 산출물)
 
@@ -142,6 +151,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 | 보안 문서(security-authn-authz.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/security-authn-authz.md` |
 | 에러 정책 문서(error-policy.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/error-policy.md` |
 | 로깅 표준 문서(logging-standard.md) — 해당 문서 작성 시 | `${CLAUDE_PLUGIN_ROOT}/templates/logging-standard.md` |
+| 디자인 계약(DESIGN.md) — 해당 문서 작성 시 (hasFrontend=true) | Step 1-0에서 복사된 `docs/DESIGN.md` 사본 |
 | 프로젝트 CLAUDE.md — Phase 0(pm-planning)에서 처리 | `templates/project-claude-md.md`는 **cp 전용**, Read 불필요 |
 
 지금 작성 중인 문서와 무관한 템플릿은 읽지 않는다. 다음 문서로 넘어갈 때 그 문서에 필요한 템플릿을 그 시점에 Read한다.
@@ -259,6 +269,12 @@ fi
 us_count=$(grep -coE 'US-[A-Z]-[0-9]+' SPEC.md 2>/dev/null || echo 0)
 if [[ $us_count -eq 0 ]]; then
   echo "WARN: SPEC.md에 US-* ID 없음"
+fi
+
+# 프론트엔드 디자인 계약 존재 체크
+has_frontend=$(jq -r '.phases.phase_0.outputs.projectScope.hasFrontend // "false"' {PROGRESS_FILE} 2>/dev/null || echo "false")
+if [[ "$has_frontend" == "true" ]] && [[ ! -f docs/DESIGN.md ]]; then
+  echo "FAIL: docs/DESIGN.md 미생성 (hasFrontend=true는 디자인 계약 필수)"
 fi
 ```
 

@@ -32,6 +32,15 @@ No Ralph/progress/promise code — managed by the orchestrator.
    done
    ```
    - **주의 (lazy-load)**: 이 시점에는 `cp`만 수행하고 템플릿 내용을 **Read하지 않는다**. 각 문서의 내용은 해당 문서를 토론하는 시점(Step 1-2)에 `docs/` 사본으로 읽는다 — Step 1-2의 "템플릿 로드 규칙" 참조.
+5. **프론트엔드 필수 문서 검증** (`projectScope.hasFrontend=true`인 경우):
+   - `docs/DESIGN.md` — 없으면 `${CLAUDE_PLUGIN_ROOT}/templates/DESIGN.md`를 docs/로 복사 후 문서 목록에 pending으로 추가
+   - 이 문서는 **제품의 성격 계약**이다. SPEC.md가 기능을 정의한다면 DESIGN.md는 "어떤 인상을 주는가"를 정의하며, 구현 중 색·간격·모서리·폰트를 임의로 정하는 것을 막는다 (스펙 공백 시 임의 구현 금지 규칙의 디자인 버전).
+   - 템플릿 복사:
+   ```bash
+   [[ -f "docs/DESIGN.md" ]] || cp "${CLAUDE_PLUGIN_ROOT}/templates/DESIGN.md" "docs/DESIGN.md"
+   ```
+   - 동일한 lazy-load 규칙 적용 — 여기서는 `cp`만 하고 내용은 해당 문서 토론 시점에 읽는다.
+   - Phase 1 완료 전 `completed` 상태여야 하며, Step 1-9에서 존재를 검증한다.
 
 #### overview.md 구조 검증 (PM Planning 산출물)
 
@@ -157,6 +166,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 | docs/security-authn-authz.md — 해당 문서 토론 시 | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지) |
 | docs/error-policy.md — 해당 문서 토론 시 | `docs/error-policy.md` 사본 (원본 템플릿 중복 Read 금지) |
 | docs/logging-standard.md — 해당 문서 토론 시 | `docs/logging-standard.md` 사본 (원본 템플릿 중복 Read 금지) |
+| docs/DESIGN.md — 해당 문서 토론 시 (hasFrontend=true) | `docs/DESIGN.md` 사본 (원본 템플릿 중복 Read 금지) |
 | 프로젝트 CLAUDE.md — Phase 0(pm-planning)에서 처리 | `templates/project-claude-md.md`는 **cp 전용**, Read 불필요 |
 
 지금 작성 중인 문서와 무관한 템플릿은 읽지 않는다. 다음 문서로 넘어갈 때 그 문서에 필요한 템플릿을 그 시점에 Read한다.
@@ -333,6 +343,18 @@ if [[ "$has_backend" == "true" ]]; then
   done
 fi
 ```
+
+#### 프론트엔드 디자인 계약 존재 검증 (hasFrontend=true인 경우)
+
+```bash
+if [[ "$has_frontend" == "true" ]] && [[ ! -f "docs/DESIGN.md" ]]; then
+  echo "FAIL: docs/DESIGN.md 미생성 (hasFrontend=true는 디자인 계약 필수)"
+fi
+```
+
+DESIGN.md의 **제품 성격·브랜드 정체성 섹션은 `assumption` 마커가 금지**된다(`user-fact` 또는 `blocker`만 허용).
+추측한 성격은 전 화면에 일관되게 전파되어 되돌리기가 가장 비싼 결정이기 때문이며,
+미해결 `blocker`는 아래 provenance-gate → clarification-gate에서 최종 차단된다.
 
 #### Provenance 마커 게이트 (HARD_FAIL — clarification-gate 직전 실행)
 

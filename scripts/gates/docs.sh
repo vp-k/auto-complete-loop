@@ -80,7 +80,15 @@ cmd_doc_consistency() {
     echo "  No explicit cross-references found"
   fi
 
-  # 5. 수치+단위 교차 일관성 (같은 단위가 다른 파일에서 다른 값)
+  # 5. 수치 교차 일관성
+  #
+  # 두 갈래로 나눈다.
+  #   [5a] BLOCKING — "숫자만 다른 동일 문장"이 두 곳에 있으면 실제 모순이다.
+  #        (복붙 후 한쪽만 고친 드리프트가 문서 모순의 실제 다수 사례)
+  #   [5b] INFO     — 단위별 값 스프레드. 모순의 증거가 아니므로 issues에 계상하지 않는다.
+  #        "6개"와 "8개"는 서로 다른 것을 세는 정상 문장이고, "10초 상한"과 "30분 상한"은
+  #        서로 다른 층위의 정상 상한이다. 수량의 정체성 없이 단위만 보고 하드 실패시키면
+  #        무언가를 세는 모든 문서 세트에서 이 게이트는 구조적으로 통과 불가능해진다.
   echo ""
   echo "[5] Numeric Consistency"
   local -a all_doc_files=()
@@ -90,37 +98,71 @@ cmd_doc_consistency() {
   [[ -f "overview.md" ]] && all_doc_files+=("overview.md")
   [[ -f "SPEC.md" ]] && all_doc_files+=("SPEC.md")
 
-  if [[ ${#all_doc_files[@]} -gt 0 ]]; then
-    # 수치+단위 패턴 추출: "100MB", "30s", "5000ms", "10개", "3분" 등
+  if [[ ${#all_doc_files[@]} -eq 0 ]]; then
+    echo "  No documentation files to check"
+  else
+    # [5a] 숫자만 다른 동일 문장 (BLOCKING)
+    #   숫자를 '#'로 마스킹한 문장을 키로 삼고, 같은 키가 서로 다른 숫자 조합으로
+    #   나타나면 모순으로 계상한다. 짧은 문장(20자 미만·3토큰 미만)은 우연 충돌이
+    #   많으므로 제외한다.
+    local dup_conflicts
+    dup_conflicts=$(awk '
+      {
+        line = $0
+        gsub(/^[ \t]+|[ \t]+$/, "", line)
+        if (line !~ /[0-9]/) next
+        nums = ""
+        tmp = line
+        while (match(tmp, /[0-9]+(\.[0-9]+)?/)) {
+          nums = nums substr(tmp, RSTART, RLENGTH) ","
+          tmp = substr(tmp, RSTART + RLENGTH)
+        }
+        key = line
+        gsub(/[0-9]+(\.[0-9]+)?/, "#", key)
+        if (length(key) < 20) next
+        if (split(key, w, /[ \t]+/) < 3) next
+        if (!(key in seen)) {
+          seen[key] = nums
+          where[key] = FILENAME ":" FNR
+        } else if (seen[key] != nums && !(key in flagged)) {
+          flagged[key] = 1
+          printf "  CONFLICT: same statement, different numbers\n"
+          printf "    %s -> %s\n", where[key], seen[key]
+          printf "    %s:%d -> %s\n", FILENAME, FNR, nums
+          printf "    text: %s\n", key
+        }
+      }
+    ' "${all_doc_files[@]}" 2>/dev/null || true)
+
+    if [[ -n "$dup_conflicts" ]]; then
+      echo "$dup_conflicts"
+      local dup_count
+      dup_count=$(echo "$dup_conflicts" | grep -c "CONFLICT:" || echo "0")
+      issues=$((issues + dup_count))
+    else
+      echo "  No contradicting duplicate statements found"
+    fi
+
+    # [5b] 단위별 값 스프레드 (INFO — issues에 계상하지 않음)
     local numeric_values
-    # 수치와 단위를 명시 분리: "100MB" → "100 MB", "30s" → "30 s"
     numeric_values=$(grep -hoE '[0-9]+\s*(MB|KB|GB|TB|ms|s|초|분|시간|개|items|connections|requests|bytes|B)' -- "${all_doc_files[@]}" 2>/dev/null \
       | sed -E 's/([0-9]+)\s*/\1 /' | sort || true)
     if [[ -n "$numeric_values" ]]; then
-      # 단위별로 distinct 값 수 비교
-      local unit_conflicts
-      unit_conflicts=$(echo "$numeric_values" | awk '{print $2}' | sort -u | while read -r unit; do
-        local values
+      local unit_spread
+      unit_spread=$(echo "$numeric_values" | awk '{print $2}' | sort -u | while read -r unit; do
+        local values val_count
         values=$(echo "$numeric_values" | awk -v u="$unit" '$2==u {print $1}' | sort -un)
-        local val_count
         val_count=$(echo "$values" | wc -l | tr -d ' ')
         if [[ "$val_count" -gt 1 ]]; then
-          echo "  WARNING: Multiple values for '$unit': $(echo "$values" | tr '\n' ', ' | sed 's/,$//')"
+          echo "  INFO: multiple values for '$unit': $(echo "$values" | tr '\n' ', ' | sed 's/,$//')"
         fi
       done)
-      if [[ -n "$unit_conflicts" ]]; then
-        echo "$unit_conflicts"
-        local conflict_count
-        conflict_count=$(echo "$unit_conflicts" | grep -c "WARNING" || echo "0")
-        issues=$((issues + conflict_count))
-      else
-        echo "  No numeric inconsistencies found"
+      if [[ -n "$unit_spread" ]]; then
+        echo "$unit_spread"
+        echo "  (INFO는 모순의 증거가 아니다 — 같은 수량을 서로 다르게 적었는지 판단이 필요하면"
+        echo "   progress.phases.phase_1.outputs.numericAudit에 검토 결과를 기록한다)"
       fi
-    else
-      echo "  No numeric+unit patterns found"
     fi
-  else
-    echo "  No documentation files to check"
   fi
 
   echo ""

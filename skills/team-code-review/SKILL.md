@@ -176,9 +176,9 @@ finding 없으면 "NO_FINDINGS".
    - 팀원간 severity 의견 불일치 → **높은 쪽 채택** (과소평가 방지)
    - live-tester가 발견한 런타임 버그 → 최소 HIGH
 4. **수정**:
-   - Critical/High: 즉시 수정
-   - Medium: 즉시 수정 (스킵 금지)
-   - Low: 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵 (dismissedDetails에 기록)
+   - Critical/High: 즉시 수정 (라운드 무관, 스킵 금지)
+   - Medium: **라운드 1~2에서만** 즉시 수정. 라운드 3+에서는 수정하지 않고 `deferred`로 기록 (사유 필수)
+   - Low: 라운드 1~2에서 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵 (dismissedDetails에 기록). 라운드 3+에서는 `deferred`
 5. **품질 게이트 재실행**:
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .claude-full-auto-teams-progress.json
@@ -241,7 +241,10 @@ sec-reviewer, quality-reviewer, live-tester 팀원에게 shutdown을 요청하�
 
 ### Step 3-6: 리뷰 완료 조건
 
-- Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복)
+- **하드 조건: open CRITICAL/HIGH 0개** (`code-review-findings` 게이트와 동일 기준)
+- **MEDIUM/LOW는 완료를 차단하지 않는다** — open 항목은 `deferred`로 기록 (백로그)
+- **라운드 상한: 5.** 상한 도달 시 open CRITICAL/HIGH가 0이면 완료, 남아 있으면 `record-error`로 기록하고 에스컬레이션 경로를 따른다. 상한을 이유로 CRITICAL/HIGH를 deferred 처리하는 것은 금지.
+- **수렴 라운드 (확인 전용 라운드)**: 어떤 라운드의 confirmed 신규 finding이 MEDIUM/LOW뿐이면 — 수정하지 않고 전부 `deferred`로 기록. 소스 불변 → 이 라운드가 최종 라운드가 되고 sourceHash 정합이 자동 충족되어 즉시 완료.
 - 품질 게이트 통과
 - E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
   ```bash
@@ -251,6 +254,7 @@ sec-reviewer, quality-reviewer, live-tester 팀원에게 shutdown을 요청하�
 - **재기록 라운드 규칙**: 마지막 라운드 기록 이후 소스 변경(E2E 수정, 최종 라운드 수정 커밋 등)이
   발생했으면 전체 라운드 절차(지문 캡처 → 팀 리뷰 → 기록)를 1회 더 실행해야
   `code-review-findings`의 sourceHash 대조를 통과한다. 라운드 기록 후 게이트 전 커밋 금지.
+  재기록 라운드에도 수렴 라운드 규칙을 적용한다 (신규 finding이 MEDIUM/LOW뿐이면 수정 없이 deferred 기록 후 종료). 재기록 라운드도 라운드 상한 5에 포함.
 
 ### Step 3-7: Phase 3 완료
 

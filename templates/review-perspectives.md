@@ -131,9 +131,10 @@ finding 없으면 "NO_FINDINGS".
 
 ## Severity별 수정 처리
 
-- Critical/High: 즉시 수정
-- Medium: 즉시 수정 (스킵 금지)
-- Low: 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵 (사유 기록 필수)
+- Critical/High: 즉시 수정 (라운드 무관, 스킵 금지)
+- Medium: **라운드 1~2에서만** 즉시 수정. 라운드 3+에서는 수정하지 않고 `deferred`로 기록 (사유 기록 필수 — 수정이 새 소스 변경을 만들어 재기록 라운드를 무한 연쇄시키는 것을 차단)
+- Low: 라운드 1~2에서 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵. 라운드 3+에서는 수정하지 않고 `deferred`로 기록
+- `deferred` 항목은 findingHistory에 남겨 백로그화한다 — 완료를 차단하지 않되 기록은 소실되지 않는다
 
 ## 수정 후 품질 게이트 재실행
 
@@ -218,7 +219,10 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
 
 ## 리뷰 완료 조건
 
-- Critical/High/Medium 발견이 모두 0개 (라운드 제한 없음, 0개 될 때까지 반복). 특히 IMPL-MISSING-CRITICAL, IMPL-STUB-HIGH는 반드시 수정 필요.
+- **하드 조건: open CRITICAL/HIGH 0개** (`code-review-findings` 게이트와 동일 기준). 특히 IMPL-MISSING-CRITICAL, IMPL-STUB-HIGH는 반드시 수정 필요.
+- **MEDIUM/LOW는 완료를 차단하지 않는다** — open 항목은 `deferred`로 기록 (백로그). "MEDIUM 0개까지 반복" 금지: 주관적 지적을 0으로 수렴시키는 목표는 종료점이 없다.
+- **라운드 상한: 5.** 상한 도달 시 open CRITICAL/HIGH가 0이면 완료, 남아 있으면 `record-error`로 기록하고 에스컬레이션 경로(review-escalation)를 따른다. **상한을 이유로 CRITICAL/HIGH를 deferred 처리하는 것은 금지.**
+- **수렴 라운드 (확인 전용 라운드)**: 어떤 라운드의 confirmed 신규 finding이 MEDIUM/LOW뿐이면 — 수정하지 않고 전부 `deferred`로 기록한다. 소스가 불변이므로 이 라운드가 최종 라운드가 되고 sourceHash 정합이 자동 충족되어 **즉시 완료**한다. (수정 → 소스 변경 → 재기록 라운드 → 새 MEDIUM 발견의 무한 연쇄를 끊는 규칙)
 - 품질 게이트 통과
 - E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
   ```bash
@@ -230,6 +234,9 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
   발생했다면 (최종 라운드의 LOW 수정 커밋, E2E 수정, 승격 finding 수정 등) —
   전체 라운드 절차(지문 캡처 → 리뷰어 호출 → 검증 → 기록)를 1회 더 실행해 새 지문으로
   귀속해야 `code-review-findings`를 통과한다. 리뷰어 호출 없이 라운드 항목만 append하는 것은 금지.
+  **재기록 라운드에는 수렴 라운드 규칙을 적용한다**: 신규 finding이 MEDIUM/LOW뿐이면 수정 없이
+  `deferred` 기록 후 종료 (CRITICAL/HIGH가 나온 경우에만 수정 → 다음 재기록 라운드).
+  재기록 라운드도 라운드 상한 5에 포함된다.
 - **라운드 기록 후 게이트 실행 전 커밋 금지**: 라운드 기록 → `code-review-findings` 사이에
   `git commit`을 만들지 않는다 (progress/verification 기록 파일은 `.claude*`라 지문에 영향
   없지만, **커밋은 HEAD를 움직여 지문을 바꾼다** — 소스 커밋이 필요하면 재기록 라운드로).

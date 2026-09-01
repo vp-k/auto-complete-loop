@@ -233,7 +233,7 @@ Phase 3 완료 시:
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_4 in_progress --progress-file {PROGRESS_FILE}
 ```
 
-DoD: `"dod.code_review_pass": { "checked": true, "evidence": "N라운드 리뷰 완료, CRITICAL/HIGH/MEDIUM: 0" }`
+DoD: `"dod.code_review_pass": { "checked": true, "evidence": "N라운드 리뷰 완료, open CRITICAL/HIGH: 0 (MEDIUM/LOW deferred: M건)" }`
 (이 DoD는 `code-review-findings` 게이트의 PASS 결과로만 세팅 — 모델이 직접 checked:true를 쓰지 않는다)
 
 ## Phase 4 → 완료

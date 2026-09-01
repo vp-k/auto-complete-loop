@@ -80,7 +80,7 @@ DoD를 `.claude-progress.json`의 `dod` 필드에 기록 (`shared-gate.sh init -
 |--------|----------|
 | `build_pass` / `test_pass` | `shared-gate.sh quality-gate`가 실행 결과로 자동 기록 |
 | `e2e_pass` | `shared-gate.sh e2e-gate`가 실행 결과로 자동 기록 |
-| `code_review_pass` | codex 리뷰 통과(Critical/High/Medium 0건) 시 **명시적 jq 세팅**: `jq_inplace .claude-progress.json '.dod.code_review_pass = {checked:true, evidence:"codex 리뷰 N라운드 통과, CRITICAL/HIGH/MEDIUM: 0"}'` |
+| `code_review_pass` | codex 리뷰 통과(open Critical/High 0건 — Medium/Low는 3회 규칙에 따라 deferred 가능) 시 **명시적 jq 세팅**: `jq_inplace .claude-progress.json '.dod.code_review_pass = {checked:true, evidence:"codex 리뷰 N라운드 통과, open CRITICAL/HIGH: 0"}'` |
 
 ## 1단계: 문서 목록 파악
 
@@ -308,7 +308,7 @@ codex exec --skip-git-repo-check '## 코드 리뷰
 2. Critical/High는 즉시 수정
 3. Medium/Low는 판단하여 수용 또는 사유와 함께 스킵
 4. 수정 후 재리뷰 요청
-5. 피드백 없을 때까지 반복
+5. **Critical/High가 0건이 될 때까지** 반복 (Medium/Low·권장사항은 아래 3회 규칙 적용 — "모든 피드백 소멸"을 종료 조건으로 삼지 않는다)
 
 **권장사항 처리:**
 

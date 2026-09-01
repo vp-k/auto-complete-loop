@@ -176,34 +176,22 @@ git add -A && git commit -m "[auto] E2E 프레임워크 + 인프라 설정"
 
 **Iteration 관점**: 이 스텝은 독립 iteration으로 분리 가능 (프레임워크 설치 + 시나리오 도출).
 
-### Step 2-2.5: Acceptance Criteria 사전 합의 (문서별)
+### Step 2-2.5: Acceptance Criteria 매핑 (문서별 — AI 호출 없음)
 
-각 문서 구현 시작 전, codex에게 검증 포인트를 질의하여 Phase 3 리뷰 기준을 사전 확정:
+각 문서 구현 시작 전, Phase 3 리뷰 기준을 **이미 존재하는 계약에서 매핑**한다. v4.2.0부터 SPEC AC가 동결 인수 테스트(`tests/acceptance/`)로 존재하므로, 별도 AI 호출로 기준을 새로 도출하는 것은 중복이다 — codex를 호출하지 않는다:
 
-```bash
-codex exec --skip-git-repo-check '## Acceptance Criteria 도출
-
-다음 기획 문서를 읽고, 이 문서의 구현이 완료되었다고 판단할 핵심 검증 포인트 5개를 제시하라.
-각 포인트는 코드 리뷰 시 pass/fail로 판정할 수 있도록 구체적이어야 한다.
-
-### 기획 문서
-파일: [문서 경로] — 직접 읽고 분석하세요
-
-### 출력 형식
-1. [검증 포인트]: [pass 조건]
-2. ...
-'
-```
-
-결과를 progress 파일에 저장:
+1. SPEC.md에서 이 문서가 커버하는 US(US-F-*/US-B-*)의 AC(AC-F-*/AC-B-*) 문장을 추출
+   - 매핑되는 US가 없는 횡단 문서(logging-standard, error-policy 등)는 **빈 배열 `[]`이 정상**이다 — AC를 억지로 만들어내지 않는다 (Phase 3 리뷰는 해당 문서의 규칙 준수 자체를 검토)
+2. `tests/acceptance/`에서 해당 US의 동결 테스트 파일명을 확인
+3. AC 문장(+ 동결 테스트 파일 참조)을 아래 형태로 progress 파일에 저장 — Phase 3 리뷰 프롬프트와 doc-split의 AC 분배(Step 2-3.5)가 이 필드를 소비한다:
 ```json
 "phases": {
   "phase_2": {
     "documents": [{
       "name": "auth.md",
       "acceptanceCriteria": [
-        "JWT 토큰 발급/검증 로직이 미들웨어로 분리되어 있다",
-        "리프레시 토큰 로테이션이 구현되어 있다",
+        "AC-B-001-1: 유효한 자격증명으로 200 + Access/Refresh 발급 (tests/acceptance/us-b-001-*.sh)",
+        "AC-B-001-2: 잘못된 비밀번호로 401 + AUTH_INVALID_CREDENTIALS",
         "..."
       ]
     }]
@@ -312,20 +300,23 @@ L4 범위 축소 전에 문서를 분할해 재시도한다:
 
    > **원칙**: "타입 체크 통과 ≠ 서비스 동작". 빌드가 되더라도 서버가 뜨지 않으면 구현 미완료.
 
-4. **codex-cli에게 코드 리뷰 요청**
+4. **codex-cli에게 코드 리뷰 요청 (문서당 1사이클 — 조기 결함 검출용)**
+
+   심층·전관점 리뷰는 Phase 3 소관이다. 이 단계의 목적은 다음 문서로 넘어가기 전에 이 문서의 **구조적 결함(Critical/High)을 조기에 잡는 것**뿐이며, 문서당 리뷰와 전체 리뷰를 이중으로 도는 것을 금지한다:
    ```bash
-   codex exec --skip-git-repo-check '## 코드 리뷰
+   codex exec --skip-git-repo-check '## 코드 리뷰 (조기 결함 검출)
    ### 원본 문서 스펙
    [핵심 요구사항]
    ### 구현된 코드
    파일: [경로] — 직접 읽고 검토하세요
    ### 요청
-   비판적 시각으로 문제점, 누락, 개선점을 제시해주세요.
+   Critical/High에 해당하는 문제만 보고하세요 — 보안 결함, 데이터 손상 가능성, 스펙 위반, 동작 오류.
+   Medium/Low 수준의 개선 제안(네이밍, 구조 취향, 사소한 중복 등)은 생략하세요.
    '
    ```
-   - 리뷰 피드백 -> 수정 후 재리뷰
-   - 권장사항 -> 즉시 구현 (사용자에게 묻지 않음)
-   - 리뷰 사이클 최대 3회
+   - **Critical/High** → 즉시 수정. 수정이 있었으면 확인 재리뷰 1회만 (그 외 재리뷰 없음)
+   - **Medium/Low**가 보고되면 progress에 기록만 하고 Phase 3 리뷰에 위임 (여기서 수정하지 않음)
+   - 문서당 리뷰 사이클 상한: 2회 (초기 1 + C/H 수정 확인 1)
 
 5. **문서 완료 처리**
    - **US 인수 테스트 green 확인**: 해당 문서에서 구현한 US의 인수 테스트가 통과하는지 확인한다 — 개별 실행 가능하면 개별(`bash tests/acceptance/us-<id>-*.sh`), 아니면 `bash tests/acceptance/run.sh`로 확인. red면 구현을 수정한다 (테스트 수정 금지 — Step 2-1.10).

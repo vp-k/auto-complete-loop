@@ -150,7 +150,14 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh live-testing-gate --progress-f
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh secret-scan
    ```
 
-2. **codex 보안 리뷰**
+2. **의존성 취약점 스캔** (조건 없이 항상 — codex 리뷰가 스킵되어도 이 검사가 의존성 취약점을 커버한다)
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh vuln-scan
+   ```
+
+3. **codex 보안 리뷰 (조건부 — SEC finding 이력이 있을 때만)**
+
+   Phase 3 리뷰가 이미 SEC 관점을 포함하므로, 무조건 3중 검토하는 것은 중복이다. Phase 3 `findingHistory`에 `SEC-*` finding이 **1건이라도 있었던 경우에만** 실행한다 (보안 취약 신호가 있었던 코드베이스 → 수정 후 재확인 가치 있음). 0건이면 스킵하고 `security_review` evidence에 "Phase 3 SEC finding 0건 — codex 재검토 스킵, secret-scan·vuln-scan pass" 기록:
    ```bash
    codex exec --skip-git-repo-check '## 보안 검토
    ### 프로젝트 구조
@@ -163,6 +170,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh live-testing-gate --progress-f
    - 의존성 취약점
    '
    ```
+
+   (secret-scan·vuln-scan은 조건 없이 **항상** 실행 — 위 1·2번)
 
 DoD 업데이트: `security_review`, `secret_scan`
 
@@ -360,6 +369,24 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-gate --progress-fil
 - `dod.acceptance_pass`는 이 게이트가 pass 시 **자동 기록**한다 — 모델이 직접 세팅하지 않는다.
 - stop-hook이 full-auto 계열 완주 조건으로 `acceptanceTests=pass`를 **fail-closed**로 요구한다 (기록 없음 = 미실행 = 완주 불가).
 
+### Step 4-6.8: 최종 델타 리뷰 (조건부 — Phase 4 소스 변경 시)
+
+**배경**: 소스 지문(`source-hash`)은 HEAD 커밋을 포함한다. Phase 4의 코드 변이 스텝(4-1.11 live 수정, 4-3 정리, 4-5 폴리싱)에서 커밋이 하나라도 생겼으면 마지막 리뷰 라운드의 `sourceHash`와 지문이 달라져 Step 4-7c의 `code-review-findings` 게이트가 **stale FAIL**한다. 이 스텝이 그 재기록 라운드의 공식 위치다 — 게이트에서 stale을 만난 뒤 즉흥 대응하지 말고 여기서 선제 처리한다.
+
+절차 (Step 4-7 진입 전 필수):
+
+1. **잔여 변경 전부 커밋** — 이 스텝 이후 4-7 진행 중 소스 커밋이 새로 생기지 않도록 한다. **순서 원칙: 커밋이 먼저, 리뷰가 마지막** (리뷰 후 커밋하면 지문이 다시 달라져 라운드 귀속이 깨진다).
+2. **지문 대조**:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh source-hash
+   ```
+   출력이 마지막 리뷰 라운드(roundResults 마지막 항목)의 `sourceHash`와 **같으면** → Phase 4에서 소스 변경 없음. 이 스텝 스킵, Step 4-7로 진행.
+3. **다르면 델타 리뷰 라운드 1회 실행**: Phase 3 스킬의 라운드 절차(지문 캡처 → 리뷰어 실제 호출 → 검증 → roundResults/findingHistory 기록)를 재사용하되, **리뷰 범위는 마지막 라운드 이후의 diff만**으로 한정한다 (`git diff <마지막 라운드 시점 커밋>..HEAD`). 이 라운드는 재기록 라운드이므로:
+   - 수렴 라운드 규칙 적용 대상 — 신규 finding이 Medium/Low뿐이면 수정 없이 `deferred` 기록 (소스 불변 → 지문 정합 자동 충족)
+   - 수정 라운드 상한(5회) 계상에서 제외 (v4.16.0 규칙과 동일)
+4. **신규 Critical/High가 나오면**: 수정 → 커밋 → 3을 반복 (Phase 3 리뷰 루프 규칙 동일 적용 — C/H는 deferred 불가). 수정 커밋이 발생했으면 이미 통과한 게이트가 옛 코드 기준이 되므로 **acceptance-gate를 재실행**하고, 런타임 코드(서버 기동 경로)가 변경됐으면 **runtime-gate도 재실행**한다.
+5. **순서 불변식**: 이 스텝 이후(4-7, 4-7.5 포함) 어떤 경로로든 소스 수정이 발생하면 **반드시 이 스텝으로 돌아와** 커밋 → 델타 리뷰 → 게이트 재실행 순서를 다시 밟는다. "소스 변경 → 델타 리뷰 → 게이트"는 어떤 경로에서도 뒤집히지 않는다. **명시적 예외 1건**: Step 4-8의 version bump 커밋 — 모든 게이트 통과 후 버전 파일만 변경하는 릴리즈 메타데이터 커밋으로, 리뷰 대상 소스 변경이 아니므로 델타 리뷰를 트리거하지 않는다 (단, 커밋 범위가 버전 파일을 벗어나면 예외가 아니다 — Step 4-8의 커밋 범위 규칙 참조).
+
 ### Step 4-7: 최종 검증 (다차원 체크리스트)
 
 모든 정리/폴리싱 완료 후, 기술 게이트 + 다차원 품질 평가를 수행:
@@ -421,12 +448,14 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension e2eCoverage p
      ```bash
      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}
      ```
-     open CRITICAL/HIGH finding이 1건 이상이면 FAIL → 해당 finding 수정 후 재실행. 결과는 verification.json의 `codeReviewFindings`에 기록된다.
+     open CRITICAL/HIGH finding이 1건 이상이면 FAIL → 해당 finding 수정 후 Step 4-6.8로 복귀(커밋 → 델타 리뷰) 후 재실행. **stale FAIL**이면 Step 4-6.8 수행 누락이다 — 4-6.8로 돌아가 커밋+델타 리뷰를 수행한다. 결과는 verification.json의 `codeReviewFindings`에 기록된다.
 
-자동 커밋:
+**커밋 가드 (지문 보호)**: 잔여 변경은 Step 4-6.8에서 이미 전부 커밋했으므로, 이 시점에 새 커밋이 필요한 상태 자체가 이상 신호다 — 커밋은 HEAD를 바꿔 지문을 다시 stale로 만든다:
 ```bash
-git add -A && git commit -m "[auto] 최종 검증 및 폴리싱 완료"
+git status --porcelain | grep -vE '\.claude[-/]'
 ```
+- 출력에 소스/문서 변경이 있으면 → **Step 4-6.8로 복귀** (커밋 → 델타 리뷰 → 게이트 재실행)
+- 출력이 비어 있으면(런타임 산출물 `.claude-*`뿐) → 커밋 없이 진행 (`.claude-*`는 지문에서 제외되는 런타임 파일 — 최종 라운드 이후 소스 커밋 금지)
 
 DoD 전체 checked 확인 후, Phase 전이는 오케스트레이터가 수행.
 
@@ -434,14 +463,20 @@ DoD 전체 checked 확인 후, Phase 전이는 오케스트레이터가 수행.
 
 구현 세션의 자기검증 편향을 제거하기 위해, Agent tool로 `verification-auditor` 에이전트를 호출하여 **fresh context에서 독립 감사**를 수행합니다. 이 에이전트는 코드를 수정하지 않으며 감사·보고만 합니다 (evidence 기반 — 주장을 신뢰하지 않고 직접 재확인).
 
+**감사 범위 (모델 기록분에 한정)**: 스크립트가 기록하고 쓰기 가드로 보호되는 fail-closed 키(`acceptanceTests`, `layerCoverage`, `smokeCheck`, `codeReviewFindings`, `liveTesting`, 기획 게이트 3종 등)는 게이트 실행 결과로만 기록되어 조작이 이미 차단돼 있으므로 **재검증하지 않는다** — 키의 존재 여부(미실행 감지)만 확인한다. 감사의 실질 대상은 **모델이 기록한 항목**이다:
+- (a) `record-dimension`으로 기록된 소프트 차원의 evidence vs 실제 상태
+- (b) DoD 항목별 evidence 텍스트 vs 실제 상태
+- (c) SPEC 대비 기능 실재 spot-check (US 2~3개 샘플 — 라우트/컴포넌트/테스트 실존 확인)
+- (d) Test Plan 계약 spot-check (`docs/test-plan.md` 존재 시 — P0 케이스 전수 테스트 실존, P1 2~3개 샘플)
+
 에이전트 프롬프트에 다음 경로를 반드시 포함:
 - progress 파일 경로: `{PROGRESS_FILE}` (실제 값으로 치환)
 - verification 파일 경로: `.claude-verification.json`
 - SPEC 경로: `SPEC.md` (또는 `docs/api-spec.md`)
-- 요청: 품질 게이트 결과 재확인, DoD 항목별 evidence와 실제 상태의 대조, verification.json과 실제 상태의 불일치 발견 목록을 Verification Audit Report 형식으로 보고
+- 요청: 위 감사 범위 (a)(b)(c)(d) + fail-closed 키 존재 확인. 불일치 발견 목록을 Verification Audit Report 형식으로 보고
 
 감사 보고서 처리:
-1. **Blockers 또는 불일치 발견 시**: 해당 항목 수정 → 관련 게이트 재실행 (quality-gate / runtime-gate / layer-coverage / code-review-findings / live-testing-gate 중 해당 게이트) → 에이전트 재호출로 재감사
+1. **Blockers 또는 불일치 발견 시**: 해당 항목 수정 → **소스 수정이 있었으면 Step 4-6.8로 복귀** (커밋 → 델타 리뷰) → 관련 게이트 재실행 (quality-gate / runtime-gate / layer-coverage / code-review-findings / live-testing-gate 중 해당 게이트) → 에이전트 재호출로 재감사
 2. **발견 없음 (Release Ready: Yes)**: Step 4-8 진행
 
 ### Step 4-8: Version Bump + PR 생성 (Opt-in)
@@ -476,9 +511,11 @@ has_breaking=$(git log --oneline "$base_branch"..HEAD | grep -ciE 'breaking|BREA
 
 1. **사용자 확인**: "PR을 생성하시겠습니까?" (AskUserQuestion)
 2. **승인 시**:
+
+   **커밋 범위 규칙**: 이 커밋은 4-6.8 순서 불변식의 예외로 인정되는 대신 **버전 파일만** 포함해야 한다 (`git add -A` 금지). 스테이징 전 `git status --porcelain | grep -vE '\.claude[-/]'`로 버전 파일 외 변경이 없는지 확인 — 다른 소스 변경이 섞여 있으면 Step 4-6.8로 복귀한다.
    ```bash
-   # 변경 커밋
-   git add -A && git commit -m "[auto] version bump to vX.Y.Z"
+   # 버전 파일 한정 커밋 (예: package.json — 프로젝트 유형에 맞는 버전 파일만 지정)
+   git add package.json && git commit -m "[auto] version bump to vX.Y.Z"
 
    # PR 생성 (gh CLI)
    gh pr create \

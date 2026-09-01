@@ -1,7 +1,7 @@
 ---
 name: director
 description: |
-  Use this agent at every phase transition gate. Validates Pre-mortem Tiger resolution, DoD evidence validity, scope change impact, and technical debt accumulation. Delivers GO / NO-GO / CONDITIONAL GO decisions before phase advancement.
+  Use this agent at phase transition gates (always for 1→2 and 3→4; skipped at 0→1 and 2→3 when projectSize is Small — see phase-transition-rules). Validates Pre-mortem Tiger resolution, DoD evidence validity, scope change impact, and technical debt accumulation. Delivers GO / NO-GO / CONDITIONAL GO decisions before phase advancement.
 model: opus
 ---
 

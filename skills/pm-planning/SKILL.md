@@ -358,7 +358,13 @@ jq '.phases.phase_0.outputs.nsm = "..." | .phases.phase_0.outputs.successCriteri
 
 **Roundtable Agent**(다관점 합의)와 **Codex 검토**를 병렬로 실행합니다.
 
-#### 7-A. Roundtable Agent (병렬 실행)
+**규모 게이트 (Small은 roundtable 스킵)**: Step 0-0의 `projectSize`가 `Small`이면 7-A(Roundtable Agent)를 호출하지 않는다 — 기능 5개 미만 기획에 9-페르소나 다관점 합의는 과잉이다. 7-B(Codex 검토)만 실행하고, 7-C 교차 검증은 codex 결과 단독으로 수행한다. 스킵 증거는 `roundtableConsensus`에 기록:
+```bash
+jq '.phases.phase_0.outputs.roundtableConsensus = {"skipped": "Small — codex 단독 검토로 대체", "consensusItems": [], "unresolvedConflicts": []}' ...
+```
+(Step 0-9.5의 2차 재판정에서 Medium/Large로 상향되면 이미 지나간 Step 0-7을 재실행하지 않는다 — Phase 1 Step 1-6 roundtable이 커버.)
+
+#### 7-A. Roundtable Agent (병렬 실행 — Medium/Large만)
 
 Agent tool로 `roundtable` 에이전트를 호출합니다:
 
@@ -414,6 +420,8 @@ Pre-mortem 결과를 Tigers/Paper Tigers/Elephants로 분류.
 ```
 
 #### 7-C. 교차 검증 및 합의
+
+(Small — roundtable 스킵 시: codex 결과의 Critical/High를 검토·수용/반론하고 `codexAlignment: "solo-codex"`로 기록. 아래 교차 비교는 생략.)
 
 라운드테이블과 Codex 결과를 **교차 비교**합니다:
 1. 양쪽 모두 CRITICAL/HIGH로 지적한 항목 → **즉시 반영** (높은 신뢰도)

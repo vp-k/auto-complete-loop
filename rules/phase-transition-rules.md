@@ -7,7 +7,15 @@
 
 ## Director Agent 공통 규칙
 
-모든 Phase 전이에서 Director Agent를 호출합니다. 다음 공통 규칙을 따릅니다:
+Phase 전이에서 Director Agent를 호출합니다. 다음 공통 규칙을 따릅니다:
+
+### 규모 비례 호출 (Small은 저위험 전이 스킵)
+
+progress의 `.phases.phase_0.outputs.projectSize`가 `Small`이면 **Phase 0→1, Phase 2→3 전이에서는 Director 호출을 생략**한다 — 이 두 전이는 결정론 게이트(기획 게이트 3종·E2E 가드 등)와 다음 Phase의 자체 검증이 이미 커버하며, Small 규모에서 Director의 추가 판정 가치가 호출 비용에 못 미친다. 생략 시 증거를 다른 산출물과 동일하게 **outputs 하위**에 기록한다 (전이의 출발 phase 키에 — 0→1은 phase_0, 2→3은 phase_2):
+```bash
+jq '.phases.phase_0.outputs.directorSkipped = "Small"' ...
+```
+**Phase 1→2(기획→구현)와 Phase 3→4(리뷰→검증)는 규모와 무관하게 항상 호출**한다 — 잘못 넘어가면 되돌리기 가장 비싼 두 전이다. Medium/Large는 모든 전이에서 호출.
 
 ### NO-GO Escape Hatch (무한 루프 방지)
 - Director NO-GO 횟수를 progress 파일의 `phases.{phase}.directorNoGoCount`에 기록
@@ -70,6 +78,7 @@ Phase 0 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/pm-planning/SKILL.md
 Phase 0 스킬의 Step 0-0 ~ 0-10 수행 (Step 0-11은 outputs 기록만, init 없음)
 Phase 0 완료 시:
   *** Director Agent 전이 게이트 (Phase 0 → 1) ***
+  (projectSize=Small이면 스킵 — "규모 비례 호출" 참조, directorSkipped 기록 후 update-phase로 진행)
   Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
   - overview.md + progress 파일 경로를 입력으로 제공
   - 전이 유형: "Phase 0 → Phase 1 (Planning → Documentation)"
@@ -180,6 +189,7 @@ Phase 2 완료 시:
   4. applicable=false 또는 applicable=null인 경우 → 통과
 
   *** Director Agent 전이 게이트 (Phase 2 → 3) ***
+  (projectSize=Small이면 스킵 — "규모 비례 호출" 참조, directorSkipped 기록 후 update-phase로 진행)
   Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
   - progress 파일 + 구현된 코드 파일 목록 제공
   - 전이 유형: "Phase 2 → Phase 3 (Implementation → Review)"
@@ -240,7 +250,7 @@ DoD: `"dod.code_review_pass": { "checked": true, "evidence": "N라운드 리뷰 
 
 ```
 Phase 4 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/verification/SKILL.md
-Phase 4 스킬의 Step 4-1 ~ 4-7 수행 (Step 4-6.7: acceptance-gate 필수 실행 포함)
+Phase 4 스킬의 Step 4-1 ~ 4-7 수행 (Step 4-6.7: acceptance-gate 필수 실행, Step 4-6.8: Phase 4 소스 변경 시 최종 델타 리뷰 — code-review-findings의 sourceHash 정합 확보)
 Phase 4 완료 시:
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_4 completed --progress-file {PROGRESS_FILE}
 

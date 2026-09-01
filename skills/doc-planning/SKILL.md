@@ -103,27 +103,23 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
    - 반론 시 근거와 대안 제시
    - 수용한 피드백으로 문서 수정
 
-4. codex-cli에게 재검토 요청 (이전 토론 요약 포함)
-
-5. 참여 중인 AI 모두 "수정 없음" 합의까지 3-4 반복
+4. **수렴 판단 (라운드마다)** — 재검토 라운드는 기본 동작이 아니다:
+   - 이번 라운드 피드백에 **신규 Critical/High가 0건**이면 → 수용한 Medium/Low만 반영하고 **합의 성립** (재검토 라운드 없이 5로 진행 — Medium/Low 반영은 재검토 대상이 아니다)
+   - 신규 Critical/High가 있으면 → 수정 반영 후 codex-cli에게 재검토 요청 (이전 토론 요약 포함) → 2로 복귀
    - 각 라운드 완료 시 progress의 `round` 값 업데이트
 
-6. **문서 품질 체크리스트 확인** (합의 전 필수)
+5. **문서 품질 체크리스트 확인** (완료 처리 전 필수)
 
-7. 합의된 내용으로 최종 문서 확정
+6. 합의된 내용으로 최종 문서 확정
    - 토론에서 **새 아키텍처 결정**(통신 방식, 저장 전략 변경 등)이 합의됐으면
      `docs/adr/NNN-<slug>.md`로 기록 (형식은 pm-planning Step 0-2 #6.5 참조 —
      ADR은 문서 충돌 시 최우선 순위로 참조됨)
 
-8. 확정된 문서 다시 검토
-   - 피드백 있으면 -> 2로 복귀
-   - 피드백 없음 -> 문서 완성
-
-9. **문서 완료 처리**
+7. **문서 완료 처리**
    - progress 업데이트: 해당 문서 `status` -> `completed`, `round` 삭제
    - `/compact` 실행 (다음 문서 시작 전 컨텍스트 정리)
 
-10. 다음 문서로 자동 진행 (목록 끝까지 반복)
+8. 다음 문서로 자동 진행 (목록 끝까지 반복)
 
 #### 토론 규칙
 
@@ -139,9 +135,11 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 - codex 동일 피드백 3회 반복 -> codex 제외, Claude Code 단독 결정
 - codex 근거 없는 approve 3회 -> codex 제외, Claude Code 단독 결정
 
-**합의 기준**:
-- 참여 중인 AI 모두 근거 있는 "수정 없음" 선언
-- 또는 5회 이상 토론 후 주요 쟁점 해결
+**합의 기준 (조기 종료 우선)**:
+- 한 라운드에서 신규 Critical/High 0건 = 합의 성립. Medium/Low는 Claude가 타당성을 판단해 수용분만 반영하고 종료 — "수정 없음" 선언을 추가 라운드로 확인받지 않는다
+- **최소 라운드 수는 없다**: 명확한 문서가 1라운드에 끝나는 것이 정상. 라운드 수를 채우기 위한 재검토 금지
+
+**표준 템플릿 문서 상한 (1라운드)**: 템플릿에서 복사된 표준 문서(logging-standard.md, error-policy.md, security-authn-authz.md, DESIGN.md)는 이미 검증된 구조에서 출발하므로 토론 상한 1라운드. 검토 범위는 "프로젝트 값이 실제로 채워졌는가(placeholder 잔존 여부), overview.md/SPEC.md와 모순이 없는가"로 한정한다. Critical/High가 나오면 수정 후 확인 재검토 1회만 추가 허용. 일반 기획 문서 수준의 반복 토론 금지.
 
 **5라운드 에스컬레이션**: 5라운드 후에도 Critical 피드백이 잔존하는 경우:
 - AskUserQuestion으로 사용자에게 잔여 Critical 이슈 목록 제시
@@ -204,7 +202,13 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
 
 Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다.
 
-**Roundtable Agent**를 호출하여 다관점 아키텍처 리뷰를 수행합니다:
+**규모 게이트 (Small은 roundtable 스킵)**: progress의 `projectSize`가 `Small`이면 Roundtable Agent를 호출하지 않는다 — 아래 "Claude가 직접 수행하는 검증"만 실행하고, spec-completeness(Step 1-9)가 백스톱한다. 스킵 시 증거 기록:
+```bash
+_tmp=$(mktemp)
+jq '.phases.phase_1.outputs.roundtableArchReview = {"verdict": "SKIPPED_SMALL", "reason": "projectSize=Small — 다관점 아키텍처 리뷰 생략, Claude 직접 검증 + spec-completeness로 대체"}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
+```
+
+Medium/Large인 경우 **Roundtable Agent**를 호출하여 다관점 아키텍처 리뷰를 수행합니다:
 - Agent tool로 `roundtable` 에이전트 호출
 - 컨텍스트: "Phase 1 Step 1-6 (Architecture Review)"
 - overview.md + SPEC.md + docs/*.md 경로를 프롬프트에 포함

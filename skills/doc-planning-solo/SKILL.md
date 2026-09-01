@@ -88,7 +88,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
    검토 결과를 반영하여 문서를 수정합니다.
 
    ##### Step D: 수렴 판단
-   검토자가 "추가 수정 불필요"라고 판단하면 완료. 최대 3회 반복.
+   검토(Step B)에서 **Critical/High 0건**이면 그 라운드로 즉시 수렴 — 최소 라운드 수는 없다 (1라운드 수렴이 정상). Critical/High가 있으면 Step A~C 반복, 최대 3회.
    "수정 불필요" 선언 시 반드시 검토한 항목과 근거를 명시해야 함 (단순 approve 금지).
 
 3. **Claude Code가 피드백 분석/반영**
@@ -127,10 +127,12 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 **작성자 역할**: 정의 문서 기반으로 문서 작성/수정, 검토 피드백 반영
 **검토자 역할**: 객관적 기준 기반 피드백, 우선순위별 분류, 구체적 개선안, "프로덕션 실패 시나리오" 관점
 
-**수렴 기준**:
-- 3회 자기 토론 후 검토자가 Critical/High 0건 판단 시 완료
+**수렴 기준 (조기 종료 우선)**:
+- 검토자가 Critical/High 0건 판단한 라운드 = 즉시 수렴 (최소 라운드 수 없음 — 1라운드 수렴이 정상)
 - 또는 검토자가 근거 있는 "추가 수정 불필요" 선언 시 완료
 - 최대 3회 반복 (3회 도달 시 Critical/High 피드백만 처리하고 마무리)
+
+**표준 템플릿 문서 상한 (1라운드)**: 템플릿에서 복사된 표준 문서(DESIGN.md 등)는 이미 검증된 구조에서 출발하므로 자기 토론 상한 1라운드 — 검토 범위는 "프로젝트 값이 실제로 채워졌는가(placeholder 잔존 여부), overview.md/SPEC.md와 모순이 없는가"로 한정. Critical/High 발견 시 수정 후 확인 재검토 1회만 추가 허용.
 
 #### 기획 수준 원칙 / 문서 품질 체크리스트 / 검토 기준 / 피드백 우선순위
 
@@ -189,7 +191,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
 
 Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다.
 
-**Architect Agent**를 병렬로 호출하여 아키텍처 리뷰를 수행합니다:
+**규모 게이트 (Small은 architect 스킵)**: progress의 `projectSize`가 `Small`이면 Architect Agent를 호출하지 않는다 — 아래 "Claude가 직접 수행하는 검증"만 실행한다. 스킵 시 progress에 `phases.phase_1.outputs.architectReview = {"verdict": "SKIPPED_SMALL"}` 기록.
+
+Medium/Large인 경우 **Architect Agent**를 병렬로 호출하여 아키텍처 리뷰를 수행합니다:
 - Agent tool로 `architect` 에이전트 호출
 - 기술 스택 적합성, 의존성 분석, API 설계 일관성, 데이터 모델, NFR 커버리지 검증
 - overview.md + SPEC.md 경로를 프롬프트에 포함

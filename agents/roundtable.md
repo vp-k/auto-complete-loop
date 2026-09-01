@@ -1,7 +1,7 @@
 ---
 name: roundtable
 description: |
-  Multi-perspective roundtable review agent. Simulates 9 expert personas who independently review planning/design artifacts, then cross-validates findings through structured debate until consensus. Used at Phase 0 Step 0-7 (planning review), Phase 1 Step 1-6 (architecture review), and L2+ error escalation.
+  Multi-perspective roundtable review agent. Simulates 9 expert personas who independently review planning/design artifacts, then cross-validates findings through structured debate until consensus. Used at Phase 0 Step 0-7 (planning review) and Phase 1 Step 1-6 (architecture review) — both Medium/Large only (Small skips with SKIPPED_SMALL evidence) — and L2+ error escalation (all sizes).
 model: opus
 ---
 

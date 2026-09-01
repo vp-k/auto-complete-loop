@@ -68,7 +68,7 @@ Small(<5)/Medium(5~15)/Large(8+docs) 기준 및 DoD 키 관리는 분리된 규�
 | implement-docs-auto | 문서 구현 완료 시 | `[auto] {문서명} 구현 완료 [US-X-###]` |
 | code-review-loop | 라운드 수정 + 품질 게이트 통과 후 | `[auto] 코드 리뷰 Round {N} 수정 완료 [US-X-###]` |
 | full-auto Phase 3 | 라운드 수정 + 품질 게이트 통과 후 | `[auto] Phase 3 코드 리뷰 Round {N} 수정 완료 [US-X-###]` |
-| full-auto Phase 4 | 최종 검증 + 폴리싱 완료 후 | `[auto] 최종 검증 및 폴리싱 완료` |
+| full-auto Phase 4 | Step 4-6.8 진입 시 (잔여 변경 전부 커밋 → 델타 리뷰) | `[auto] Phase 4 폴리싱 변경 커밋 (델타 리뷰 대상)` |
 | full-auto Phase 4 design | 디자인 수정 + 품질 게이트 통과 후 | `[auto] Phase 4 디자인 폴리싱 완료` |
 
 ### 요구사항 ID (US-*) suffix 규칙

@@ -451,6 +451,10 @@ cmd_source_hash() {
 
 # ─── code-review-findings: progress의 findingHistory/roundResults에서 open CRITICAL/HIGH 계수 (HARD_FAIL) ───
 # 코드 리뷰 finding(비-LIVE)의 open CRITICAL/HIGH가 남아 있으면 fail.
+# v4.16.0: CRITICAL/HIGH는 status가 deferred/regressed여도 open과 동일하게 계수한다 —
+# "라운드 상한을 이유로 C/H를 deferred 처리 금지" 규칙의 결정론 백스톱(문서 규칙만으로는
+# 상태값 세탁으로 조용히 통과 가능). MEDIUM/LOW deferred는 severity 필터에 걸리지 않으므로
+# 기존대로 완료를 차단하지 않는다.
 # LIVE-* finding은 live-testing-gate가 담당하므로 여기서 제외한다.
 # v4.9.0: 마지막 라운드의 sourceHash를 현재 quality_fingerprint와 대조 (불일치/부재 = fail,
 # 비-git = skip) — 리뷰 pass 이후의 무리뷰 코드 변경을 fail-closed로 차단한다.
@@ -482,7 +486,7 @@ cmd_code_review_findings() {
     def items:
       rawitems | map(select((.id // "") | startswith("LIVE-") | not));
     (items) as $all
-    | ($all | map(select((.status // "open") == "open"))) as $open
+    | ($all | map(select((.status // "open") | IN("open", "deferred", "regressed")))) as $open
     | {
         hasHistory: ((rawitems | length) > 0),
         total: ($all | length),
@@ -570,6 +574,7 @@ cmd_code_review_findings() {
   if [[ $((critical_open + high_open)) -gt 0 ]]; then
     echo "[code-review-findings] FAIL: open CRITICAL/HIGH finding(s) remain"
     echo "  Fix them (or record dismissal with rationale) and set status=fixed in findingHistory."
+    echo "  Note: CRITICAL/HIGH with status=deferred/regressed count as open (deferral is MEDIUM/LOW-only)."
     append_gate_history "code-review-findings" "fail" "{\"criticalOpen\":$critical_open,\"highOpen\":$high_open}"
     _crf_record "fail" "$critical_open" "$high_open" "$note" "$sh_check"
     echo "=== CODE REVIEW FINDINGS: FAIL ==="

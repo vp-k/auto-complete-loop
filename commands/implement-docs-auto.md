@@ -306,15 +306,15 @@ codex exec --skip-git-repo-check '## 코드 리뷰
 
 1. 피드백 우선순위 확인 (Critical > High > Medium > Low)
 2. Critical/High는 즉시 수정
-3. Medium/Low는 판단하여 수용 또는 사유와 함께 스킵
+3. Medium/Low는 **리뷰 3회 이내에만** 수정 (판단하여 수용 또는 사유와 함께 스킵) — 이후에는 기록만 하고 진행
 4. 수정 후 재리뷰 요청
-5. **Critical/High가 0건이 될 때까지** 반복 (Medium/Low·권장사항은 아래 3회 규칙 적용 — "모든 피드백 소멸"을 종료 조건으로 삼지 않는다)
+5. **Critical/High가 0건이 될 때까지** 반복 — 단 **리뷰 사이클 상한 5회**: 초과 시 `record-error --type REVIEW_ROUND_CAP --level L2`로 기록하고 에스컬레이션 (무한 재리뷰 금지, "모든 피드백 소멸"을 종료 조건으로 삼지 않는다)
 
 **권장사항 처리:**
 
 - 권장사항도 즉시 구현 (사용자에게 묻지 않음)
 - 구현 후 재리뷰
-- **리뷰 사이클 최대 3회** - 3회 후에도 새 권장사항이 있으면 Low 우선순위로 기록만 하고 진행
+- **리뷰 사이클 최대 3회 (Medium/Low·권장사항 공통)** - 3회 후에도 새 권장사항·Medium/Low가 있으면 Low 우선순위로 기록만 하고 진행 (Critical/High만 위 5회 상한 내에서 계속 수정)
 
 ### Fresh Context Verification (문서/티켓 완료 전 필수)
 

@@ -175,6 +175,7 @@ finding 없으면 "NO_FINDINGS".
 3. **Severity 판정**:
    - 팀원간 severity 의견 불일치 → **높은 쪽 채택** (과소평가 방지)
    - live-tester가 발견한 런타임 버그 → 최소 HIGH
+   - 리드가 CRITICAL/HIGH를 MEDIUM/LOW로 **강등**할 때는 구체적 사유를 `roundResults.severityAdjustments`에 기록 필수 (사유 없으면 보고 severity 유지). 강등된 finding은 그 라운드의 수렴 판정에서 원 severity로 취급.
 4. **수정**:
    - Critical/High: 즉시 수정 (라운드 무관, 스킵 금지)
    - Medium: **라운드 1~2에서만** 즉시 수정. 라운드 3+에서는 수정하지 않고 `deferred`로 기록 (사유 필수)
@@ -190,7 +191,7 @@ finding 없으면 "NO_FINDINGS".
    ```
 
 progress 파일에 라운드 결과 기록. **각 confirmed finding은 `phases.phase_3.findingHistory` 배열에도
-개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"dismissed", ...}`) —
+개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"regressed"|"deferred"|"dismissed", ...}`) —
 `code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 Phase 완료를 차단한다
 (빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail).
 
@@ -243,8 +244,8 @@ sec-reviewer, quality-reviewer, live-tester 팀원에게 shutdown을 요청하�
 
 - **하드 조건: open CRITICAL/HIGH 0개** (`code-review-findings` 게이트와 동일 기준)
 - **MEDIUM/LOW는 완료를 차단하지 않는다** — open 항목은 `deferred`로 기록 (백로그)
-- **라운드 상한: 5.** 상한 도달 시 open CRITICAL/HIGH가 0이면 완료, 남아 있으면 `record-error`로 기록하고 에스컬레이션 경로를 따른다. 상한을 이유로 CRITICAL/HIGH를 deferred 처리하는 것은 금지.
-- **수렴 라운드 (확인 전용 라운드)**: 어떤 라운드의 confirmed 신규 finding이 MEDIUM/LOW뿐이면 — 수정하지 않고 전부 `deferred`로 기록. 소스 불변 → 이 라운드가 최종 라운드가 되고 sourceHash 정합이 자동 충족되어 즉시 완료.
+- **수정 라운드 상한: 5** — 상한은 **수정이 발생한 라운드**만 센다. 확인 전용 라운드(수정 0건: 수렴 라운드·귀속용 재기록 라운드)는 상한 비포함, 마지막 수정 라운드 뒤 귀속용 재기록 라운드 1회는 항상 허용. 수정 예산 소진 후에도 open/regressed CRITICAL/HIGH가 남으면 `record-error --type REVIEW_ROUND_CAP --level L2`로 기록 → `review-escalation-check` 트리거 발동 → 승격 리뷰 의무화. **승격(escalated) 리뷰 라운드는 상한 예외.** 상한을 이유로 C/H를 deferred/dismissed 처리 금지 — 게이트가 deferred/regressed C/H도 open으로 계수한다.
+- **수렴 라운드 (확인 전용 라운드) — 라운드 3+와 재기록 라운드에만 적용**: 해당 라운드의 confirmed 신규 finding이 MEDIUM/LOW뿐이고(severity 강등분은 원 severity로 판정) regressed CRITICAL/HIGH도 없으면 — 수정하지 않고 전부 `deferred`로 기록. 소스 불변 → sourceHash 정합 자동 충족 → 최종 리뷰 라운드. 라운드 1~2에서는 Step 3-5의 Medium 즉시 수정 규칙이 우선. "최종"은 추가 리뷰 라운드 불요의 의미일 뿐 — 품질 게이트·E2E 게이트·escalation pending 해소 등 나머지 완료 조건은 여전히 충족 필요.
 - 품질 게이트 통과
 - E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
   ```bash
@@ -254,7 +255,7 @@ sec-reviewer, quality-reviewer, live-tester 팀원에게 shutdown을 요청하�
 - **재기록 라운드 규칙**: 마지막 라운드 기록 이후 소스 변경(E2E 수정, 최종 라운드 수정 커밋 등)이
   발생했으면 전체 라운드 절차(지문 캡처 → 팀 리뷰 → 기록)를 1회 더 실행해야
   `code-review-findings`의 sourceHash 대조를 통과한다. 라운드 기록 후 게이트 전 커밋 금지.
-  재기록 라운드에도 수렴 라운드 규칙을 적용한다 (신규 finding이 MEDIUM/LOW뿐이면 수정 없이 deferred 기록 후 종료). 재기록 라운드도 라운드 상한 5에 포함.
+  재기록 라운드에도 수렴 라운드 규칙을 적용한다 (신규 finding이 MEDIUM/LOW뿐이면 수정 없이 deferred 기록 후 종료). 확인 전용(수정 0건) 재기록 라운드는 상한 비포함 — 수정이 발생한 라운드만 상한 5에 계수.
 
 ### Step 3-7: Phase 3 완료
 

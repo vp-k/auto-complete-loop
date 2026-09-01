@@ -101,6 +101,51 @@ seed_progress() {
   [[ "$output" == *"open CRITICAL/HIGH"* ]]
 }
 
+@test "gate: deferred CRITICAL counts as open — laundering via status blocked (v4.16.0)" {
+  fp=$(run_gate source-hash)
+  jq -n --arg h "$fp" '{
+    findingHistory: [{id:"SEC-CRITICAL-001",severity:"CRITICAL",status:"deferred"}],
+    roundResults: [{round:1, sourceHash:$h, findings:{bySeverity:{CRITICAL:1}}}]
+  }' > "$PF"
+  run run_gate code-review-findings --progress-file "$PF"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"open CRITICAL/HIGH"* ]]
+}
+
+@test "gate: regressed HIGH counts as open (v4.16.0)" {
+  fp=$(run_gate source-hash)
+  jq -n --arg h "$fp" '{
+    findingHistory: [{id:"ERR-HIGH-002",severity:"HIGH",status:"regressed"}],
+    roundResults: [{round:2, sourceHash:$h, findings:{bySeverity:{HIGH:1}}}]
+  }' > "$PF"
+  run run_gate code-review-findings --progress-file "$PF"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"open CRITICAL/HIGH"* ]]
+}
+
+@test "gate: deferred MEDIUM/LOW does not block (convergence-round backlog)" {
+  fp=$(run_gate source-hash)
+  jq -n --arg h "$fp" '{
+    findingHistory: [
+      {id:"PERF-MEDIUM-003",severity:"MEDIUM",status:"deferred"},
+      {id:"CODE-LOW-004",severity:"LOW",status:"deferred"}
+    ],
+    roundResults: [{round:3, sourceHash:$h, findings:{bySeverity:{MEDIUM:1,LOW:1}}}]
+  }' > "$PF"
+  run run_gate code-review-findings --progress-file "$PF"
+  [ "$status" -eq 0 ]
+}
+
+@test "gate: dismissed CRITICAL still passes (rationale-recorded dismissal unaffected)" {
+  fp=$(run_gate source-hash)
+  jq -n --arg h "$fp" '{
+    findingHistory: [{id:"SEC-CRITICAL-005",severity:"CRITICAL",status:"dismissed"}],
+    roundResults: [{round:1, sourceHash:$h, findings:{bySeverity:{}}}]
+  }' > "$PF"
+  run run_gate code-review-findings --progress-file "$PF"
+  [ "$status" -eq 0 ]
+}
+
 @test "gate: nested phases.phase_3 shape works with sourceHash" {
   fp=$(run_gate source-hash)
   jq -n --arg h "$fp" '{

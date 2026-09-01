@@ -119,14 +119,14 @@ finding 없으면 "NO_FINDINGS".
 ## Finding 검증 (Claude Code 수행)
 
 각 finding에 대해 Read 도구로 해당 파일의 해당 라인을 직접 읽고 판정:
-- **Confirmed**: 실제 문제. severity 조정 가능.
+- **Confirmed**: 실제 문제. severity 조정 가능 — 단 **CRITICAL/HIGH → MEDIUM/LOW 강등은 dismissal과 동급의 구체적 사유를 `roundResults.severityAdjustments`에 기록해야 한다** (사유 없으면 보고 severity 유지). 강등이 수렴 라운드 성립의 지렛대가 되지 않도록, **강등된 finding은 그 라운드의 수렴 판정에서 원 severity로 취급한다** (수렴은 다음 라운드부터 가능).
 - **Dismissed**: false positive, 의도된 설계 → 구체적 기각 사유를 roundResults.dismissedDetails에 기록 (필수)
 
 ## 라운드 간 Finding 매칭 (라운드 2+)
 
 - 동일 파일 + 라인 범위 겹침(±5줄) + 문제 유형 유사 → 같은 finding
 - 이전 `open` → 이번 미발견 → `fixed`
-- 이전 `fixed` → 이번 재발견 → `regressed`
+- 이전 `fixed` → 이번 재발견 → `regressed` — **regressed CRITICAL/HIGH는 open과 동일하게 완료를 차단한다** (게이트가 deferred/regressed C/H를 open으로 계수)
 - 이번 신규 → `new` (status: `open`)
 
 ## Severity별 수정 처리
@@ -146,7 +146,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .
 
 progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHistory 배열
 (full-auto: `phases.phase_3.findingHistory` / standalone review: 최상위 `findingHistory`)에도
-개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"dismissed", ...}`) —
+개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"regressed"|"deferred"|"dismissed", ...}`) —
 `code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 완료를 차단한다
 (빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail).
 **finding 0건 리뷰도 반드시 `roundResults`에 해당 라운드 1항목(critical/high/medium/low 모두 0)을 기록한다** —
@@ -221,8 +221,8 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
 
 - **하드 조건: open CRITICAL/HIGH 0개** (`code-review-findings` 게이트와 동일 기준). 특히 IMPL-MISSING-CRITICAL, IMPL-STUB-HIGH는 반드시 수정 필요.
 - **MEDIUM/LOW는 완료를 차단하지 않는다** — open 항목은 `deferred`로 기록 (백로그). "MEDIUM 0개까지 반복" 금지: 주관적 지적을 0으로 수렴시키는 목표는 종료점이 없다.
-- **라운드 상한: 5.** 상한 도달 시 open CRITICAL/HIGH가 0이면 완료, 남아 있으면 `record-error`로 기록하고 에스컬레이션 경로(review-escalation)를 따른다. **상한을 이유로 CRITICAL/HIGH를 deferred 처리하는 것은 금지.**
-- **수렴 라운드 (확인 전용 라운드)**: 어떤 라운드의 confirmed 신규 finding이 MEDIUM/LOW뿐이면 — 수정하지 않고 전부 `deferred`로 기록한다. 소스가 불변이므로 이 라운드가 최종 라운드가 되고 sourceHash 정합이 자동 충족되어 **즉시 완료**한다. (수정 → 소스 변경 → 재기록 라운드 → 새 MEDIUM 발견의 무한 연쇄를 끊는 규칙)
+- **수정 라운드 상한: 5** — 상한은 **수정이 발생한 라운드**만 센다. 확인 전용 라운드(수정 0건: 수렴 라운드·귀속용 재기록 라운드)는 상한에 포함하지 않으며, 마지막 수정 라운드 뒤 귀속용 재기록 라운드 1회는 항상 허용된다 (sourceHash 정합에 필수인 라운드를 상한이 막는 데드락 방지). 수정 예산 소진 후에도 open/regressed CRITICAL/HIGH가 남으면 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <리뷰 대상 파일> --type REVIEW_ROUND_CAP --msg "리뷰 수정 라운드 상한 도달, open C/H 잔존" --level L2`로 기록한다 — L2 기록이 `review-escalation-check` 트리거를 발동시켜 승격 리뷰(dual 2차/roundtable)가 의무화된다. **승격(escalated) 리뷰 라운드는 상한 예외.** 상한을 이유로 CRITICAL/HIGH를 deferred/dismissed 처리하는 것은 금지 — 게이트가 deferred/regressed C/H도 open으로 계수하므로 세탁해도 통과하지 못한다.
+- **수렴 라운드 (확인 전용 라운드) — 라운드 3+와 재기록 라운드에만 적용**: 해당 라운드의 confirmed 신규 finding이 MEDIUM/LOW뿐이고(severity 강등분은 원 severity로 판정) regressed CRITICAL/HIGH도 없으면 — 수정하지 않고 전부 `deferred`로 기록한다. 소스가 불변이므로 sourceHash 정합이 자동 충족되어 이 라운드가 **최종 리뷰 라운드**가 된다 (수정 → 소스 변경 → 재기록 라운드 → 새 MEDIUM 발견의 무한 연쇄를 끊는 규칙). **라운드 1~2에서는 "Severity별 수정 처리"의 Medium 즉시 수정 규칙이 우선한다** (최소 2라운드의 실질 수정 없이 무수정 완주 금지). "최종"의 의미는 추가 리뷰 라운드가 불요하다는 것뿐 — 품질 게이트·E2E 게이트·review-escalation pending 해소 등 나머지 완료 조건은 여전히 충족해야 하며, Phase 3 완료 절차의 quality-gate 실행도 생략하지 않는다.
 - 품질 게이트 통과
 - E2E 게이트 통과 (`phases.phase_2.e2e.applicable == true`인 경우에만, 최종 라운드에서 실행):
   ```bash
@@ -235,8 +235,9 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
   전체 라운드 절차(지문 캡처 → 리뷰어 호출 → 검증 → 기록)를 1회 더 실행해 새 지문으로
   귀속해야 `code-review-findings`를 통과한다. 리뷰어 호출 없이 라운드 항목만 append하는 것은 금지.
   **재기록 라운드에는 수렴 라운드 규칙을 적용한다**: 신규 finding이 MEDIUM/LOW뿐이면 수정 없이
-  `deferred` 기록 후 종료 (CRITICAL/HIGH가 나온 경우에만 수정 → 다음 재기록 라운드).
-  재기록 라운드도 라운드 상한 5에 포함된다.
+  `deferred` 기록 후 종료. CRITICAL/HIGH가 나온 경우에만 수정 → 다음 재기록 라운드 (이 수정
+  라운드는 상한에 계수되며, 수정 예산 소진 시 위 record-error L2 → 승격 리뷰 경로를 따른다).
+  확인 전용(수정 0건) 재기록 라운드는 상한에 포함되지 않는다.
 - **라운드 기록 후 게이트 실행 전 커밋 금지**: 라운드 기록 → `code-review-findings` 사이에
   `git commit`을 만들지 않는다 (progress/verification 기록 파일은 `.claude*`라 지문에 영향
   없지만, **커밋은 HEAD를 움직여 지문을 바꾼다** — 소스 커밋이 필요하면 재기록 라운드로).

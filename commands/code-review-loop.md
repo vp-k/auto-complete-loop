@@ -96,7 +96,7 @@ findingHistory 각 항목 스키마:
 - `severity`: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
 - `category`: "SEC" | "ERR" | "DATA" | "PERF" | "CODE"
 - `discoveredInRound`: 최초 발견 라운드
-- `status`: "open" | "fixed" | "regressed" | "deferred"
+- `status`: "open" | "fixed" | "regressed" | "deferred" | "dismissed"
 - `fixedInRound`: 수정된 라운드 (null이면 미수정)
 
 ### 추가 완료 조건
@@ -289,7 +289,7 @@ confirmed **CRITICAL** 및 **HIGH** finding을 **Edit 도구**로 자동 수정:
 
 **동작:**
 - **A (Fix)**: 기존 자동 수정과 동일하게 즉시 수정
-- **B (Acknowledge)**: finding status를 `deferred`로 설정, 사유 기록
+- **B (Acknowledge)**: MEDIUM/LOW는 status를 `deferred`로 설정, 사유 기록. **CRITICAL/HIGH는 status를 `dismissed`로 설정하고 사유에 "user acknowledged: <사용자 사유>"를 기록** — 게이트(`code-review-findings`)가 deferred C/H를 open으로 계수하므로, 사용자가 명시 보류한 C/H는 dismissed 경로로만 완주 가능
 - **C (False positive)**: `.claude-review-suppressions.json`에 해당 패턴 등록 (파일 + 카테고리 + 키워드). 30일 후 자동 만료.
 
 **적용 범위**: standalone `/code-review-loop --interactive`에만 적용. `/full-auto` Phase 3의 코드 리뷰는 기존 자동 모드를 유지합니다.

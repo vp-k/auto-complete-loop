@@ -87,3 +87,29 @@ run_guard() {
 @test "no-verify: 일반 commit 통과" {
   [ "$(run_guard 'git commit -m "normal message"')" = "PASS" ]
 }
+
+# ─── 검사 5: acceptance unlock 토큰 보호 (승인 위조 방지) ───
+
+@test "unlock-token: echo 리다이렉트로 토큰 생성 차단" {
+  [ "$(run_guard 'echo "{\"reason\":\"x\"}" > .claude/acceptance-unlock.json')" = "BLOCK" ]
+}
+
+@test "unlock-token: jq -n 리다이렉트로 토큰 생성 차단" {
+  [ "$(run_guard "jq -n '{reason:\"x\"}' > .claude/acceptance-unlock.json")" = "BLOCK" ]
+}
+
+@test "unlock-token: rm 으로 토큰 삭제 차단 (소비는 acceptance-freeze 만)" {
+  [ "$(run_guard 'rm -f .claude/acceptance-unlock.json')" = "BLOCK" ]
+}
+
+@test "unlock-token: cat 읽기는 통과" {
+  [ "$(run_guard 'cat .claude/acceptance-unlock.json')" = "PASS" ]
+}
+
+@test "unlock-token: jq 조회는 통과" {
+  [ "$(run_guard "jq -r .reason .claude/acceptance-unlock.json")" = "PASS" ]
+}
+
+@test "unlock-token: shared-gate.sh acceptance-unlock 호출은 통과 (파일명 미지명)" {
+  [ "$(run_guard 'bash scripts/shared-gate.sh acceptance-unlock --approved-by-user --reason "AC-B-001 오탈자"')" = "PASS" ]
+}

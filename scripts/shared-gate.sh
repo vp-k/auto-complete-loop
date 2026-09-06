@@ -42,7 +42,9 @@
 #   integration-smoke                                  - 프론트↔백 연동 검증: API URL, CORS, 서버 기동 (HARD_FAIL)
 #   runtime-gate [port] [--strict]                      - 서버 1회 기동으로 엔드포인트/연동/기능플로우 통합 실행
 #   live-testing-gate                                   - progress의 open LIVE-CRITICAL/HIGH 계수 (HARD_FAIL, 기록 없으면 skip)
-#   acceptance-freeze [--approved-by-user]              - tests/acceptance/ 해시 동결 (구현 시작 후 재동결은 사용자 승인 필수)
+#   acceptance-unlock --approved-by-user --reason "<사유>" - 승인 하 동결 해제 토큰 발급 (SPEC/인수 테스트 편집 허용)
+#   acceptance-freeze [--approved-by-user] [--reason <r>] [--approved-by <who>]
+#                                                       - tests/acceptance/ 해시 동결 (구현 시작 후 재동결은 사용자 승인 필수, unlock 토큰 소비)
 #   acceptance-gate                                     - 동결 무결성 검증 + run.sh 실행 (HARD_FAIL, 디렉토리 없으면 skip)
 #   layer-coverage                                      - projectScope 대비 레이어 아티팩트 검증 (HARD_FAIL, scope 없으면 skip)
 #   code-review-findings                                - progress의 open CRITICAL/HIGH 리뷰 finding 계수 (HARD_FAIL)
@@ -121,6 +123,7 @@ main() {
     integration-smoke)  cmd_integration_smoke "$@" ;;
     runtime-gate)      cmd_runtime_gate "$@" ;;
     live-testing-gate) cmd_live_testing_gate "$@" ;;
+    acceptance-unlock) cmd_acceptance_unlock "$@" ;;
     acceptance-freeze) cmd_acceptance_freeze "$@" ;;
     acceptance-gate)   cmd_acceptance_gate "$@" ;;
     layer-coverage)    cmd_layer_coverage "$@" ;;
@@ -205,10 +208,21 @@ main() {
       echo "  runtime-gate [port] [--timeout S] [--strict] - Start server ONCE, run endpoint smoke + FE-BE integration + functional flows, stop once"
       echo "                                               Records smokeCheck/integrationSmoke/functionalFlow in .claude-verification.json"
       echo "  live-testing-gate                            - Count open LIVE-CRITICAL/HIGH findings in progress (HARD_FAIL; skip if no live records)"
-      echo "  acceptance-freeze [--approved-by-user]       - Freeze tests/acceptance/ into .manifest.json (sha256)"
+      echo "  acceptance-unlock --approved-by-user --reason '<why>'"
+      echo "                                             - Issue an approval token that temporarily unblocks edits to"
+      echo "                                               SPEC.md and tests/acceptance/** (protect-files-guard honours it)."
+      echo "                                               Refuses without --approved-by-user (AskUserQuestion first)."
+      echo "                                               The token MUST be closed by a re-freeze — while it exists"
+      echo "                                               acceptance-gate FAILs and stop-hook blocks completion."
+      echo "  acceptance-freeze [--approved-by-user] [--reason '<why>'] [--approved-by '<who>']"
+      echo "                                             - Freeze tests/acceptance/ into .manifest.json (sha256)"
       echo "                                               Re-freeze after implementation started requires --approved-by-user"
+      echo "                                               Consumes an outstanding acceptance-unlock token; records reason/approvedBy"
+      echo "                                               in manifest.refreezeHistory"
       echo "  acceptance-gate                              - Verify freeze integrity + run tests/acceptance/run.sh (HARD_FAIL)"
       echo "                                               Runner contract: exit 0 + 'ACCEPTANCE_RESULT: total=N passed=N failed=N'"
+      echo "                                               Retries the runner once on failure; a 2nd-run green records flaky=true+firstRun"
+      echo "                                               Files ADDED after freeze are a WARN (addedFiles); modified/deleted stay FAIL"
       echo "  layer-coverage                               - Verify projectScope layers exist on filesystem (HARD_FAIL; skip if no projectScope)"
       echo "                                               Sole writer of qualityDimensions.layerCoverage (checked by stop-hook)"
       echo "  code-review-findings                         - Count open CRITICAL/HIGH review findings in progress (HARD_FAIL)"

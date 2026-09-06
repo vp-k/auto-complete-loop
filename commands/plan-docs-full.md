@@ -28,9 +28,12 @@ argument-hint: <요구사항 (자연어)>
 |----------|-------------|------|-------|--------|
 | PROMISE_TAG | `PLAN_DOCS_FULL_COMPLETE` | `PLAN_DOCS_FULL_COMPLETE` | `PLAN_DOCS_FULL_TEAMS_COMPLETE` | `PLAN_DOCS_FULL_DUAL_COMPLETE` |
 | PROGRESS_FILE | `.claude-plan-docs-full-progress.json` | `.claude-plan-docs-full-progress.json` | `.claude-plan-docs-full-teams-progress.json` | `.claude-plan-docs-full-dual-progress.json` |
-| PHASE_1_SKILL | `skills/doc-planning/SKILL.md` | `skills/doc-planning-solo/SKILL.md` | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` |
+| PHASE_1_SKILL | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` |
+| REVIEW_MODE | `codex` | `solo` | `teams` | `dual` |
 
 `--mode` 미지정 시 codex 모드를 사용합니다.
+
+PHASE_1_SKILL은 모든 모드가 **동일한 통합 스킬**이며, 모드 차이는 그 스킬 안의 `{REVIEW_MODE}` 분기 두 곳(Step 1-2 검토자, Step 1-6 아키텍처 리뷰)으로만 나타납니다 — Step 1-9의 게이트 5종(provenance-gate, clarification-gate, doc-consistency, acceptance-freeze, 표준 문서 존재 검증)은 모드와 무관하게 동일합니다.
 
 ## 인수
 
@@ -254,7 +257,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze \
   --progress-file {PROGRESS_FILE}
 # tests/acceptance/ 전체(run.sh 필수) + SPEC 파일 해시를 동결 → tests/acceptance/.manifest.json 생성
 # (v4.8.0: 구현 Phase에서 SPEC이 수정되면 acceptance-gate가 해시 불일치로 완주 차단 —
-#  스펙 변경은 사용자 승인 → --approved-by-user 재동결로만)
+#  스펙 변경은 사용자 승인 → acceptance-unlock --approved-by-user → 수정 → --approved-by-user 재동결로만)
 # 인수 테스트 생성 자체는 Phase 1 스킬 Step 1-7.5가 수행 — 이 게이트는 동결 실행/확인만 담당
 # 실패(run.sh 없음 등) → Phase 1 재진입, Step 1-7.5에서 tests/acceptance/ 생성 후 재실행
 # 주의: 이 시점 인수 테스트는 red가 정상 (앱 미구현 — TDD red→green). 동결은 실행 결과와 무관.
@@ -301,6 +304,6 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file {PROGRE
 - `pm-planning` / `doc-planning` 스킬 내부 로직을 이 파일에 복사하지 않는다 (단일 소스 원칙)
 - 7종 게이트 중 하나라도 실패한 채로 promise를 발행하지 않는다
 - provenance blocker를 assumption으로 바꿔치기해 게이트를 우회하지 않는다 (unsafe 도메인은 user-fact/blocker만)
-- 동결 이후 tests/acceptance/**를 수정하지 않는다 (protect-files-guard 훅 차단. 스펙 변경 시에만 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user` 재동결)
+- 동결 이후 tests/acceptance/**를 수정하지 않는다 (protect-files-guard 훅 차단. 스펙 변경 시에만 사용자 승인 → `acceptance-unlock --approved-by-user --reason "<사유>"` → 수정 → `acceptance-freeze --approved-by-user` 재동결로 토큰을 닫는다)
 - `definition-conflict`의 매치된 라인 각각이 `nonGoalsAudit`에 기록되지 않은 채로 진행하지 않는다 (임의 판단 회피)
 - progress 파일의 DoD는 게이트 PASS evidence와 함께만 `checked: true`로 갱신한다

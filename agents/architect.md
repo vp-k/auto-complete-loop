@@ -1,7 +1,7 @@
 ---
 name: architect
 description: |
-  Use this agent during Phase 1 for architecture review. Validates tech stack fitness, dependency analysis, API design consistency, data model integrity, and non-functional requirement coverage. Produces Architecture Review Report with ARCHITECTURE_SCORE.
+  Use this agent during Phase 1 Step 1-6 for architecture review in solo review mode (codex/dual/teams modes use the roundtable agent instead), and only when projectSize is Medium or Large. Validates tech stack fitness, dependency analysis, API design consistency, data model integrity, and non-functional requirement coverage. Produces Architecture Review Report with ARCHITECTURE_SCORE.
 model: opus
 ---
 

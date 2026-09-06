@@ -447,14 +447,23 @@ cmd_spec_completeness() {
     fi
   fi
 
-  # test-plan.md 존재
-  local has_test_plan=false
-  for tp in "docs/test-plan.md" "test-plan.md"; do
-    [[ -f "$tp" ]] && { has_test_plan=true; break; }
-  done
-  if [[ "$has_test_plan" == "false" ]]; then
-    major=$((major + 1))
-    issues="${issues}MAJOR: test-plan.md not found (Test Strategist output required)\n"
+  # test-plan.md 존재 — projectSize=Small은 규모 비례로 면제
+  # (Small은 Step 1-8 Test Strategist 자체를 호출하지 않는다. 무엇을 테스트할지의 계약은
+  #  동결된 인수 테스트(tests/acceptance/)와 smoke 스크립트가 지며, 둘 다 Small에서도 필수로 남는다.
+  #  단일 출처: rules/project-size-rules.md)
+  local project_size
+  project_size=$(jq -r '.phases.phase_0.outputs.projectSize // "unknown"' "$PROGRESS_FILE" 2>/dev/null || echo "unknown")
+  if [[ "$project_size" == "Small" ]]; then
+    echo "[spec-completeness] SKIP: test-plan.md 검사 생략 (projectSize=Small — 동결 인수 테스트 + smoke 스크립트로 대체)"
+  else
+    local has_test_plan=false
+    for tp in "docs/test-plan.md" "test-plan.md"; do
+      [[ -f "$tp" ]] && { has_test_plan=true; break; }
+    done
+    if [[ "$has_test_plan" == "false" ]]; then
+      major=$((major + 1))
+      issues="${issues}MAJOR: test-plan.md not found (Test Strategist output required)\n"
+    fi
   fi
 
   # TBD/모호 표현 검사 — 별도 서브커맨드 없이 여기서 직접 인라인 스캔 (코드 블록 제외)

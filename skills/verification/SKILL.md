@@ -187,17 +187,16 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh find-debug-code
 - console.log, print, debugger, breakpoint 등 제거
 - 테스트 파일의 의도적 로깅은 유지
 
-**4-3b: AI 슬롭 정리 (Code Simplifier Agent)**
+**4-3b: AI 슬롭 정리**
 
-Agent tool로 `code-simplifier` 에이전트를 호출하여 AI 생성 코드 안티패턴을 탐지:
+변경된 소스를 직접 읽고 AI 생성 코드 안티패턴을 찾아 제거한다 (별도 에이전트 호출 없음 — 이 패스는 Claude가 직접 수행):
 - 불필요한 추상화 레이어 (단일 사용 래퍼, 단일 구현 팩토리 등)
 - 과잉 에러 핸들링 (도달 불가능한 에러 경로, 재throw만 하는 catch)
 - 코드를 반복하는 주석 (// increment counter 위의 counter++)
 - 과잉 일반화 타입 (1회 사용 제네릭, 1-필드 인터페이스)
 - 조기 설정화 (변하지 않는 값의 환경변수화)
 
-에이전트 프롬프트에 프로젝트의 src/ 또는 주요 소스 디렉토리 경로를 포함.
-결과의 HIGH 항목은 즉시 수정, MEDIUM은 판단 후 수정.
+동작을 바꾸는 정리는 하지 않는다 (리팩터링이지 기능 변경이 아니다). 판단이 갈리면 그대로 둔다.
 
 **4-3c: 코드 위생 정리**
 - 주석 처리된 코드 블록 제거 (TODO 주석은 유지)
@@ -350,6 +349,17 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh service-test-check --progress-
 
 각 게이트가 FAIL이면 해당 문제를 수정 후 재실행. 모두 PASS해야 Step 4-7 진행.
 
+### Step 4-6.6: 명확화 게이트 재실행 (하드 게이트 — 필수 실행)
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate
+```
+
+**배경**: clarification-gate는 Phase 1→2 전이(Step 1-9)에서 한 번 실행되고 그 결과가 verification.json에 남는다. 구현 Phase는 스펙 공백을 `docs/CLARIFICATIONS.md`에 `[NEEDS-CLARIFICATION]` 태그로 **append**하도록 되어 있으므로(implementation SKILL Step 2-1.9 (b)), Phase 2에서 생긴 태그는 Phase 1의 pass 기록 뒤에 존재한다. 재실행하지 않으면 stop-hook은 옛 pass만 보고 미해결 질문을 안은 채 완주를 허용한다. 이 스텝이 그 공백을 닫는다 — 게이트가 결과를 **재기록**하므로 태그가 남아 있으면 fail이 되고 stop-hook이 fail-closed로 차단한다.
+
+- **FAIL 시**: 잔존 태그마다 (1) 사용자에게 AskUserQuestion으로 결정을 받고 → (2) 스펙 반영이 필요하면 unlock 절차(Step 4-6.7 (a)와 동일: `acceptance-unlock --approved-by-user` → SPEC 수정 → `acceptance-freeze --approved-by-user`) → (3) 구현 반영 → (4) `docs/CLARIFICATIONS.md`의 태그를 결정 내용으로 교체 → 재실행. 구현 변경이 있었으면 Step 4-6.8 순서 불변식에 따라 커밋 → 델타 리뷰 → 게이트 재실행을 밟는다.
+- 태그를 지우기만 하고 결정을 반영하지 않는 것은 세탁이다 — 태그 교체는 결정 내용을 같은 항목에 남기는 방식으로만 한다.
+
 ### Step 4-6.7: 인수 테스트 게이트 (하드 게이트 — 필수 실행)
 
 Phase 1에서 동결된 인수 테스트의 무결성 검사 + 실행을 수행합니다:
@@ -362,9 +372,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-gate --progress-fil
 > 넘길 수 있다 — 호출 시 timeout을 상향(최대 10분)하여 실행할 것. 타임아웃으로 끊기면
 > 결과가 기록되지 않아 재실행이 필요하다.
 
-- 무결성(변조/추가/삭제 감지) + `bash tests/acceptance/run.sh` 실행. 결과는 verification.json의 `acceptanceTests`(`{result, total, passed, failed, tamperedFiles?}`)에 기록됨.
+- 무결성(변조·삭제 = FAIL, 동결 외 파일 추가 = WARN) + `bash tests/acceptance/run.sh` 실행(실패 시 1회 자동 재시도). 결과는 verification.json의 `acceptanceTests`(`{result, total, passed, failed, tamperedFiles?, addedFiles?, flaky?, firstRun?}`)에 기록됨.
+- **soft_fail(flaky)**: 1회차 red·2회차 green이면 `soft_fail`(`flaky:true`, `firstRun`)로 기록되고 stop-hook이 차단한다(pass만 허용). 재시도는 진단용이지 green을 만드는 장치가 아니다 — 시간·순서·포트 의존을 제거한 뒤 재실행해 **1회차 green**을 받아야 pass가 된다. 두 번 연속 soft_fail이면 그 테스트는 비결정적 설계이므로 원인을 구현 측(기동 대기·상태 초기화)에서 찾고, 테스트 자체의 결함이면 unlock 절차로 고친다.
 - **FAIL 시**:
-  - **(a) tamper** (`tamperedFiles` 존재): 동결 이후 변조/추가/삭제된 파일 → `git restore` 등으로 동결 시점 상태로 **원복**하거나, 정당한 스펙 변경이었다면 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user` 재동결 후 재실행.
+  - **(a) tamper** (`tamperedFiles` 존재): 동결 이후 변조/삭제된 파일 → `git restore` 등으로 동결 시점 상태로 **원복**하거나, 정당한 스펙 변경이었다면 사용자 승인 → `acceptance-unlock --approved-by-user --reason "<사유>"` → 수정 → `acceptance-freeze --approved-by-user`(토큰 소비) 후 재실행. (`addedFiles`만 있는 경우는 FAIL이 아니라 WARN이다.)
   - **(b) red** (테스트 실패): **구현을 수정**한다 (에러 에스컬레이션 L0-L5 적용). **테스트 수정 금지** — implementation SKILL Step 2-1.10 참조.
 - `dod.acceptance_pass`는 이 게이트가 pass 시 **자동 기록**한다 — 모델이 직접 세팅하지 않는다.
 - stop-hook이 full-auto 계열 완주 조건으로 `acceptanceTests=pass`를 **fail-closed**로 요구한다 (기록 없음 = 미실행 = 완주 불가).
@@ -459,7 +470,23 @@ git status --porcelain | grep -vE '\.claude[-/]'
 
 DoD 전체 checked 확인 후, Phase 전이는 오케스트레이터가 수행.
 
-### Step 4-7.5: Fresh-Context 교차 검증 (verification-auditor)
+### Step 4-7.5: Fresh-Context 교차 검증 (verification-auditor — Large 전용)
+
+**규모 게이팅 (선행 판정)**: progress의 `.phases.phase_0.outputs.projectSize`를 조회한다.
+- `Large`가 **아니면**(Small / Medium / 미설정) **이 스텝을 스킵**하고 증거를 기록한 뒤 Step 4-8로 진행:
+  ```bash
+  jq_inplace {PROGRESS_FILE} --arg v "SKIPPED_<SIZE>" '
+    .phases.phase_4.outputs.verificationAudit = {"verdict": $v, "reason": "fresh-context audit is Large-only; no gate consumes this result and script-recorded fail-closed keys are already write-guarded"}
+  '
+  ```
+  (`<SIZE>`는 실제 값으로 치환 — `SKIPPED_Small` / `SKIPPED_Medium`, projectSize 미설정이면 `SKIPPED_Unknown`)
+- `Large`이면 아래 감사를 수행하고, 결과를 같은 키에 `{"verdict": "<Release Ready 판정>", ...}`로 기록한다.
+
+**이 스텝의 결과를 읽는 게이트는 없다 — 관측·보고 전용이다.** stop-hook도 shared-gate.sh도
+`verificationAudit`을 차단 조건으로 사용하지 않는다. 따라서 여기서 나온 불일치는 아래 "감사 보고서 처리"에
+따라 모델이 스스로 해소해야 하며, 스킵해도 완주 조건(verification.json의 fail-closed 필수 키)에는 영향이 없다.
+Small/Medium을 스킵하는 근거도 이것이다 — 쓰기 가드로 이미 조작이 차단된 키를 다시 읽는 비용이
+규모에 비해 크다.
 
 구현 세션의 자기검증 편향을 제거하기 위해, Agent tool로 `verification-auditor` 에이전트를 호출하여 **fresh context에서 독립 감사**를 수행합니다. 이 에이전트는 코드를 수정하지 않으며 감사·보고만 합니다 (evidence 기반 — 주장을 신뢰하지 않고 직접 재확인).
 
@@ -467,7 +494,8 @@ DoD 전체 checked 확인 후, Phase 전이는 오케스트레이터가 수행.
 - (a) `record-dimension`으로 기록된 소프트 차원의 evidence vs 실제 상태
 - (b) DoD 항목별 evidence 텍스트 vs 실제 상태
 - (c) SPEC 대비 기능 실재 spot-check (US 2~3개 샘플 — 라우트/컴포넌트/테스트 실존 확인)
-- (d) Test Plan 계약 spot-check (`docs/test-plan.md` 존재 시 — P0 케이스 전수 테스트 실존, P1 2~3개 샘플)
+- (d) Test Plan 계약 spot-check (`docs/test-plan.md` 존재 시 — P0 케이스 전수 테스트 실존, P1 2~3개 샘플).
+  파일이 없을 때는 progress의 `phases.phase_1.outputs.testPlan.verdict`를 확인한다 — `"SKIPPED_SMALL"`이면 규모 비례 면제이므로 통과(동결 인수 테스트 green이 계약을 대신한다), 그 기록 없이 파일만 없으면 Test Plan 무단 누락으로 보고한다
 
 에이전트 프롬프트에 다음 경로를 반드시 포함:
 - progress 파일 경로: `{PROGRESS_FILE}` (실제 값으로 치환)

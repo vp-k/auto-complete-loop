@@ -66,14 +66,15 @@ teardown() { teardown_temp_dir; }
   [ "$result" = "6" ]
 }
 
-@test "migrate v7: adds conditionalGoItems" {
+@test "migrate v7: bumps version and drops legacy conditionalGoItems" {
   run_gate init --template full-auto "test" "req"
-  jq_inplace .claude-full-auto-progress.json '.schemaVersion = 6 | del(.conditionalGoItems)'
+  jq_inplace .claude-full-auto-progress.json '.schemaVersion = 6 | .conditionalGoItems = [{"item":"legacy"}]'
   migrate_schema_v7 .claude-full-auto-progress.json
   result=$(jq '.schemaVersion' .claude-full-auto-progress.json)
   [ "$result" = "7" ]
-  result=$(jq '.conditionalGoItems | type' .claude-full-auto-progress.json)
-  [ "$result" = "\"array\"" ]
+  # Director 제거(v4.18.0) — 마이그레이션이 폐기 키를 새로 주입하지 않고 잔존분은 제거
+  result=$(jq 'has("conditionalGoItems")' .claude-full-auto-progress.json)
+  [ "$result" = "false" ]
 }
 
 @test "migrate: full chain v1→v7 produces valid schema" {
@@ -93,9 +94,9 @@ teardown() { teardown_temp_dir; }
   [ "$result" = "7" ]
   # Validate JSON integrity
   jq empty .claude-full-auto-progress.json
-  # conditionalGoItems should exist
+  # conditionalGoItems must NOT be injected (Director removed in v4.18.0)
   result=$(jq 'has("conditionalGoItems")' .claude-full-auto-progress.json)
-  [ "$result" = "true" ]
+  [ "$result" = "false" ]
 }
 
 @test "migrate: skips non-full-auto files" {

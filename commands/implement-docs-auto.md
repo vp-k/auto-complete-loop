@@ -59,9 +59,9 @@ argument-hint: <definition(overview.md)> <doclist(README.md)>
 
 ### DoD 로드
 
-프로젝트 루트에서 `DONE.md` 확인:
-- 파일 있음: 해당 DoD를 완료 기준으로 사용
-- 파일 없음: 내장 완료 기준 사용 (빌드/테스트/린트/리뷰 통과)
+DoD의 단일 출처는 progress 파일의 `dod` 체크리스트다 (별도 `DONE.md`는 사용하지 않음 — 어떤 게이트도 읽지 않는다).
+현재 항목은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file .claude-progress.json`으로 확인하고,
+프로젝트 고유 기준이 필요하면 `add-dod-key <key> "<설명>"`으로 추가한다.
 
 DoD를 `.claude-progress.json`의 `dod` 필드에 기록 (`shared-gate.sh init --template implement`가 생성하는 기본 키와 동일):
 ```json

@@ -69,7 +69,6 @@ cmd_init() {
   "status": "in_progress",
   "currentPhase": "phase_0",
   "gateHistory": [],
-  "conditionalGoItems": [],
   "steps": [
     {"name": "phase_0", "label": "PM Planning", "status": "in_progress"},
     {"name": "phase_1", "label": "Planning", "status": "pending"},

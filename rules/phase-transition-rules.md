@@ -5,51 +5,19 @@
 
 파라미터 `{PROMISE_TAG}`, `{PROGRESS_FILE}`, `{PHASE_3_SKILL}`은 오케스트레이터에서 정의합니다.
 
-## Director Agent 공통 규칙
+## Phase 전이 공통 규칙
 
-Phase 전이에서 Director Agent를 호출합니다. 다음 공통 규칙을 따릅니다:
+Phase 전이는 **결정론 게이트만으로** 판정한다. 각 전이의 가드/게이트(Pre-mortem 가드, 스코프 완전성,
+검증 스크립트, 인수 테스트 동결, 기획 게이트 3종, E2E 가드, code-review-findings 등)가 전부 통과하면
+`update-phase`로 바로 다음 Phase로 진행한다 — 별도의 판정 에이전트를 두지 않는다.
 
-### 규모 비례 호출 (Small은 저위험 전이 스킵)
+이유: 판정 에이전트의 GO/NO-GO 결과를 차단에 사용하는 스크립트·훅이 없어 전이를 실제로 막지 못했고,
+실질 차단은 전부 결정론 게이트(그리고 stop-hook의 fail-closed 필수 키)가 수행한다. 판정만 하고 아무것도
+막지 못하는 호출은 지연 비용만 남기므로 제거했다.
 
-progress의 `.phases.phase_0.outputs.projectSize`가 `Small`이면 **Phase 0→1, Phase 2→3 전이에서는 Director 호출을 생략**한다 — 이 두 전이는 결정론 게이트(기획 게이트 3종·E2E 가드 등)와 다음 Phase의 자체 검증이 이미 커버하며, Small 규모에서 Director의 추가 판정 가치가 호출 비용에 못 미친다. 생략 시 증거를 다른 산출물과 동일하게 **outputs 하위**에 기록한다 (전이의 출발 phase 키에 — 0→1은 phase_0, 2→3은 phase_2):
-```bash
-jq '.phases.phase_0.outputs.directorSkipped = "Small"' ...
-```
-**Phase 1→2(기획→구현)와 Phase 3→4(리뷰→검증)는 규모와 무관하게 항상 호출**한다 — 잘못 넘어가면 되돌리기 가장 비싼 두 전이다. Medium/Large는 모든 전이에서 호출.
-
-### NO-GO Escape Hatch (무한 루프 방지)
-- Director NO-GO 횟수를 progress 파일의 `phases.{phase}.directorNoGoCount`에 기록
-- **3회 연속 NO-GO** 시 사용자에게 선택지를 제시 (AskUserQuestion):
-  1. **강제 진행**: Director 판정을 무시하고 다음 Phase로 진행 (위험 감수)
-  2. **수동 해결**: 사용자가 직접 블로커를 해결한 후 재시도
-  3. **중단**: 워크플로우를 중단하고 현재 상태 저장
-- 사용자가 강제 진행을 선택하면 progress에 `"directorOverride": true` 기록
-- **오버라이드는 최종 락을 우회하지 않는다**: `directorOverride`가 기록돼도 stop-hook의 하드 게이트(open CRITICAL/HIGH = 0, 기획 게이트 pass, verification.json의 fail-closed 필수 키 등)는 그대로 적용된다. 오버라이드는 "다음 Phase로 이동"만 허용할 뿐, "미해결 상태로 완주"를 허용하지 않는다 — 미해결 항목은 이후 iteration에서 반드시 해소해야 promise 출력이 가능하다.
-- GO 또는 CONDITIONAL GO 시 `directorNoGoCount`를 0으로 리셋
-
-### CONDITIONAL GO 추적
-
-Director Agent가 CONDITIONAL GO를 반환하면, 조건을 progress 파일에 기록하여 다음 Phase에서 자동 검증합니다:
-
-1. **기록**: CONDITIONAL GO 시 조건을 `conditionalGoItems` 배열에 추가:
-   ```json
-   {
-     "condition": "API 인증 미들웨어 구현 필요",
-     "fromPhase": "phase_1",
-     "targetPhase": "phase_2",
-     "resolvedAt": null,
-     "evidence": null
-   }
-   ```
-2. **검증**: 다음 Phase 완료 시 Director Agent가 미해결 `conditionalGoItems` 검토:
-   - 해결됨 → `resolvedAt` 타임스탬프 + `evidence` 기록
-   - 미해결 → Director NO-GO 사유에 포함
-3. **스크립트**: 조건 추가는 jq로 수행:
-   ```bash
-   jq_inplace {PROGRESS_FILE} --arg cond "조건 내용" --arg from "phase_N" --arg target "phase_M" '
-     .conditionalGoItems += [{"condition":$cond,"fromPhase":$from,"targetPhase":$target,"resolvedAt":null,"evidence":null}]
-   '
-   ```
+**게이트가 FAIL이면 전이하지 않는다** — 출발 Phase를 `completed`로 마킹하지 않고, 블로커를 해결한 뒤
+게이트를 재실행해 PASS를 확인하고 진행한다. 게이트 결과는 verification.json에 기록되며,
+모델이 이 키들을 직접 기록하는 것은 금지된다 (게이트 실행 결과로만 세팅).
 
 ## --start-phase 스킵 처리
 
@@ -77,14 +45,7 @@ Progress 초기화 (Phase 0 진입 전 — $ARGUMENTS에서 프로젝트명과 �
 Phase 0 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/pm-planning/SKILL.md
 Phase 0 스킬의 Step 0-0 ~ 0-10 수행 (Step 0-11은 outputs 기록만, init 없음)
 Phase 0 완료 시:
-  *** Director Agent 전이 게이트 (Phase 0 → 1) ***
-  (projectSize=Small이면 스킵 — "규모 비례 호출" 참조, directorSkipped 기록 후 update-phase로 진행)
-  Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
-  - overview.md + progress 파일 경로를 입력으로 제공
-  - 전이 유형: "Phase 0 → Phase 1 (Planning → Documentation)"
-  - NO-GO → Phase 0 블로커 해결 후 재시도
-  - CONDITIONAL GO → 조건 기록 후 진행
-  - GO → 진행
+  (Phase 0 산출물 — overview.md, projectSize, projectScope, premortem — 이 progress에 기록됐는지 확인 후 바로 전이)
 
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_0 completed --progress-file {PROGRESS_FILE}
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_1 in_progress --progress-file {PROGRESS_FILE}
@@ -140,11 +101,11 @@ Phase 1 완료 시:
   3. 이 시점에 인수 테스트가 red인 것은 정상 (앱 미구현 — TDD red→green). 동결 여부만 확인한다.
   4. 통과 시 아래로 진행
 
-  *** 기획 게이트 3종 (인수 테스트 동결 가드 통과 후, Director 전 필수) ***
+  *** 기획 게이트 3종 (인수 테스트 동결 가드 통과 후 — 전이 전 필수) ***
   1. Spec 완전성:
      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh spec-completeness --progress-file {PROGRESS_FILE}
      - CRITICAL > 0 → Phase 2 전이 차단 (HARD gate). CRITICAL 이슈 해결 후 재시도.
-     - MAJOR > 0 → 경고 출력 (차단하지 않지만 Director가 참고)
+     - MAJOR > 0 → 경고 출력 (차단하지 않지만 Phase 2에서 반드시 반영)
      - MINOR → 정보성 (Phase 2에서 결정 가능)
   2. Clarification 게이트:
      bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate --progress-file {PROGRESS_FILE}
@@ -158,14 +119,10 @@ Phase 1 완료 시:
   기록되어 있어야 Phase 2 전이 가능. **미실행 = 기록 없음 = 전이 불가** (stop-hook이 full-auto 계열 progress에서
   이 키들을 fail-closed로 요구). 모델이 이 키들을 직접 기록하는 것 금지 — 게이트 실행 결과로만 세팅된다.
 
-  *** Director Agent 전이 게이트 (Phase 1 → 2) ***
-  Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
-  - overview.md + SPEC.md + docs/test-plan.md + progress 파일 경로 + spec-completeness 결과를 입력으로 제공
-  - 전이 유형: "Phase 1 → Phase 2 (Documentation → Implementation)"
-  - Architecture Review Report + Test Plan 존재 여부 확인
-  - NO-GO → Phase 1 블로커 해결 후 재시도
-  - CONDITIONAL GO → 조건 기록 후 진행
-  - GO → 진행
+  *** 산출물 존재 확인 (전이 전 마지막 체크) ***
+  - SPEC.md 존재 확인 (없으면 Phase 1 미완 → 전이 차단)
+  - docs/test-plan.md 존재 확인 — 단, `projectSize=Small`이고 `phases.phase_1.outputs.testPlan.verdict == "SKIPPED_SMALL"`이면 면제
+    (규모 분기 단일 출처: rules/project-size-rules.md. Small은 Step 1-8 test-strategist를 호출하지 않는다)
 
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_1 completed --progress-file {PROGRESS_FILE}
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_2 in_progress --progress-file {PROGRESS_FILE}
@@ -188,12 +145,7 @@ Phase 2 완료 시:
      - 재검증 통과 시 아래로 진행
   4. applicable=false 또는 applicable=null인 경우 → 통과
 
-  *** Director Agent 전이 게이트 (Phase 2 → 3) ***
-  (projectSize=Small이면 스킵 — "규모 비례 호출" 참조, directorSkipped 기록 후 update-phase로 진행)
-  Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
-  - progress 파일 + 구현된 코드 파일 목록 제공
-  - 전이 유형: "Phase 2 → Phase 3 (Implementation → Review)"
-  - NO-GO → Phase 2 블로커 해결 후 재시도
+  (E2E 가드 통과 시 바로 전이 — 구현 품질 판정은 Phase 3 코드 리뷰가 수행한다)
 
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_2 completed --progress-file {PROGRESS_FILE}
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_3 in_progress --progress-file {PROGRESS_FILE}
@@ -226,18 +178,13 @@ Phase 3 완료 시:
     code-review-findings의 sourceHash 대조를 통과한다 — 리뷰어 호출 없이 라운드 항목만
     append하는 것은 금지 (0-finding 승격 라운드는 지문 불변이므로 추가 조치 불필요)
 
-  *** Code Review Findings 게이트 (Director 전 필수 — HARD gate) ***
+  *** Code Review Findings 게이트 (전이 전 필수 — HARD gate) ***
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}
   - open CRITICAL/HIGH finding을 집계하여 1건 이상이면 FAIL → Phase 4 전이 차단 (수정 후 재실행)
   - PASS 결과가 verification.json의 codeReviewFindings에 기록되어야 전이 가능 (미실행 = 전이 불가, fail-closed)
   - dod.code_review_pass는 이 게이트의 PASS 결과로만 세팅한다 (모델 직접 기록 금지)
 
-  *** Director Agent 전이 게이트 (Phase 3 → 4) ***
-  Agent tool로 `director` 에이전트를 호출하여 GO/NO-GO/CONDITIONAL GO 판정:
-  - progress 파일 + 코드 리뷰 결과 (findings 목록) 제공
-  - 전이 유형: "Phase 3 → Phase 4 (Review → Verification)"
-  - CRITICAL/HIGH findings 잔존 시 NO-GO
-  - NO-GO → Phase 3에서 미해결 findings 수정 후 재시도
+  (code-review-findings PASS = open CRITICAL/HIGH 0건이 확인되면 바로 전이)
 
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_3 completed --progress-file {PROGRESS_FILE}
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_4 in_progress --progress-file {PROGRESS_FILE}
@@ -250,7 +197,7 @@ DoD: `"dod.code_review_pass": { "checked": true, "evidence": "N라운드 리뷰 
 
 ```
 Phase 4 진입 → Read ${CLAUDE_PLUGIN_ROOT}/skills/verification/SKILL.md
-Phase 4 스킬의 Step 4-1 ~ 4-7 수행 (Step 4-6.7: acceptance-gate 필수 실행, Step 4-6.8: Phase 4 소스 변경 시 최종 델타 리뷰 — code-review-findings의 sourceHash 정합 확보)
+Phase 4 스킬의 Step 4-1 ~ 4-7 수행 (Step 4-6.6: clarification-gate 재실행 — Phase 2에서 `docs/CLARIFICATIONS.md`에 남긴 [NEEDS-CLARIFICATION] 잔존 차단, Step 4-6.7: acceptance-gate 필수 실행, Step 4-6.8: Phase 4 소스 변경 시 최종 델타 리뷰 — code-review-findings의 sourceHash 정합 확보)
 Phase 4 완료 시:
   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh update-phase phase_4 completed --progress-file {PROGRESS_FILE}
 

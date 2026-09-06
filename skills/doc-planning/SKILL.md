@@ -6,6 +6,17 @@ No Ralph/progress/promise code — managed by the orchestrator.
 > `{PROGRESS_FILE}`은 오케스트레이터(full-auto.md / plan-docs-full.md의 "파라미터" 표)가 정한 값으로 치환한다
 > (예: full-auto codex/solo: `.claude-full-auto-progress.json`, teams: `.claude-full-auto-teams-progress.json`,
 > plan-docs-full: `.claude-plan-docs-full-progress.json`).
+>
+> `{REVIEW_MODE}`도 같은 "파라미터" 표에서 치환한다 (`codex` | `solo` | `teams` | `dual`).
+> **이 스킬은 모든 모드의 단일 소스다** — 모드별 분기는 아래 두 곳(Step 1-2 토론 루프, Step 1-6 아키텍처 리뷰)뿐이고,
+> 나머지 스텝(특히 Step 1-9의 게이트 5종)은 모드와 무관하게 동일하게 수행한다.
+
+| {REVIEW_MODE} | Step 1-2 검토자 | Step 1-6 아키텍처 리뷰(Medium+) |
+|---|---|---|
+| `codex` (기본) | codex-cli 왕복 | roundtable 에이전트 |
+| `dual` | codex-cli 2회 독립 호출 | roundtable 에이전트 |
+| `teams` | codex-cli 왕복 | roundtable 에이전트 |
+| `solo` | fresh-context 검토 서브에이전트 (Agent 툴) | architect 에이전트 |
 
 ## 전제 조건
 
@@ -20,16 +31,22 @@ No Ralph/progress/promise code — managed by the orchestrator.
 1. overview.md (정의 문서) 읽기 — 프로젝트 핵심 원칙, 경계, 책임 파악
 2. README.md에서 작성할 문서 목록 추출
 3. 각 문서의 현재 상태 확인 (완료/미작성)
-4. **백엔드 필수 문서 존재 검증** (`projectScope.hasBackend=true`인 경우):
+4. **백엔드 표준 문서 3종 생성** (`projectScope.hasBackend=true` **그리고** `projectSize`가 `Medium` 이상인 경우):
    - `docs/logging-standard.md` — 없으면 `${CLAUDE_PLUGIN_ROOT}/templates/logging-standard.md`를 docs/로 복사 후 문서 목록에 pending으로 추가
    - `docs/error-policy.md` — 없으면 동일 템플릿 복사 후 pending 등록
    - `docs/security-authn-authz.md` — 없으면 동일 템플릿 복사 후 pending 등록
    - 이 3개 문서는 Phase 1 완료 전 반드시 `completed` 상태여야 함 (이후 Step 1-9 검증에서 HARD_FAIL)
+   - **규모 게이트 (Small은 생략)**: `projectSize=Small`이면 이 3종을 **복사도 검증도 하지 않는다** — 기능 5개 미만 프로젝트에 486줄 표준 문서 3종은 기획 대비 과부하이며, 로깅·에러·인증 정책은 SPEC.md의 해당 섹션에서 다룬다. 규모 분기의 단일 출처는 `rules/project-size-rules.md`.
    - 템플릿 복사 예시:
    ```bash
-   for t in logging-standard error-policy security-authn-authz; do
-     [[ -f "docs/$t.md" ]] || cp "${CLAUDE_PLUGIN_ROOT}/templates/$t.md" "docs/$t.md"
-   done
+   project_size=$(jq -r '.phases.phase_0.outputs.projectSize // "Medium"' {PROGRESS_FILE} 2>/dev/null || echo "Medium")
+   if [[ "$project_size" != "Small" ]]; then
+     for t in logging-standard error-policy security-authn-authz; do
+       [[ -f "docs/$t.md" ]] || cp "${CLAUDE_PLUGIN_ROOT}/templates/$t.md" "docs/$t.md"
+     done
+   else
+     echo "SKIP: 백엔드 표준 문서 3종 생략 (projectSize=Small)"
+   fi
    ```
    - **주의 (lazy-load)**: 이 시점에는 `cp`만 수행하고 템플릿 내용을 **Read하지 않는다**. 각 문서의 내용은 해당 문서를 토론하는 시점(Step 1-2)에 `docs/` 사본으로 읽는다 — Step 1-2의 "템플릿 로드 규칙" 참조.
 5. **프론트엔드 필수 문서 검증** (`projectScope.hasFrontend=true`인 경우):
@@ -66,9 +83,9 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 ]
 ```
 
-### Step 1-2: 2자 자동 토론 루프
+### Step 1-2: 자동 토론 루프
 
-선택된 모든 문서에 대해 순차적으로 2자 토론 수행:
+선택된 모든 문서에 대해 순차적으로 토론을 수행합니다. **검토자만 `{REVIEW_MODE}`에 따라 달라지고, 나머지 절차·수렴 기준·체크리스트는 모든 모드가 동일합니다.**
 
 #### 토론 프로세스
 
@@ -76,13 +93,12 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
    - 문서 확인 (없으면 생성, 있으면 업데이트 대상)
    - progress 파일 업데이트: `currentDocument` 설정, 해당 문서 `status` -> `in_progress`
 
-2. **codex-cli에게 피드백 요청**
-   ```bash
-   codex exec --skip-git-repo-check '## 역할
-   당신은 기획 문서 품질 검토 전문가입니다.
-   아래 파일들을 직접 읽고 검토하세요.
+2. **검토 요청** — `{REVIEW_MODE}`에 따라 검토자를 선택한다 (아래 2-A / 2-B 중 하나만 실행)
 
-   ## 검토 대상
+   ##### 2-A. `{REVIEW_MODE}` = `codex` | `dual` | `teams` — codex-cli에게 피드백 요청
+
+   ```bash
+   codex exec --skip-git-repo-check '## 검토 대상
    - 정의 문서 (헌법): [overview.md 경로] — 직접 읽고 핵심 원칙과 Non-Goals를 파악하세요
    - 검토할 문서: [문서 경로] — 직접 읽고 정의 문서 기준으로 검토하세요
 
@@ -97,7 +113,48 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
    '
    ```
 
-3. **Claude Code가 codex 피드백 분석/반론**
+   `dual`은 위 호출을 **서로의 결과를 참조하지 않는 2회 독립 호출**로 수행하고, 두 결과를 합쳐 3에서 분석한다.
+
+   ##### 2-B. `{REVIEW_MODE}` = `solo` — fresh-context 검토 서브에이전트 호출
+
+   외부 AI 없이도 **독립성**을 확보하기 위해, 같은 컨텍스트에서 역할을 바꾸는 대신 **Agent 툴로 새 컨텍스트의 검토 서브에이전트**를 호출한다. 검토자는 문서를 쓴 대화를 보지 못하므로, 작성 의도가 아니라 문서에 실제로 쓰인 것만으로 판정한다.
+
+   - Agent 툴 `subagent_type`: `general-purpose` (또는 `Explore`), `description`: "기획 문서 검토"
+   - 프롬프트에는 **파일 경로만** 넘기고 작성 과정·의도·이전 라운드의 변론을 넣지 않는다 (재검토 라운드에서는 "이전 라운드에서 지적된 항목" 목록만 사실로 첨부)
+   - 프롬프트 본문:
+
+   ```
+   다음 파일들을 Read하여 기획 문서를 검토하고 finding을 반환하라.
+
+   ## 검토 기준 (먼저 읽을 것)
+   Read ${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md
+   — 이 파일의 "기획 수준 원칙", "문서 품질 체크리스트", "검토 기준",
+     "피드백 우선순위", "Provenance 마커 프로토콜"을 판정 기준으로 삼는다.
+
+   ## 입력
+   - 정의 문서(헌법): [overview.md 경로]
+   - 검토 대상 문서: [문서 경로]
+   위 두 파일 외의 파일은 교차 참조 확인이 필요한 경우에만 읽는다. 문서를 수정하지 마라.
+
+   ## 판정 관점
+   - 이 문서대로 프로덕션에 들어갔을 때 실패하는 시나리오는 무엇인가
+   - 개발자가 추가 질문 없이 구현할 수 있는가 (데이터 모델/API 스키마 구체성)
+   - 에러·예외·유효성·인증/인가·로깅 경로가 누락 없이 정의되어 있는가
+   - overview.md의 핵심 원칙 및 Non-Goals와 모순되는가
+   - 다른 문서와의 교차 참조가 일치하는가
+   - (SPEC.md인 경우) 핵심 E2E 시나리오 3-5개가 도출되고 각 시나리오에
+     User Story ID가 매핑되어 있는가, 크로스커팅 시나리오가 명시되어 있는가
+
+   ## 출력 형식 (이것만 반환)
+   각 finding을 한 줄씩:
+   [CRITICAL|HIGH|MEDIUM|LOW] <파일>:<섹션> — <문제> / 근거: <문서에서 인용> / 제안: <구체적 수정>
+   지적할 것이 없으면 그 판정의 근거(무엇을 확인했는지)를 항목별로 적는다.
+   근거 없는 approve와 "전반적으로 좋다" 류의 총평은 반환하지 마라.
+   ```
+
+   **폴백 (Agent 툴 사용 불가 시에만)**: 같은 컨텍스트에서 위 "검토 기준 / 판정 관점 / 출력 형식"을 그대로 적용해 검토 finding을 먼저 목록으로 작성한 뒤, 그 목록만 근거로 문서를 수정한다. 자기 확인 편향을 의식적으로 경계하고, "수정 불필요" 선언 시 반드시 확인한 항목과 근거를 명시한다 (단순 approve 금지). 폴백을 사용한 경우 progress의 해당 문서 항목에 `"reviewFallback": "self-review"`를 기록한다.
+
+3. **Claude Code가 검토 피드백 분석/반론**
    - 각 피드백의 타당성 검토
    - 수용할 피드백과 반론할 피드백 구분
    - 반론 시 근거와 대안 제시
@@ -105,7 +162,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 
 4. **수렴 판단 (라운드마다)** — 재검토 라운드는 기본 동작이 아니다:
    - 이번 라운드 피드백에 **신규 Critical/High가 0건**이면 → 수용한 Medium/Low만 반영하고 **합의 성립** (재검토 라운드 없이 5로 진행 — Medium/Low 반영은 재검토 대상이 아니다)
-   - 신규 Critical/High가 있으면 → 수정 반영 후 codex-cli에게 재검토 요청 (이전 토론 요약 포함) → 2로 복귀
+   - 신규 Critical/High가 있으면 → 수정 반영 후 같은 검토자(2-A 또는 2-B)에게 재검토 요청 → 2로 복귀. codex 모드는 이전 토론 요약을 포함하고, solo 모드는 fresh-context 유지를 위해 "이전 라운드에서 지적된 항목" 목록만 첨부한다
    - 각 라운드 완료 시 progress의 `round` 값 업데이트
 
 5. **문서 품질 체크리스트 확인** (완료 처리 전 필수)
@@ -128,22 +185,23 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 - 단순 동의보다 반론/보완/대안 제시 우선
 - "정말 필요한 수정인가?" 관점에서 과도한 피드백 필터링
 
-**codex-cli 역할**: 객관적 기준 기반 피드백, 우선순위별 분류, 구체적 개선안
-**Claude Code 역할**: codex 피드백 비판적 분석, 실제 필요한 수정만 선별, 최종 문서 수정
+**검토자 산출물**: 객관적 기준 기반 피드백, 우선순위별 분류, 구체적 개선안 (검토자가 codex든 서브에이전트든 동일)
+**Claude Code 산출물**: 검토 피드백의 비판적 분석, 실제 필요한 수정만 선별, 최종 문서 수정
 
-**AI 제외 규칙**:
-- codex 동일 피드백 3회 반복 -> codex 제외, Claude Code 단독 결정
-- codex 근거 없는 approve 3회 -> codex 제외, Claude Code 단독 결정
+**검토자 제외 규칙** (모드 공통):
+- 동일 피드백 3회 반복 -> 해당 검토자 제외, Claude Code 단독 결정
+- 근거 없는 approve 3회 -> 해당 검토자 제외, Claude Code 단독 결정
 
 **합의 기준 (조기 종료 우선)**:
 - 한 라운드에서 신규 Critical/High 0건 = 합의 성립. Medium/Low는 Claude가 타당성을 판단해 수용분만 반영하고 종료 — "수정 없음" 선언을 추가 라운드로 확인받지 않는다
 - **최소 라운드 수는 없다**: 명확한 문서가 1라운드에 끝나는 것이 정상. 라운드 수를 채우기 위한 재검토 금지
 
-**표준 템플릿 문서 상한 (1라운드)**: 템플릿에서 복사된 표준 문서(logging-standard.md, error-policy.md, security-authn-authz.md, DESIGN.md)는 이미 검증된 구조에서 출발하므로 토론 상한 1라운드. 검토 범위는 "프로젝트 값이 실제로 채워졌는가(placeholder 잔존 여부), overview.md/SPEC.md와 모순이 없는가"로 한정한다. Critical/High가 나오면 수정 후 확인 재검토 1회만 추가 허용. 일반 기획 문서 수준의 반복 토론 금지.
+**표준 템플릿 문서 상한 (1라운드)**: 템플릿에서 복사된 표준 문서(logging-standard.md, error-policy.md, security-authn-authz.md — Medium 이상에서만 존재, DESIGN.md — hasFrontend=true에서 존재)는 이미 검증된 구조에서 출발하므로 토론 상한 1라운드. 검토 범위는 "프로젝트 값이 실제로 채워졌는가(placeholder 잔존 여부), overview.md/SPEC.md와 모순이 없는가"로 한정한다. Critical/High가 나오면 수정 후 확인 재검토 1회만 추가 허용. 일반 기획 문서 수준의 반복 토론 금지.
 
-**5라운드 에스컬레이션**: 5라운드 후에도 Critical 피드백이 잔존하는 경우:
+**라운드 상한 + 에스컬레이션**: 상한은 `{REVIEW_MODE}`에 따른다 — `codex`/`dual`/`teams`는 5라운드, `solo`는 3라운드(서브에이전트 호출 비용 대비 수확 체감). 상한 도달 후에도 Critical 피드백이 잔존하는 경우:
 - AskUserQuestion으로 사용자에게 잔여 Critical 이슈 목록 제시
 - 사용자가 결정 (수용/거부/수정) 후 진행
+- 상한을 이유로 Critical을 미해결로 넘기지 않는다
 
 #### 기획 수준 원칙 / 문서 품질 체크리스트 / 검토 기준 / 피드백 우선순위
 
@@ -161,9 +219,9 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 | 모든 문서 공통 규칙 — Step 1-2 진입 시 1회 | `${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md` |
 | SPEC.md — 작성 시작 시점 | `${CLAUDE_PLUGIN_ROOT}/templates/SPEC.md` (구조 스켈레톤) |
 | 인수 테스트(tests/acceptance/) — Step 1-7.5 진입 시에만 | `${CLAUDE_PLUGIN_ROOT}/templates/acceptance-tests-guide.md` |
-| docs/security-authn-authz.md — 해당 문서 토론 시 | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지) |
-| docs/error-policy.md — 해당 문서 토론 시 | `docs/error-policy.md` 사본 (원본 템플릿 중복 Read 금지) |
-| docs/logging-standard.md — 해당 문서 토론 시 | `docs/logging-standard.md` 사본 (원본 템플릿 중복 Read 금지) |
+| docs/security-authn-authz.md — 해당 문서 토론 시 (Medium+) | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지) |
+| docs/error-policy.md — 해당 문서 토론 시 (Medium+) | `docs/error-policy.md` 사본 (원본 템플릿 중복 Read 금지) |
+| docs/logging-standard.md — 해당 문서 토론 시 (Medium+) | `docs/logging-standard.md` 사본 (원본 템플릿 중복 Read 금지) |
 | docs/DESIGN.md — 해당 문서 토론 시 (hasFrontend=true) | `docs/DESIGN.md` 사본 (원본 템플릿 중복 Read 금지) |
 | 프로젝트 CLAUDE.md — Phase 0(pm-planning)에서 처리 | `templates/project-claude-md.md`는 **cp 전용**, Read 불필요 |
 
@@ -198,17 +256,22 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-consistency docs/
 
 스크립트가 발견한 구조적 불일치를 Claude가 수정합니다.
 
-### Step 1-6: 스펙 깊이 검증 + 라운드테이블 아키텍처 리뷰
+### Step 1-6: 스펙 깊이 검증 + 아키텍처 리뷰
 
 Phase 0의 API/모델/플로우 테이블이 Phase 1에서 충분히 상세화되었는지 검증합니다.
 
-**규모 게이트 (Small은 roundtable 스킵)**: progress의 `projectSize`가 `Small`이면 Roundtable Agent를 호출하지 않는다 — 아래 "Claude가 직접 수행하는 검증"만 실행하고, spec-completeness(Step 1-9)가 백스톱한다. 스킵 시 증거 기록:
+**규모 게이트 (Small은 아키텍처 리뷰 스킵 — 모드 공통)**: progress의 `projectSize`가 `Small`이면 아키텍처 리뷰 에이전트를 호출하지 않는다 — 아래 "Claude가 직접 수행하는 검증"만 실행하고, spec-completeness(Step 1-9)가 백스톱한다. 스킵 시 증거 기록:
 ```bash
 _tmp=$(mktemp)
 jq '.phases.phase_1.outputs.roundtableArchReview = {"verdict": "SKIPPED_SMALL", "reason": "projectSize=Small — 다관점 아키텍처 리뷰 생략, Claude 직접 검증 + spec-completeness로 대체"}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
 ```
+> `{REVIEW_MODE}=solo`에서는 위 jq의 키를 `architectReview`로 바꿔 기록한다 (아래 6-B가 쓰는 키와 일치시키기 위함).
 
-Medium/Large인 경우 **Roundtable Agent**를 호출하여 다관점 아키텍처 리뷰를 수행합니다:
+Medium/Large인 경우 `{REVIEW_MODE}`에 따라 6-A 또는 6-B 중 하나를 수행합니다.
+
+#### 6-A. `{REVIEW_MODE}` = `codex` | `dual` | `teams` — Roundtable Agent
+
+**Roundtable Agent**를 호출하여 다관점 아키텍처 리뷰를 수행합니다:
 - Agent tool로 `roundtable` 에이전트 호출
 - 컨텍스트: "Phase 1 Step 1-6 (Architecture Review)"
 - overview.md + SPEC.md + docs/*.md 경로를 프롬프트에 포함
@@ -235,7 +298,26 @@ jq '.phases.phase_1.outputs.roundtableArchReview = {
 }' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
 ```
 
-Claude가 직접 수행하는 검증:
+#### 6-B. `{REVIEW_MODE}` = `solo` — Architect Agent
+
+외부 AI 없이 **Architect Agent**를 호출하여 아키텍처 리뷰를 수행합니다:
+- Agent tool로 `architect` 에이전트 호출
+- 기술 스택 적합성, 의존성 분석, API 설계 일관성, 데이터 모델, NFR 커버리지 검증
+- overview.md + SPEC.md 경로를 프롬프트에 포함
+- 결과: Architecture Review Report (ARCHITECTURE_SCORE 포함)
+- ARCHITECTURE_SCORE < 5 또는 블로커 존재 시 Phase 2 진행 전 반드시 해결
+
+결과를 progress 파일에 기록:
+```bash
+_tmp=$(mktemp)
+jq '.phases.phase_1.outputs.architectReview = {
+  "verdict": "PROCEED|REVISE|ESCALATE",
+  "architectureScore": N,
+  "blockers": [...]
+}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
+```
+
+#### Claude가 직접 수행하는 검증 (모드·규모 공통 — 스킵 불가)
 
 - **API 엔드포인트**: SPEC.md에 각 엔드포인트의 Request/Response 상세가 기술되어 있는지 확인 (단순 목록이 아닌 필드/타입/예시 수준)
 - **User Story ID**: 모든 User Story에 `US-F-*` (프론트엔드) 또는 `US-B-*` (백엔드) 형식의 ID가 부여되었는지 확인
@@ -277,20 +359,34 @@ SPEC.md 완성 후, 기획 완료 전에 SPEC의 인수 조건(AC)으로부터 *
    결과가 verification.json의 `acceptanceFreeze`에 기록됨 (pass 확인).
 4. **red 상태가 정상**: 기획 시점에는 앱이 없으므로 테스트는 red — 그것이 정상 (TDD red→green). 동결 전 `bash tests/acceptance/run.sh`를 1회 실행하여 **"실행 가능하되 red"**인지 확인 권장 — 문법 오류로 실행조차 안 되는 테스트를 방지 (마지막 줄 `ACCEPTANCE_RESULT: total=N passed=N failed=N` 출력 확인).
 
-### Step 1-8: Test Strategist Agent
+### Step 1-8: Test Strategist Agent (Medium 이상)
 
-Phase 1 완료 직전, **Test Strategist Agent**를 호출하여 테스트 전략을 수립합니다:
+**규모 게이트 (Small은 Test Plan 스킵)**: progress의 `projectSize`가 `Small`이면 Test Strategist Agent를 호출하지 않고 `docs/test-plan.md`도 만들지 않는다 — 기능 5개 미만에서는 Step 1-7.5의 **동결된 인수 테스트**(모든 AC 1:1 매핑)와 Step 1-7의 smoke 스크립트가 이미 "무엇을 테스트할지"의 계약이며, 별도 피라미드 배분 문서는 같은 내용을 한 번 더 적는 일이 된다. 인수 테스트 선작성+동결과 smoke 스크립트는 Small에서도 **그대로 필수**다. 스킵 시 증거 기록:
+```bash
+project_size=$(jq -r '.phases.phase_0.outputs.projectSize // "Medium"' {PROGRESS_FILE} 2>/dev/null || echo "Medium")
+if [[ "$project_size" == "Small" ]]; then
+  _tmp=$(mktemp)
+  jq '.phases.phase_1.outputs.testPlan = {"verdict": "SKIPPED_SMALL", "reason": "projectSize=Small — 동결 인수 테스트 + smoke 스크립트로 대체"}' {PROGRESS_FILE} > "$_tmp" && mv "$_tmp" {PROGRESS_FILE}
+fi
+```
+스킵을 기록하면 `spec-completeness`의 `test-plan.md` 존재 검사도 함께 skip된다 (`scripts/gates/docs.sh` — Small 판정은 progress의 `projectSize` 단일 출처).
+
+Medium/Large인 경우, Phase 1 완료 직전 **Test Strategist Agent**를 호출하여 테스트 전략을 수립합니다:
 
 - Agent tool로 `test-strategist` 에이전트 호출
 - overview.md + SPEC.md + Architecture Review Report를 입력으로 제공
 - 결과: Test Plan (테스트 피라미드 배분, 기능별 에지케이스, 실패 경로, 테스트 데이터 설계)
 - Test Plan은 `docs/test-plan.md`에 저장
 - Phase 2 구현자가 이 Test Plan을 따라 테스트 작성
-- Phase 4 verification-auditor가 Test Plan 대비 커버리지 교차 검증
+- Phase 4 verification-auditor가 Test Plan 대비 커버리지 교차 검증 (projectSize=Large일 때만 — 관측·보고 전용)
 
 ### Step 1-9: Phase 1 완료 검증
 
-모든 문서 토론 완료 및 검증 스크립트 생성 후, Phase 전이 전 최종 검증을 수행합니다:
+모든 문서 토론 완료 및 검증 스크립트 생성 후, Phase 전이 전 최종 검증을 수행합니다.
+
+> **모드 무관 (분기 없음)**: 아래 검증 — 스펙 깊이/US ID, smoke 스크립트 존재, 백엔드 표준 문서 3종(Medium+),
+> DESIGN.md(hasFrontend), `provenance-gate`, `clarification-gate` — 은 `{REVIEW_MODE}`가 무엇이든 **전부 동일하게** 수행한다.
+> `clarificationGate`는 stop-hook의 fail-closed 집합에 포함되어 있어, 이 게이트를 건너뛰면 어떤 모드든 완주가 차단된다.
 
 ```bash
 # SPEC 파일 탐색 (다양한 경로 지원)
@@ -336,15 +432,18 @@ fi
 
 WARN은 경고만 출력하고 진행, FAIL은 해당 단계를 재수행합니다.
 
-#### 백엔드 표준 문서 3종 존재 검증 (hasBackend=true인 경우)
+#### 백엔드 표준 문서 3종 존재 검증 (hasBackend=true **그리고** projectSize가 Medium 이상인 경우)
 
 ```bash
-if [[ "$has_backend" == "true" ]]; then
+project_size=$(jq -r '.phases.phase_0.outputs.projectSize // "Medium"' {PROGRESS_FILE} 2>/dev/null || echo "Medium")
+if [[ "$has_backend" == "true" ]] && [[ "$project_size" != "Small" ]]; then
   for t in logging-standard error-policy security-authn-authz; do
     if [[ ! -f "docs/$t.md" ]]; then
-      echo "FAIL: docs/$t.md 미생성 (hasBackend=true는 3종 표준 문서 필수)"
+      echo "FAIL: docs/$t.md 미생성 (hasBackend=true + Medium 이상은 3종 표준 문서 필수)"
     fi
   done
+elif [[ "$has_backend" == "true" ]]; then
+  echo "SKIP: 백엔드 표준 문서 3종 검증 생략 (projectSize=Small)"
 fi
 ```
 

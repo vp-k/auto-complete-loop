@@ -142,3 +142,29 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" != *"자기신고 세탁 신호"* ]]
 }
+
+# ─── 규모 비례: projectSize=Small은 Test Plan 문서를 요구하지 않는다 ───
+# (Small은 Step 1-8 test-strategist를 아예 호출하지 않는다 — rules/project-size-rules.md)
+
+@test "size: projectSize=Small skips the test-plan.md requirement" {
+  rm -f docs/test-plan.md test-plan.md
+  jq '.phases.phase_0.outputs.projectSize = "Small"' "$PF" > tmp.json && mv tmp.json "$PF"
+  run run_gate spec-completeness --progress-file "$PF"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"projectSize=Small"* ]]
+  [[ "$output" != *"test-plan.md not found"* ]]
+}
+
+@test "size: projectSize=Medium still requires test-plan.md" {
+  rm -f docs/test-plan.md test-plan.md
+  jq '.phases.phase_0.outputs.projectSize = "Medium"' "$PF" > tmp.json && mv tmp.json "$PF"
+  run run_gate spec-completeness --progress-file "$PF"
+  [[ "$output" == *"test-plan.md not found"* ]]
+  [[ "$output" != *"projectSize=Small"* ]]
+}
+
+@test "size: projectSize unset keeps the test-plan.md requirement (fail-closed default)" {
+  rm -f docs/test-plan.md test-plan.md
+  run run_gate spec-completeness --progress-file "$PF"
+  [[ "$output" == *"test-plan.md not found"* ]]
+}

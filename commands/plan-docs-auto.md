@@ -19,14 +19,14 @@ codex-cli와 Claude Code가 **순차적으로 자동 토론**하여 신규 Criti
 | mode | 설명 | 참여자 |
 | ---- | ---- | ------ |
 | `codex` (기본) | Claude + codex-cli 2자 토론 | codex-cli가 피드백, Claude가 분석/반론/수정 |
-| `solo` | Claude 자기 토론 (작성자 ↔ 검토자 역할 전환) | 외부 AI 불필요 |
+| `solo` | fresh-context 검토 서브에이전트 | 외부 AI 불필요 (Agent 툴로 새 컨텍스트 검토자 호출) |
 | `dual` | Claude + codex 1차 + codex 2차 3자 토론 | codex-cli 두 번의 독립 호출이 피드백, Claude가 종합/수정 |
 
 ### --mode 처리
 
 $ARGUMENTS에서 `--mode` 값을 파싱합니다. 지정되지 않으면 `codex`로 동작합니다.
 
-- **`--mode solo`**: 3단계에서 외부 AI(codex-cli)를 호출하지 않고, Claude가 **작성자 ↔ 비판적 검토자 역할 전환**으로 자기 토론을 수행합니다. 수렴 기준: 검토자가 신규 Critical/High 0건으로 판단한 라운드에서 즉시 수렴 (최소 라운드 없음 — 1라운드 수렴 정상). 최대 3회 반복.
+- **`--mode solo`**: 3단계에서 외부 AI(codex-cli)를 호출하지 않고, **Agent 툴로 fresh-context 검토 서브에이전트**를 호출해 검토를 받습니다. 같은 컨텍스트에서 역할만 바꾸는 자기검토는 독립성이 없으므로 기본 경로가 아닙니다 — 서브에이전트에는 `templates/doc-planning-common.md`(검토 기준·체크리스트)와 대상 문서·overview.md 경로만 넘기고, `[CRITICAL|HIGH|MEDIUM|LOW] <파일>:<섹션> — <문제> / 근거 / 제안` 형식의 finding만 받습니다 (문서 수정 금지). 상세 프롬프트는 `skills/doc-planning/SKILL.md`의 Step 1-2 "2-B"와 동일합니다. Agent 툴을 쓸 수 없을 때만 같은 기준·출력 형식으로 자기검토를 폴백으로 수행합니다. 수렴 기준: 신규 Critical/High 0건인 라운드에서 즉시 수렴 (최소 라운드 없음 — 1라운드 수렴 정상). 최대 3회 반복.
 - **`--mode codex`** (기본): 아래 3단계의 2자 토론 루프를 그대로 실행합니다.
 - **`--mode dual`**: 3단계에서 codex-cli를 **두 번 독립적으로 호출**하여 3자 토론을 수행합니다. codex 1차 -> codex 2차 -> Claude Code 순서로 순차 검토/반론하며, 두 codex 호출은 서로의 결과를 참조하지 않습니다. 합의 기준: 양쪽 리뷰 모두 신규 Critical/High 0건인 라운드 (아래 "합의 기준" 동일 적용).
 
@@ -156,9 +156,9 @@ dod 5키가 모두 `checked: true`가 되는 유일한 경로는 위 게이트 �
 
 ### DoD 로드
 
-프로젝트 루트에서 `DONE.md` 확인:
-- 파일 있음: "기획 문서 DoD" 섹션을 체크리스트로 사용
-- 파일 없음: 내장 기획 문서 DoD 사용 (유저스토리/데이터모델/API계약/에러시나리오/정의문서충돌없음)
+DoD의 단일 출처는 progress 파일(`.claude-plan-progress.json`)의 `dod` 체크리스트다 (별도 `DONE.md`는 사용하지 않음 — 어떤 게이트도 읽지 않는다).
+내장 기획 문서 DoD(유저스토리/데이터모델/API계약/에러시나리오/정의문서충돌없음)는 `shared-gate.sh init --template plan`이 생성하며,
+프로젝트 고유 기준이 필요하면 `add-dod-key <key> "<설명>"`으로 추가한다.
 
 **완전 새로 시작:**
 

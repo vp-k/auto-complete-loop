@@ -26,9 +26,9 @@ No Ralph/progress/promise code — managed by the orchestrator.
    - 배열이 없거나 비어있으면 → 의존성 기반으로 직접 순서 결정 (DB → API → UI)
 
 #### DoD 로드
-프로젝트 루트에서 `DONE.md` 확인:
-- 파일 있음: 해당 DoD를 완료 기준으로 사용
-- 파일 없음: 내장 완료 기준 사용 (빌드/테스트/린트/리뷰 통과)
+DoD의 단일 출처는 progress 파일의 `dod` 체크리스트다 (별도 `DONE.md`는 사용하지 않음 — 어떤 게이트도 읽지 않는다).
+`bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file {PROGRESS_FILE}`로 현재 항목을 확인하고,
+프로젝트 고유 기준이 필요하면 `add-dod-key <key> "<설명>"`으로 추가한다 (evidence 없이 checked=true 불가).
 
 ### Step 2-1.5: DRY 사전 분석
 
@@ -60,8 +60,14 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
 구현 중 SPEC/설계 문서에 없는 **동작 결정**(새 엔드포인트, 스키마 필드, UX 흐름, 외부 서비스 연동 등)이 필요해지면 **임의로 구현하지 않는다**. 반드시 다음 중 하나로 처리:
 
 - **(a) 자유 구현 허용 범위**: 사소하고 스펙과 모순 없는 구현 세부(변수명, 내부 구조, private 헬퍼 분리 등)는 자유롭게 결정. 단, **"동작 계약"에 영향을 주는 것(API 응답 형태, 저장 스키마, 사용자 가시 동작, 외부 연동)은 전부 (b) 또는 (c)로** 처리한다.
-- **(b) 보류 + 태깅**: 스펙 문서(SPEC.md 또는 해당 기획 문서)에 `[NEEDS-CLARIFICATION: 질문]` 태그를 추가하고, 해당 US 구현을 보류한 뒤 다른 태스크를 진행한다. clarification-gate가 잔존 태그를 차단하므로 질문이 조용히 묻히지 않는다.
-- **(c) 즉시 질의**: 즉답이 필요하면 AskUserQuestion으로 사용자에게 질문한다. 결정되면 **스펙 문서에 먼저 반영한 후** 구현한다 (스펙이 항상 코드보다 먼저 갱신된다).
+- **(b) 보류 + 태깅**: `docs/CLARIFICATIONS.md`(없으면 생성)에 항목을 **append**하고, 해당 US 구현을 보류한 뒤 다른 태스크를 진행한다. 형식:
+  ```markdown
+  ## US-B-003
+  - 질문: [NEEDS-CLARIFICATION: 리프레시 토큰 만료 후 재로그인 흐름이 정의되지 않음]
+  - 보류 중인 구현: POST /auth/refresh 만료 분기
+  ```
+  **SPEC.md·overview.md·docs/specs/·docs/plans/에 쓰지 않는다** — 구현 Phase에서 이 파일들은 protect-files-guard가 차단하고(동결된 SPEC 해시 보호), 태그를 넣으려다 훅에 막혀 질문이 통째로 사라지는 것이 실제 실패 모드였다. `docs/CLARIFICATIONS.md`는 보호 대상이 아니므로 차단 없이 기록된다. clarification-gate는 Phase 1→2 전이에서 한 번 실행되고 Phase 2 이후에는 자동 실행되지 않으므로, Phase 4 Step 4-6.6이 이 게이트를 **재실행**해 `docs/` 아래 `*.md`의 잔존 태그를 다시 잡는다(재기록 → stop-hook fail-closed). 그래서 Phase 2에 남긴 질문도 완주를 차단한다 — 조용히 묻히지 않는다.
+- **(c) 즉시 질의**: 즉답이 필요하면 AskUserQuestion으로 사용자에게 질문한다. 결정되면 **스펙 문서에 먼저 반영한 후** 구현한다 (스펙이 항상 코드보다 먼저 갱신된다). SPEC.md는 동결 후 protect-files-guard가 차단하므로 반영은 Step 2-1.10의 unlock 절차(`acceptance-unlock --approved-by-user` → 수정 → `acceptance-freeze --approved-by-user`)로만 한다. 이 사용자 답변이 그 절차의 승인이다. (b)로 보류했던 항목을 해소할 때는 `docs/CLARIFICATIONS.md`의 해당 태그를 결정 내용으로 **교체**한다.
 
 **디자인 값도 동작 계약이다 (hasFrontend=true)**: 색상·간격·모서리·폰트·그림자·상태 표현(빈/로딩/에러/disabled/focus)은
 사용자에게 보이는 결정이므로 위 (a)의 "자유 구현 세부"가 **아니다**. `docs/DESIGN.md`에 있는 값만 사용하고,
@@ -78,10 +84,31 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
 Phase 1에서 생성된 `tests/acceptance/`는 `acceptance-freeze`로 해시 동결된 상태이며,
 **동결 시점의 SPEC 파일 해시도 manifest에 함께 동결**됩니다 (v4.8.0).
 
-- **tests/acceptance/** 수정 금지**: protect-files-guard 훅이 동결 후 Edit/Write를 차단하며, 훅을 우회한 수정도 `acceptance-gate`의 해시 무결성 검사(변조/추가/삭제 감지)가 잡는다. 구현 Phase의 목표는 **자신이 수정할 수 없는 이 테스트를 green으로 만드는 것**이다.
+- **tests/acceptance/** 수정 금지**: protect-files-guard 훅이 동결 후 Edit/Write를 차단하며, 훅을 우회한 수정도 `acceptance-gate`의 해시 무결성 검사가 잡는다 (**변조·삭제 = FAIL**, 동결 목록에 없는 **파일 추가 = WARN**: 추가는 기존 어서션을 약화시키지 못하므로 차단하지 않고 `addedFiles`로 기록한다 — 추가 파일도 run.sh가 실행하므로 total 증가는 정상). 구현 Phase의 목표는 **자신이 수정할 수 없는 이 테스트를 green으로 만드는 것**이다.
 - **SPEC 수정 금지**: `acceptance-gate`가 동결된 SPEC 해시를 대조한다 — 동결 후 SPEC이 조금이라도 바뀌면 완주 불가. 게이트를 재실행해도 우회되지 않는다 (해시 갱신은 승인 재동결로만).
-- **테스트/SPEC이 틀렸다고 판단되면 = 스펙 문제**: Step 2-1.9 절차를 따른다 — 사용자 승인(AskUserQuestion) → SPEC 갱신 → `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --approved-by-user`로 재동결 (테스트 + SPEC 해시가 함께 갱신됨). `--approved-by-user`는 사용자 승인 후에만 사용 가능한 플래그다.
+- **테스트/SPEC이 틀렸다고 판단되면 = 스펙 문제**: 아래 **동결 해제 절차**를 따른다. 훅이 파일을 차단하므로 절차 없이는 편집 자체가 불가능하다 (예전 지침대로 "승인받고 그냥 고친다"를 시도하면 훅에 막혀 교착된다).
 - **구현 편의를 위한 테스트 완화·스펙 약화는 스펙 변경이 아니다 — 금지.**
+
+**동결 해제 절차 (unlock → 수정 → 재동결)**
+
+1. **사용자 승인**: AskUserQuestion으로 "무엇이 왜 틀렸고, 어떻게 고칠 것인지"를 제시해 승인받는다. 승인 없이 다음 단계로 가지 않는다.
+2. **해제**: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-unlock --approved-by-user --reason "<승인받은 사유>"`
+   → `.claude/acceptance-unlock.json` 토큰이 생성되고, protect-files-guard가 `SPEC.md`와 `tests/acceptance/**` 편집을 한시 허용한다(차단 대신 경고만). `--approved-by-user` 없이 실행하면 거부된다. overview.md·docs/specs/·docs/plans/는 여전히 차단된다.
+3. **수정**: SPEC과 인수 테스트를 고친다. 스펙이 바뀌었으니 테스트가 바뀌는 것이지, 그 역이 아니다.
+4. **재동결**: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --approved-by-user`
+   → 토큰이 **소비(삭제)**되고, 사유가 manifest의 `refreezeHistory`에 기록된다 (테스트 + SPEC 해시 동시 갱신).
+5. **재검증**: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-gate` 재실행.
+   토큰이 남아 있으면 게이트가 FAIL(`unlock pending — re-freeze first`)하고 stop-hook이 완주를 차단한다 — 즉 **해제하고 재동결하지 않은 채로는 끝낼 수 없다**.
+
+**manifest 부재 (Phase 1을 `--start-phase`로 건너뛴 경우)**
+
+`tests/acceptance/.manifest.json`이 없으면 동결할 인수 테스트 자체가 없다. 이때는 **사용자가 명시적으로 `--start-phase N`(N≥2)을 지정한 행위 자체가 "기획 산출물을 건너뛴다"는 승인**이므로 AskUserQuestion을 다시 하지 않는다 (무인 재개 경로):
+
+1. `templates/acceptance-tests-guide.md`를 Read하고, SPEC의 AC로부터 인수 테스트를 **구현 착수 전에** 생성한다 (지금은 red가 정상).
+2. `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --approved-by-user --reason "start-phase skip" --approved-by "--start-phase flag"`로 동결한다 (manifest에 `approvedBy: "--start-phase flag"`가 기록되어 사후에 근거를 추적할 수 있다).
+3. 이후는 일반 동결과 동일하다 — 고치려면 위 **동결 해제 절차**를 거친다.
+
+manifest가 **있는데** 내용이 틀린 경우는 이 경로가 아니라 동결 해제 절차다.
 
 ---
 
@@ -319,7 +346,7 @@ L4 범위 축소 전에 문서를 분할해 재시도한다:
    - 문서당 리뷰 사이클 상한: 2회 (초기 1 + C/H 수정 확인 1)
 
 5. **문서 완료 처리**
-   - **US 인수 테스트 green 확인**: 해당 문서에서 구현한 US의 인수 테스트가 통과하는지 확인한다 — 개별 실행 가능하면 개별(`bash tests/acceptance/us-<id>-*.sh`), 아니면 `bash tests/acceptance/run.sh`로 확인. red면 구현을 수정한다 (테스트 수정 금지 — Step 2-1.10).
+   - **US 인수 테스트 green 확인**: 해당 문서에서 구현한 US의 인수 테스트 **파일만** 실행한다 — `bash tests/acceptance/us-<id>-*.sh`. 전체 `bash tests/acceptance/run.sh`는 **Step 2-7과 Phase 4의 acceptance-gate에서만** 돌린다: 아직 구현하지 않은 다른 US가 red인 것은 이 시점에 정상이므로, 여기서 전체 러너를 돌리면 남의 red를 떠안고 원인을 오판하게 된다. 개별 파일이 단독 실행되지 않으면 그것은 인수 테스트 작성 결함이므로 동결 해제 절차(Step 2-1.10) 대상이지, 전체 러너로 우회할 사유가 아니다. red면 구현을 수정한다 (테스트 수정 금지 — Step 2-1.10).
    - progress: 해당 문서 `completed`
    - `documentSummaries`에 핵심 결정 요약
    - 자동 커밋: `git add -A && git commit -m "[auto] {문서명} 구현 완료 [US-X-###]"`

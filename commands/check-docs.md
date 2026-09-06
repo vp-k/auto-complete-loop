@@ -313,7 +313,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
 | 차단 대상 | 조건 | 절차 |
 |-----------|------|------|
 | `SPEC.md` / `overview.md` / `docs/specs/**` / `docs/plans/**` | full-auto Phase 2+ 진행 중 | 수정 목록을 정리해 AskUserQuestion으로 사용자 승인 요청 → 승인 시에만 수정 |
-| `tests/acceptance/**` (동결됨) | 동결 manifest 존재 시 상시 | 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user` 재동결 후 수정 |
+| `tests/acceptance/**` (동결됨) | 동결 manifest 존재 시 상시 | 사용자 승인 → `acceptance-unlock --approved-by-user --reason "<사유>"` → 수정 → `acceptance-freeze --approved-by-user` 재동결(토큰 소비) |
 | `.claude-verification.json` | 상시 | 직접 수정 금지 — 결과를 바꾸려면 해당 게이트를 재실행 |
 | `.claude/ralph-loop.local.md` | 상시 | 수정/삭제 금지 — 강제 종료가 필요하면 AskUserQuestion으로 사용자에게 요청 |
 

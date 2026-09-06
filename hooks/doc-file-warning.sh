@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse:Write - 불필요 문서 파일 생성 차단
-# README.md, CHANGELOG.md 등 요청하지 않은 문서 파일 생성을 차단
+# CONTRIBUTING.md, LICENSE.md 등 요청하지 않은 문서 파일 생성을 차단
 #
 # 게이팅: 플러그인 워크플로우 활성 시(.claude-*progress*.json 존재)에만 동작.
 # 비플러그인 프로젝트에서는 무출력 통과 (오탐 방지).
@@ -34,11 +34,16 @@ FILE_PATH=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/nu
 FILENAME=$(basename "$FILE_PATH")
 
 # 허용된 문서 파일 (프로젝트에서 의도적으로 사용하는 것들)
-ALLOWED_DOCS="DONE.md|SPEC.md|SCOPE_REDUCTIONS.md|CLAUDE.md|SKILL.md|MEMORY.md"
+# README.md / CHANGELOG.md / RELEASE_NOTES.md 는 워크플로우 산출물이므로 허용한다:
+#   - skills/pm-planning/SKILL.md 가 프로젝트 README.md 생성을 지시
+#   - skills/verification/SKILL.md 가 CHANGELOG.md 또는 RELEASE_NOTES.md 생성을 지시
+# 이 훅은 progress 파일이 있을 때(=워크플로우 활성)만 동작하므로, 이들을 차단하면
+# 워크플로우가 자기 훅에 막힌다.
+ALLOWED_DOCS="SPEC.md|SCOPE_REDUCTIONS.md|CLAUDE.md|SKILL.md|MEMORY.md|README.md|CHANGELOG.md|RELEASE_NOTES.md"
 
 # 경고 대상: 일반적인 문서 파일 패턴 (ALLOWED_DOCS와 disjoint)
 case "$FILENAME" in
-  README.md|CHANGELOG.md|CONTRIBUTING.md|LICENSE.md|AUTHORS.md|HISTORY.md|TODO.md)
+  CONTRIBUTING.md|LICENSE.md|AUTHORS.md|HISTORY.md|TODO.md)
     echo "{\"decision\": \"block\", \"reason\": \"${FILENAME} 생성이 차단되었습니다. 명시적으로 요청된 경우에만 문서 파일을 생성하세요. 프로젝트에서 허용된 문서: ${ALLOWED_DOCS}\"}"
     exit 0
     ;;

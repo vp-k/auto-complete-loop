@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.10.0**
+**v4.18.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -29,25 +29,26 @@ claude plugins install /path/to/auto-complete-loop
 /code-review-loop --rounds 3 src/
 ```
 
-## 3 Modes: Choose Your Setup
+## Review Modes: Choose Your Setup
 
-Every major command comes in **3 modes**. Pick the one that matches your environment:
+Pick the mode that matches your environment:
 
 | Mode | External AI | Best For |
 |------|------------|----------|
 | **Solo** | None | No setup needed. Claude switches roles for multi-perspective analysis |
-| **2-Way** | codex-cli | Stronger review - codex provides independent perspective |
-| **3-Way (dual)** | codex-cli ×2 (1차+2차) | Strongest - split-dimension independent review |
+| **2-Way (codex)** | codex-cli | Stronger review - codex provides independent perspective |
+| **3-Way (dual)** | codex-cli ×2 (1st + 2nd pass) | Strongest - split-dimension independent review |
+| **Agent Teams** | None (Claude teammates) | Independent reviewers that challenge each other; requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
 
 ### Command Matrix
 
-| Feature | Solo | 2-Way (codex) | 3-Way (dual, codex×2) |
-|---------|------|--------------|---------------------|
-| **Full project** | `/full-auto-solo` | `/full-auto` | `/full-auto-teams` |
-| **Code review** | `/code-review-loop-solo` | `/code-review-loop` | `/code-review-loop-dual` |
-| **Planning (PM + docs + gates)** | `/plan-docs-full --mode solo` | `/plan-docs-full` | `/plan-docs-full --mode dual` (`--mode teams` for Agent Teams) |
-| **Planning docs (refine only)** | `/plan-docs-auto-solo` | `/plan-docs-auto` | `/plan-docs-auto-dual` |
-| **Release polish** | `/polish-for-release-solo` | `/polish-for-release` | `/polish-for-release-dual` |
+| Feature | Solo | 2-Way (codex) | 3-Way (dual, codex×2) | Agent Teams |
+|---------|------|--------------|----------------------|-------------|
+| **Full project** | `/full-auto-solo` | `/full-auto` | — | `/full-auto-teams` |
+| **Code review** | `/code-review-loop-solo` | `/code-review-loop` | `/code-review-loop-dual` | — (via `/full-auto-teams` Phase 3) |
+| **Planning (PM + docs + gates)** | `/plan-docs-full --mode solo` | `/plan-docs-full` | `/plan-docs-full --mode dual` | `/plan-docs-full --mode teams` |
+| **Planning docs (refine only)** | `/plan-docs-auto-solo` | `/plan-docs-auto` | `/plan-docs-auto-dual` | — |
+| **Release polish** | `/polish-for-release-solo` | `/polish-for-release` | `/polish-for-release-dual` | — |
 
 ### How Solo Mode Works
 
@@ -137,7 +138,7 @@ PM Planning + Doc Planning only, with **6 strict gates** (spec-completeness, doc
 |---------|-------------|
 | `/code-review-loop [opts] <scope>` | Iterative review with codex |
 | `/code-review-loop-dual [opts] <scope>` | 3-way: codex ×2 |
-| `/code-review-loop-solo [opts] <scope>` | Claude 3-pass multi-perspective |
+| `/code-review-loop-solo [opts] <scope>` | Claude multi-perspective: 3 parallel subagents (fallback: 3-pass sequential) |
 
 Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
 
@@ -179,15 +180,15 @@ Phase 1: Doc Planning     Document refinement + smoke scripts + acceptance tests
 Phase 2: Implementation   TDD coding + per-document depth check
     |  implementation-depth after each document
     v
-Phase 3: Code Review      Multi-perspective (codex / solo 3-pass)
+Phase 3: Code Review      Multi-perspective (codex / solo 3 subagents)
     |  IMPL: STUB/SCHEMA/MISSING/HARDCODE/FLOW
     |  code-review-findings gate (0-finding rounds must still be recorded)
     v
 Phase 4: Verification     runtime-gate + live-testing + acceptance-gate
-    |  layer-coverage + verification-auditor + Launch Readiness
+    |  layer-coverage + Launch Readiness
 ```
 
-**Phase 4 in detail**: `runtime-gate` boots the server once and runs all 3 smoke checks (smoke-check + integration-smoke + functional-flow) in a single pass. The **live-testing** skill then drives the real app (browser/curl/Maestro) as a user, auto-fixing LIVE-CRITICAL/HIGH findings; `live-testing-gate` blocks completion while any remain open. `acceptance-gate` verifies the frozen acceptance tests' hash integrity and runs them — they must be **green** now (red→green). `layer-coverage` checks that every declared layer (frontend/backend) actually exists on the filesystem, and the **verification-auditor** cross-checks test coverage against the Test Plan.
+**Phase 4 in detail**: `runtime-gate` boots the server once and runs all 3 smoke checks (smoke-check + integration-smoke + functional-flow) in a single pass. The **live-testing** skill then drives the real app (browser/curl/Maestro) as a user, auto-fixing LIVE-CRITICAL/HIGH findings; `live-testing-gate` blocks completion while any remain open. `acceptance-gate` verifies the frozen acceptance tests' hash integrity and runs them — they must be **green** now (red→green). `layer-coverage` checks that every declared layer (frontend/backend) actually exists on the filesystem. On **Large** projects only, the fresh-context **verification-auditor** agent additionally cross-checks the recorded evidence against the Test Plan — it is **advisory (observation-only)**: it audits and reports, and never sets a gate result.
 
 ### Acceptance Freeze & Gate (TDD red→green, 3중 방어선)
 
@@ -199,7 +200,7 @@ Three lines of defense keep the tests honest:
 2. **acceptance-gate hash integrity** — even out-of-band tampering is detected against the frozen manifest (tests **and SPEC** — quietly weakening the SPEC after gates passed no longer works; re-running gates doesn't help since only an approved re-freeze updates the hash), then `run.sh` is executed for real
 3. **stop-hook (fail-closed)** — full-auto requires `acceptanceTests=pass` (skip is NOT accepted — `tests/acceptance/` is mandatory); plan-docs-full requires `acceptanceFreeze=pass`. Missing key = gate never ran = no completion
 
-Spec changed legitimately? Only via user approval → SPEC update → `acceptance-freeze --approved-by-user` re-freeze (updates test + SPEC hashes together). Pre-4.8 manifests (no frozen SPEC) skip the SPEC comparison for backward compatibility.
+Spec changed legitimately? Only via user approval → `acceptance-unlock --approved-by-user --reason "<why>"` (issues a token that lets protect-files-guard admit edits to `SPEC.md` and `tests/acceptance/**`) → edit → `acceptance-freeze --approved-by-user` re-freeze, which consumes the token and updates test + SPEC hashes together. An outstanding token makes `acceptance-gate` FAIL and the stop-hook block completion, so the door cannot be left open. Pre-4.8 manifests (no frozen SPEC) skip the SPEC comparison for backward compatibility.
 
 ### Design Contract (v4.13.0 — frontend projects)
 
@@ -237,7 +238,7 @@ Memory is not storage — every lesson is written as a **condition for the next 
 
 ### Quality Gates
 
-The ~40 `shared-gate.sh` subcommands include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
+The 48 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
 
 | Gate | Type | Catches |
 |------|------|---------|
@@ -279,7 +280,7 @@ The ~40 `shared-gate.sh` subcommands include the following user-facing gates (se
 | **게이트 기록 (전이 차단)** | `shared-gate.sh` subcommands | Step/Phase transition blocked; results written to `.claude-verification.json` by the script only (model must never write it directly) |
 | **자문 (SOFT)** | Warnings only | Proceed allowed; fix recommended. Only `implementation-depth`/`test-quality` escalate to HARD on repeat failure |
 
-No override (including directorOverride) can bypass the 훅-강제 tier.
+No override can bypass the 훅-강제 tier.
 
 **Escape hatch**: to stop the Ralph Loop manually, delete `.claude/ralph-loop.local.md` — the stop-hook stops re-launching iterations immediately.
 

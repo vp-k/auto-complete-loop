@@ -128,10 +128,12 @@ migrate_schema_v7() {
   is_full_auto=$(jq 'if .steps then [.steps[].name] | any(. == "phase_0") else false end' "$file" 2>/dev/null || echo "false")
   [[ "$is_full_auto" == "true" ]] || return 0
 
-  echo "Migrating $file to schemaVersion 7 (conditionalGoItems + phase timestamps)..."
+  # v7: 과거 conditionalGoItems(Director CONDITIONAL GO 항목)를 주입했으나 v4.18.0에서 Director 와
+  # 함께 제거 — 이제 schemaVersion 승격만 수행하고 폐기 키는 남아 있으면 정리한다.
+  echo "Migrating $file to schemaVersion 7 (phase timestamps)..."
   jq_inplace "$file" '
     .schemaVersion = 7
-    | .conditionalGoItems //= []
+    | del(.conditionalGoItems)
   '
   echo "OK: $file migrated to schemaVersion 7"
 }

@@ -33,14 +33,40 @@ fi
 
 FILENAME=$(basename "$FILE_PATH")
 
+# ─── 승인 unlock 토큰 (acceptance-unlock 발급) ───
+# 토큰이 존재하면 SPEC.md / tests/acceptance/** 편집을 한시적으로 허용한다.
+# 배경: 이 가드가 동결 후 SPEC/인수 테스트를 영구 차단하는 동안, 스킬이 정한 정상 해결
+# 절차는 "사용자 승인 → SPEC 갱신 → --approved-by-user 재동결"이었다. 승인을 받아도 고칠
+# 도구가 없어 절차 자체가 실행 불가한 모순이 있었다. 토큰은 그 승인의 기계 판독 가능한
+# 증거이며, 재동결(acceptance-freeze --approved-by-user)이 토큰을 소비해 문을 닫는다.
+# 토큰이 남아 있으면 acceptance-gate 가 FAIL 하고 stop-hook 이 완주를 차단하므로,
+# 이 완화는 "열어둔 채 빠져나가기"로 악용될 수 없다. 토큰 파일 자체는 아래 Guard 1 에서
+# Edit/Write 하드 차단(Bash 경유는 bash-guards.sh 검사 5)하므로 손으로 위조할 수도 없다.
+# overview.md / docs/specs / docs/plans / CLAUDE.md 는 토큰과 무관하게 그대로 차단된다.
+ACCEPTANCE_UNLOCK_TOKEN=".claude/acceptance-unlock.json"
+UNLOCK_ACTIVE="false"
+UNLOCK_REASON=""
+if [[ -f "$ACCEPTANCE_UNLOCK_TOKEN" ]]; then
+  UNLOCK_ACTIVE="true"
+  UNLOCK_REASON=$(jq -r '.reason // ""' "$ACCEPTANCE_UNLOCK_TOKEN" 2>/dev/null || echo "")
+fi
+
 # --- Guard 1: 진행 상태/증거 파일 보호 ---
 # 신뢰 모델: 훅과 게이트 스크립트가 같은 권한 환경에서 실행되므로 완전 차단은
 # 불가능하다. 이 가드는 우발적/1차 시도를 막고, 우회 흔적은 감사 가능하게
-# 남기는 목적이다. (Bash 경유 조작은 verification-write-guard.sh가 담당)
+# 남기는 목적이다. (Bash 경유 조작은 bash-guards.sh 검사 3이 담당)
 
 # .claude-verification.json: 게이트 스크립트 전용 증거 파일 → 직접 수정 하드 차단
 if [[ "$FILENAME" == ".claude-verification.json" ]]; then
   echo '{"decision": "block", "reason": "verification.json은 게이트 스크립트 전용 증거 파일 — 직접 수정 금지. 결과를 바꾸려면 해당 게이트를 재실행하라 (shared-gate.sh <gate>)"}'
+  exit 0
+fi
+
+# acceptance-unlock.json: acceptance-unlock 서브커맨드 전용 승인 토큰 → 직접 생성/수정 하드 차단
+# (토큰을 손으로 만들면 아래 UNLOCK 완화가 사용자 승인 없이 열린다 — 발급은 스크립트만,
+#  소비는 acceptance-freeze --approved-by-user 만. Bash 경유는 bash-guards.sh 검사 5가 담당)
+if [[ "$FILENAME" == "acceptance-unlock.json" ]]; then
+  echo '{"decision": "block", "reason": "acceptance-unlock.json은 승인 토큰 — 직접 생성/수정 금지. 동결 해제는 사용자 승인 후 shared-gate.sh acceptance-unlock --approved-by-user --reason <사유> 로만 발급하고, 재동결(acceptance-freeze --approved-by-user)이 토큰을 소비한다."}'
   exit 0
 fi
 
@@ -78,7 +104,12 @@ if [[ "$FILE_PATH" == *"/tests/acceptance/"* ]] || [[ "$FILE_PATH" == "tests/acc
     # 다른 도구가 만든 .manifest.json이면 이 가드는 관여하지 않는다.
     _OURS_MANIFEST=$(jq 'has("hashAlgo") and has("files")' "tests/acceptance/.manifest.json" 2>/dev/null || echo "false")
     if [[ "$_OURS_MANIFEST" == "true" ]]; then
-      echo '{"decision": "block", "reason": "인수 테스트는 동결됨(선작성+동결 원칙). 스펙 변경이 필요하면 (1) 사용자 승인(AskUserQuestion) → (2) SPEC 갱신 → (3) shared-gate.sh acceptance-freeze --approved-by-user 재동결 후 수정하라."}'
+      if [[ "$UNLOCK_ACTIVE" == "true" ]]; then
+        # 승인 unlock 중 → 허용. decision 없이 systemMessage만 (권한 판정은 유보)
+        jq -n --arg m "UNLOCK 중: 동결된 인수 테스트(${FILENAME}) 편집이 사용자 승인으로 한시 허용되었습니다 (사유: ${UNLOCK_REASON:-미기록}). 수정을 마치면 반드시 'shared-gate.sh acceptance-freeze --approved-by-user'로 재동결하세요 — 토큰이 남아 있으면 acceptance-gate가 FAIL하고 완주가 차단됩니다. 구현 편의를 위한 어서션 약화는 금지." '{"systemMessage": $m}'
+        exit 0
+      fi
+      echo '{"decision": "block", "reason": "인수 테스트는 동결됨(선작성+동결 원칙). 스펙 변경이 필요하면 (1) 사용자 승인(AskUserQuestion) → (2) shared-gate.sh acceptance-unlock --approved-by-user --reason \"<사유>\" 로 동결 해제 → (3) SPEC/테스트 수정 → (4) shared-gate.sh acceptance-freeze --approved-by-user 로 재동결하라."}'
       exit 0
     fi
   fi
@@ -114,6 +145,13 @@ fi
 
 # 보호 대상이 아니면 통과 — 무출력 (권한 판정 유보)
 if [[ -z "$PROTECTION_TYPE" ]]; then
+  exit 0
+fi
+
+# unlock 토큰 유효 시 SPEC.md만 허용 (동결 대상은 SPEC 해시이므로 SPEC이 정확히 그 대상).
+# overview.md / docs/specs / docs/plans / CLAUDE.md 는 계속 차단 — 승인 범위를 넘는다.
+if [[ "$UNLOCK_ACTIVE" == "true" ]] && [[ "$FILENAME" == "SPEC.md" ]]; then
+  jq -n --arg m "UNLOCK 중: SPEC.md 편집이 사용자 승인으로 한시 허용되었습니다 (사유: ${UNLOCK_REASON:-미기록}). 수정을 마치면 반드시 'shared-gate.sh acceptance-freeze --approved-by-user'로 재동결하세요 — 토큰이 남아 있으면 acceptance-gate가 FAIL하고 완주가 차단됩니다." '{"systemMessage": $m}'
   exit 0
 fi
 

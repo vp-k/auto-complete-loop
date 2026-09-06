@@ -480,6 +480,18 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       }
 
       # (WF_FULL_AUTO / WF_PLAN_DOCS_FULL은 위 워크플로우 판별에서 계산됨)
+
+      # unlock 토큰 잔존 차단 (full-auto · plan-docs-full 공통): acceptance-unlock 으로 동결을 풀고
+      # 재동결하지 않은 상태로 완주하면 "동결된 인수 테스트"가 사실상 자유 편집 상태로 남는다.
+      # 재동결(acceptance-freeze --approved-by-user)이 토큰을 소비하므로, 토큰이 남아 있다 =
+      # 재동결하지 않았다. plan-docs-full 은 acceptanceFreeze=pass 를 요구하지만 그 기록은 unlock
+      # 이전 동결의 흔적일 수 있으므로 토큰 검사를 워크플로우 분기 밖에서 공통 적용한다.
+      if [[ "$WF_FULL_AUTO" == "true" || "$WF_PLAN_DOCS_FULL" == "true" ]] && [[ -f ".claude/acceptance-unlock.json" ]]; then
+        _ur=$(jq -r '.reason // ""' .claude/acceptance-unlock.json 2>/dev/null || echo "")
+        VERIFICATION_PASSED="false"
+        FAILURE_REASONS="${FAILURE_REASONS}acceptance unlock 토큰 잔존(.claude/acceptance-unlock.json${_ur:+, 사유: $_ur}) — 동결 해제 후 재동결하지 않았다. SPEC/인수 테스트 수정을 끝냈으면 'shared-gate.sh acceptance-freeze --approved-by-user'로 재동결(토큰 소비)한 뒤 'shared-gate.sh acceptance-gate'를 다시 통과시켜라. "
+      fi
+
       if [[ "$WF_FULL_AUTO" == "true" ]]; then
         # full-auto: 기획 게이트(pass) + live/layer/일관성(pass|skip) + 코드리뷰 finding(pass)
         # 착수 전 명확화(ambiguity-score)를 하드로: pass(4차원 충족) 또는 escalated(max-rounds

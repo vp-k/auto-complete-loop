@@ -8,7 +8,7 @@
 | 파라미터 | 설명 | full-auto | full-auto-teams |
 |----------|------|-----------|-----------------|
 | `{PROMISE_TAG}` | Ralph Loop 완료 promise | FULL_AUTO_COMPLETE | FULL_AUTO_TEAMS_COMPLETE |
-| `{PROGRESS_FILE}` | 진행 상태 파일 | .claude-full-auto-progress.json | .claude-full-auto-progress.json |
+| `{PROGRESS_FILE}` | 진행 상태 파일 | .claude-full-auto-progress.json | .claude-full-auto-teams-progress.json |
 | `{PHASE_3_SKILL}` | Phase 3 스킬 파일 | skills/code-review/SKILL.md | skills/team-code-review/SKILL.md |
 
 ## Ralph Loop 자동 설정 (최우선 실행)
@@ -34,6 +34,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
      - full-auto 계열: `specCompleteness` / `clarificationGate` / `docCompleteness`(pass) + `liveTesting` / `layerCoverage` / `docCodeCheck` / `serviceTestCheck`(pass|skip) + `codeReviewFindings`(pass) + `acceptanceTests`(pass — `acceptance-gate` 실행 결과)
      - plan-docs-full 계열: `specCompleteness` / `clarificationGate` / `docCompleteness` / `specToTests` / `acceptanceFreeze` (모두 pass — `acceptanceFreeze`는 `acceptance-freeze` 실행 결과)
      — 각 키는 대응 게이트 서브커맨드 실행 결과로만 기록된다 (모델 직접 기록 금지)
+   - **명확화 게이트 재실행** (Phase 4 Step 4-6.6): `clarification-gate`를 다시 실행해 구현 Phase가 `docs/CLARIFICATIONS.md`에 남긴 [NEEDS-CLARIFICATION] 잔존을 재기록 — Phase 1의 옛 pass 기록으로 완주하는 공백 차단
+   - **인수 테스트 flaky**: `acceptanceTests`가 `soft_fail`(1회차 red·2회차 green)이면 pass가 아니다 — 비결정성을 제거한 뒤 재실행해 1회차 green을 받아야 한다
    - **통합 검증 게이트** (Phase 4 Step 4-6.5에서 실행, 모두 exit 0이어야 함):
      - `placeholder-check`: TODO/placeholder/FIXME 잔존 0건
      - `external-service-check`: SPEC.md 명시 외부 서비스의 SDK/config 존재
@@ -50,11 +52,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 | 등급 | 강제 주체 | 항목 | 실패 시 |
 |------|----------|------|---------|
 | **훅 강제 (하드)** | stop-hook (fail-closed) | build/typeCheck/lint/test, **functionalFlow/integrationSmoke (`fail` 시 하드 차단)**, smokeCheck(`soft_fail`=fail), **secretScan(`fail` 차단)**, specCompleteness, clarificationGate, docCompleteness, liveTesting, layerCoverage, codeReviewFindings — 워크플로우 스코프 키: **specToTests(plan-docs-full 전용)**, **docCodeCheck/serviceTestCheck(full-auto 전용)**, **acceptanceTests(full-auto 계열 — `skip`은 미통과, `tests/acceptance/` 필수, `pass`만 인정)**, acceptanceFreeze(plan-docs-full 계열) | 완주(promise 출력) 불가 — 해결 전까지 iteration 반복 |
-| **훅 강제 (하드)** | protect-files-guard | 동결된 `tests/acceptance/**` — `acceptance-freeze` 이후 Edit/Write 차단 (우회 수정도 `acceptance-gate` 해시 무결성이 감지) | 수정 시도 자체가 차단. 변경은 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user`로만 가능 |
+| **훅 강제 (하드)** | protect-files-guard | 동결된 `tests/acceptance/**` — `acceptance-freeze` 이후 Edit/Write 차단 (우회 수정도 `acceptance-gate` 해시 무결성이 감지) | 수정 시도 자체가 차단. 변경은 사용자 승인 → `acceptance-unlock --approved-by-user --reason "<사유>"`(토큰 발급, 가드가 SPEC.md·tests/acceptance/** 한시 허용) → 수정 → `acceptance-freeze --approved-by-user`(토큰 소비)로만 가능. 토큰 잔존 시 acceptance-gate FAIL + stop-hook 완주 차단 |
 | **게이트 기록 (전이 차단)** | shared-gate.sh 서브커맨드 | live-testing-gate, layer-coverage, code-review-findings, runtime-gate, e2e-gate, spec-completeness, clarification-gate, doc-completeness, placeholder-check, external-service-check, service-test-check, acceptance-freeze, acceptance-gate, secret-scan(HARD) | 해당 스텝/Phase 전이 차단. 결과는 스크립트가 verification.json에 기록 — **모델 직접 기록 금지** |
 | **자문 (SOFT)** | 경고만 출력 | implementation-depth(5건 미만 WARN), test-quality, page-render-check(non-strict — `soft_fail`로 기록, 차단 없음), artifact-check(`soft_fail` 기록), visualRegression | WARN 출력 후 진행 가능 (수정 권장). **SOFT→HARD 자동 승격은 implementation-depth · test-quality에만 적용**: 연속 2회 실패(직전 fail/warn 포함) 시 HARD로 승격되어 exit 1, pass가 나오면 warn 등급으로 복귀. 단 test-quality의 "테스트 0건" warn은 승격 대상에서 제외. page-render-check(non-strict)/artifact-check/visualRegression은 승격 없음 |
 
-directorOverride를 포함한 어떤 오버라이드도 "훅 강제" 등급을 우회할 수 없다.
+어떤 오버라이드도 "훅 강제" 등급을 우회할 수 없다.
 
 ### Iteration 단위 작업 규칙
 - 한 iteration에서 **한 Phase의 일부 작업**만 처리
@@ -156,16 +158,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
 
 > 공통 강제 규칙(1~7)은 shared-rules.md 참조
 
-8. **자체 탐색**: codex에게 파일 경로를 전달하여 직접 읽도록 함
+8. **자체 탐색**: codex 호출 규약은 shared-rules.md "외부 AI 자체 탐색 (codex 호출 시)" 참조
 9. **handoff 필수**: 매 iteration 종료 시 handoff 필드 업데이트
 10. **스크립트 우선**: 구조적/기계적 검사는 `shared-gate.sh`로 먼저 실행
 
 ## 포기 방지 규칙 (강제)
 
-**강제 행동 (레벨별 에스컬레이션):**
-- L0 즉시 수정 (3회) → L1 다른 방법 (3회) → L2 codex 분석 → L3 다른 접근법 (3회) → L4 범위 축소 → L5 사용자 개입
-- 각 레벨에서 예산만큼 시도 후 다음 레벨로 자동 에스컬레이트
-- 범위 축소는 핵심 경로(인증, CRUD 기본, 빌드) 제외
-- 모든 Phase 완료까지 계속 진행
+L0→L5 에스컬레이션 사다리와 범위 축소 예외는 `${CLAUDE_PLUGIN_ROOT}/rules/error-escalation-rules.md`("포기 방지")를 단일 출처로 따른다.
 
-**원칙:** L5(사용자 개입) 전까지 스스로 해결. 모든 Phase가 완료될 때까지 멈추지 않음.
+**오케스트레이터 추가 원칙:** 모든 Phase가 `completed` 될 때까지 멈추지 않는다 (L5 도달 전 자체 해결).

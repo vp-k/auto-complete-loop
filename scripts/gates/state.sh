@@ -99,14 +99,6 @@ cmd_status() {
     fi
   fi
 
-  # Conditional GO Items (미해결 조건)
-  local has_cond_items
-  has_cond_items=$(jq 'if .conditionalGoItems then ([.conditionalGoItems[] | select(.resolvedAt == null)] | length > 0) else false end' "$PROGRESS_FILE" 2>/dev/null || echo "false")
-  if [[ "$has_cond_items" == "true" ]]; then
-    echo "Pending Conditional GO:"
-    jq -r '.conditionalGoItems[] | select(.resolvedAt == null) | "  [\(.fromPhase)→\(.targetPhase)] \(.condition)"' "$PROGRESS_FILE" 2>/dev/null
-  fi
-
   # Scope Reductions (있는 경우)
   local has_scope_reductions
   has_scope_reductions=$(jq 'if .phases.phase_2.scopeReductions then (.phases.phase_2.scopeReductions | length > 0) else false end' "$PROGRESS_FILE" 2>/dev/null || echo "false")

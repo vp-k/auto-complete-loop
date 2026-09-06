@@ -8,9 +8,13 @@
 - **verification.json 직접 편집(Edit/Write/Bash 리다이렉트)은 가드가 차단함** — 반드시 위 서브커맨드를 사용 (읽기는 허용)
 
 ## DoD 확인
-프로젝트 루트의 `DONE.md`가 있으면 반드시 읽고 체크리스트로 사용합니다.
-없으면 각 스킬의 내장 완료 기준을 사용합니다 (빌드/테스트/린트/리뷰 통과).
-필요 시 `${CLAUDE_PLUGIN_ROOT}/templates/DONE.md` 템플릿을 참고할 수 있습니다.
+DoD의 단일 출처는 **progress 파일의 `dod` 체크리스트**입니다 (`.claude-*-progress.json`).
+별도의 `DONE.md` 체크리스트 파일은 사용하지 않습니다 — 어떤 게이트도 그 파일을 읽지 않으므로
+거기에 체크를 남겨도 완주 판정에 반영되지 않습니다.
+- 항목 확인: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status`
+- 키 추가: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key <key> "<설명>"`
+- 각 항목은 evidence 없이 checked=true 불가 (아래 "증거 기반 완료 선언" 참조)
+- 게이트 결과(`.claude-verification.json`)와 `dod`가 모두 충족되어야 완주 promise 출력 가능
 
 ## Ralph Loop 모드
 `.claude/ralph-loop.local.md`가 존재하면 Ralph Loop 모드입니다.
@@ -87,7 +91,7 @@ Small(<5)/Medium(5~15)/Large(8+docs) 기준 및 DoD 키 관리는 분리된 규�
 - 최종 검증/폴리싱 단계 (여러 US에 걸쳐 적용)
 - `Directive:` 트레일러가 포함된 아키텍처 결정 커밋
 
-**검증**: `hooks/commit-msg-guard.sh`가 US-suffix 형식을 검증. `[auto]` prefix 커밋에서 suffix 누락 시 에러 반환. 면제 키워드(`스캐폴딩|scaffolding|infrastructure|E2E 프레임워크|최종 검증|폴리싱|polishing`) 포함 시 통과.
+**검증**: `hooks/bash-guards.sh`(검사 2)가 US-suffix 형식을 검증. `[auto]` prefix 커밋에서 suffix 누락 시 에러 반환. 면제 키워드(`스캐폴딩|scaffolding|infrastructure|E2E 프레임워크|최종 검증|폴리싱|polishing`) 포함 시 통과.
 
 ### Git 트레일러 (핵심 결정 시점만)
 
@@ -225,32 +229,3 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
 - **Haiku는 사용하지 않음**
 - 모델 미지정 시 부모 세션의 모델을 상속
 - Agent 도구의 `model` 파라미터로 지정: `"model": "sonnet"` 또는 `"model": "opus"`
-
-## 에이전트 정의 형식 (YAML Frontmatter)
-
-agents/ 디렉토리에 에이전트를 정의할 때 YAML frontmatter 형식을 사용합니다:
-
-```markdown
----
-name: agent-name
-description: 에이전트의 역할 (한 줄)
-model: sonnet
-tools:
-  - Read
-  - Grep
-  - Glob
-  - Bash
----
-
-# Agent Name
-
-에이전트의 상세 동작 로직...
-```
-
-**필수 필드:**
-- `name`: 에이전트 식별자 (kebab-case)
-- `description`: 트리거 판단에 사용되는 설명
-- `model`: `sonnet` 또는 `opus` (Haiku 사용 금지)
-
-**선택 필드:**
-- `tools`: 사용 가능한 도구 제한 목록 (미지정 시 모든 도구 사용 가능)

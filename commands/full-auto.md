@@ -20,9 +20,10 @@ argument-hint: <요구사항 (자연어)>
 |----------|-------------|------|-------|
 | PROMISE_TAG | `FULL_AUTO_COMPLETE` | `FULL_AUTO_COMPLETE` | `FULL_AUTO_TEAMS_COMPLETE` |
 | PROGRESS_FILE | `.claude-full-auto-progress.json` | `.claude-full-auto-progress.json` | `.claude-full-auto-teams-progress.json` |
-| PHASE_1_SKILL | `skills/doc-planning/SKILL.md` | `skills/doc-planning-solo/SKILL.md` | `skills/doc-planning/SKILL.md` |
+| PHASE_1_SKILL | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` | `skills/doc-planning/SKILL.md` |
+| REVIEW_MODE | `codex` | `solo` | `teams` |
 | PHASE_3_SKILL | `skills/code-review/SKILL.md` | `skills/code-review-solo/SKILL.md` | `skills/team-code-review/SKILL.md` |
-| PHASE_3_STEPS | Step 3-1 ~ 3-4 | Step 3-1 ~ 3-4 | Step 3-1 ~ 3-7 |
+| PHASE_3_STEPS | Step 3-1 ~ 3-2 | Step 3-1 ~ 3-2 | Step 3-0 ~ 3-7 |
 
 `--mode` 미지정 시 codex 모드를 사용합니다.
 
@@ -96,7 +97,11 @@ Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh skip-phases <N> --progress-file {PROGRESS_FILE}
    ```
 5. Phase N의 스킬을 Read하여 해당 Phase부터 시작
-6. **인수 테스트 동결 (N >= 2일 때)**: `tests/acceptance/.manifest.json`이 없으면 — 기획 Phase를 건너뛰었으므로 인수 테스트가 없는 상태. AskUserQuestion으로 사용자 승인을 받아 `templates/acceptance-tests-guide.md` 기준으로 인수 테스트를 생성한 뒤 `acceptance-freeze --approved-by-user`로 동결한다 (구현 단계의 신규 동결은 승인 플래그 없이는 거부됨). 사용자가 거부하면 acceptance 게이트로 인해 완주가 차단됨을 안내하고 중단.
+6. **인수 테스트 동결 (N >= 2일 때)**: `tests/acceptance/.manifest.json`이 없으면 — 기획 Phase를 건너뛰었으므로 인수 테스트가 없는 상태. **사용자가 `--start-phase N`(N≥2)을 명시한 행위 자체가 "기획 산출물을 건너뛴다"는 승인**이므로 AskUserQuestion을 다시 하지 않는다(무인 재개 보장). `templates/acceptance-tests-guide.md` 기준으로 SPEC의 AC에서 인수 테스트를 생성한 뒤 동결한다:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze --progress-file {PROGRESS_FILE}      --approved-by-user --reason "start-phase skip" --approved-by "--start-phase flag"
+   ```
+   (구현 단계의 신규 동결은 승인 플래그 없이는 거부되며, `approvedBy`가 manifest의 `refreezeHistory`에 남아 사후 추적이 가능하다.) 동결 후 SPEC/인수 테스트를 고쳐야 하면 `acceptance-unlock --approved-by-user --reason "<사유>"` → 수정 → `acceptance-freeze --approved-by-user`(토큰 소비) 절차만 허용된다.
 7. **신규 fail-closed 키 기록 (N >= 2일 때)**: 스톱훅이 요구하는 키를 미기록 상태로 두지 않도록 즉시 실행:
    ```bash
    # provenanceGate: 마커 있는 SPEC이면 pass, pre-4.7 SPEC이면 skip-phases 증거로 skip 기록
@@ -112,5 +117,5 @@ Read ${CLAUDE_PLUGIN_ROOT}/rules/phase-transition-rules.md
 ```
 
 위 두 파일 및 **Read로 로드하는 모든 Phase 스킬**(pm-planning, doc-planning, implementation,
-code-review, verification 등)에 등장하는 파라미터(`{PROMISE_TAG}`, `{PROGRESS_FILE}`, `{PHASE_3_SKILL}`)는
+code-review, verification 등)에 등장하는 파라미터(`{PROMISE_TAG}`, `{PROGRESS_FILE}`, `{PHASE_1_SKILL}`, `{PHASE_3_SKILL}`, `{REVIEW_MODE}`)는
 이 파일 상단의 "파라미터" 섹션 값으로 치환하여 적용합니다.

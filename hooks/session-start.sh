@@ -12,9 +12,18 @@ if [[ ! -f "$SHARED_GATE" ]]; then
   exit 0
 fi
 
-# 고아 .tmp 정리 — atomic write 중간 산물은 절대 재개 정보가 아님, 무조건 삭제
-# (jq_inplace는 mktemp를 쓰지만 과거 버전이나 외부 도구가 남긴 잔재를 청소)
-for _orphan in .claude-*-progress.json.tmp .claude-*.tmp; do
+# 고아 temp 정리 — atomic write 중간 산물은 절대 재개 정보가 아님, 삭제해도 무손실.
+# 글롭은 **이 플러그인이 실제로 만드는 이름만** 매치한다. 과거의 `.claude-*.tmp`는
+# 타 도구의 임시 파일까지 지웠다.
+#   - scripts/lib/utils.sh write_json_atomic / jq_inplace: mktemp "${file}.XXXXXX"
+#     → .claude-<name>-progress.json.<6자> / .claude-verification.json.<6자>
+#   - 구버전이 남긴 `.tmp` 접미사 잔재
+# 제외: `${file}.corrupt.<ts>` (self-heal 백업 — 진단 증거이므로 보존),
+#       `${file}.lock.d` (디렉토리 — [[ -f ]]로 자연 배제)
+for _orphan in \
+  .claude-*-progress.json.tmp .claude-progress.json.tmp .claude-verification.json.tmp \
+  .claude-*-progress.json.?????? .claude-progress.json.?????? .claude-verification.json.??????
+do
   if [[ -f "$_orphan" ]]; then
     rm -f "$_orphan"
   fi

@@ -1,6 +1,7 @@
 # 기획 문서 공통 규칙
 
-doc-planning, doc-planning-solo 스킬이 공유하는 규칙입니다.
+doc-planning 스킬(모든 `{REVIEW_MODE}` 공통)과 `/plan-docs-auto`가 공유하는 규칙입니다.
+solo 모드의 fresh-context 검토 서브에이전트도 이 파일을 판정 기준으로 Read합니다.
 
 ## 기획 수준 원칙
 

@@ -50,8 +50,43 @@ echo "ACCEPTANCE_RESULT: total=$total passed=$passed failed=$failed"
 **서버/환경 자체 통제 (green 세탁 방지)**: run.sh가 대상 서버의 기동·포트·종료를 **직접 통제**해야 한다.
 `BASE_URL` 등 외부 환경변수로 대상 주소를 받지 마라 — 목 서버로 조향해 green을 세탁하는 경로가 되며,
 `acceptance-gate`는 BASE_URL/API_URL 계열 env를 제거하고 실행한다. 대상 URL은 run.sh 내부에서
-자체 기동한 포트로 구성한다 (예: `BASE="http://localhost:$PORT"` — run.sh가 $PORT로 직접 기동).
+자체 기동한 포트로 구성한다 (예: `BASE="http://localhost:$PORT"` — 포트는 run.sh가 고른다).
 테스트가 참조하는 헬퍼/픽스처 파일도 반드시 `tests/acceptance/` 내부에 두어 동결 범위에 포함시킨다.
+
+**기동은 "프로젝트 표준 진입점 + 포트 주입"으로 한다 (구현 구조 추측 금지)**:
+동결은 구현 **前**에 일어난다. run.sh가 `node src/server.js`처럼 **구체 파일 경로**를 적으면 아직 존재하지 않는
+구현 구조를 추측하는 것이고, 구현이 조금만 달라져도 **수정할 수 없는** 동결 테스트가 깨진다.
+그러므로 run.sh는 스택의 **표준 진입점 한 줄**만 호출하고 포트는 **환경변수로 주입**한다:
+
+| 스택 | 기동 명령 |
+|------|-----------|
+| Node | `PORT=$PORT npm start` (개발 서버가 필요하면 `PORT=$PORT npm run dev`) |
+| Python | `PORT=$PORT python -m <package>` |
+| Make 기반 | `PORT=$PORT make run` |
+| 컨테이너 | `PORT=$PORT docker compose up -d` (종료는 `docker compose down`) |
+
+- 기동 후 **헬스체크 폴링**으로 준비를 기다리고, 종료는 `trap ... EXIT`로 보장한다 (하드코딩 sleep 최소화).
+- **구현 Phase의 의무**: 이 표준 진입점(`npm start` / `make run` / `python -m <pkg>` / `docker compose up`)이
+  **실제로 동작하도록 제공**해야 한다. 진입점이 없어 인수 테스트가 red인 것은 "테스트가 틀린 것"이 아니라
+  **구현 미완**이다 — 동결 테스트를 고치지 말고 진입점을 만들어라. 스캐폴딩 단계에서 `package.json`의
+  `scripts.start`(또는 Makefile `run` 타깃)를 **가장 먼저** 만든다.
+
+**개별 파일 단독 실행 가능하게 작성한다 (`_helper.sh` 필수)**: 구현 Phase는 문서 단위로 해당 US 파일만 실행한다
+(`bash tests/acceptance/us-b-001-*.sh`). 전체 `run.sh`는 구현 종료 시점과 Phase 4 게이트에서만 돌린다.
+따라서 각 `us-*.sh`는 단독 실행 시에도 필요한 서버를 스스로 확보해야 한다 —
+`tests/acceptance/_helper.sh`에 "표준 진입점으로 기동 + 헬스체크 + `trap EXIT` 종료"를 넣고
+run.sh와 개별 테스트가 **같은 헬퍼를 source**한다 (헬퍼도 동결 범위 안이다). `us-*.sh`가 있는데
+`_helper.sh`가 없으면 `acceptance-freeze`가 WARN을 출력한다 — 단독 실행 불가한 테스트는 구현 Phase에서
+전체 러너 우회를 유발하는 결함이므로 동결 전에 고쳐라.
+
+**서버 재사용은 같은 셸 세션이 직접 기동한 프로세스에 한정한다**: 헬퍼는 자기 셸이 띄운 서버의 pid/포트를
+**셸 변수**(예: `ACC_SERVER_PID`, `ACC_PORT`)로만 기억하고, 그 변수가 비어 있으면 무조건 새로 기동한다.
+파일(`.acceptance-run/` 등)·외부 env·"포트가 이미 열려 있음" 같은 **프로세스 밖의 신호로 재사용을 판정하지
+마라** — 동결 범위 밖의 파일이나 환경은 누구나 쓸 수 있으므로, 거기 적힌 포트로 목 서버를 가리키면
+`acceptance-gate`의 env 스크럽(BASE_URL 제거)을 우회하는 green 세탁 채널이 된다. run.sh는 시작 시
+잔존 런타임 산출물(`.acceptance-run/` 같은 디렉토리를 쓰는 경우)을 **먼저 삭제**하고 자기 세션에서 기동한다.
+개별 `us-*.sh` 단독 실행이 매번 서버를 새로 띄우는 것은 정상 비용이다 — 재사용 최적화는 세탁 채널의 대가로
+얻는 것이므로 하지 않는다.
 
 ## 프로젝트 유형별 작성법
 
@@ -72,7 +107,15 @@ echo "ACCEPTANCE_RESULT: total=$total passed=$passed failed=$failed"
 
 ## 동결 / 변경 절차
 
-1. 생성 완료 → `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze` 실행 (tests/acceptance/ 전체 해시 동결 → `tests/acceptance/.manifest.json` 생성).
-2. 동결 후 tests/acceptance/** 수정은 protect-files-guard 훅이 차단하며, 우회 수정도 `acceptance-gate`의 해시 무결성 검사(변조/추가/삭제 감지)가 잡는다.
-3. 이후 **스펙 변경 시에만**: 사용자 승인 → SPEC 갱신 → `acceptance-freeze --approved-by-user`로 재동결.
+1. 생성 완료 → `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze` 실행 (tests/acceptance/ 전체 + **SPEC 파일** 해시 동결 → `tests/acceptance/.manifest.json` 생성).
+2. 동결 후 `tests/acceptance/**` 수정은 protect-files-guard 훅이 차단하며, 우회 수정도 `acceptance-gate`의 해시 무결성 검사가 잡는다.
+   - **변조·삭제 = FAIL** (완주 차단).
+   - **동결 목록에 없는 파일 추가 = WARN** — 추가는 기존 동결 파일의 어서션을 약화시킬 수 없기 때문이다. `addedFiles`로 기록되며, run.sh가 추가 파일도 실행하므로 `total`이 늘어나는 것은 정상이다.
+3. **변경이 필요하면 unlock 절차로만** (승인 없이는 파일 자체가 열리지 않는다):
+   1. **사용자 승인**: AskUserQuestion으로 "무엇이 왜 틀렸고 어떻게 고칠지"를 제시하고 승인받는다.
+   2. **해제**: `... shared-gate.sh acceptance-unlock --approved-by-user --reason "<승인받은 사유>"` → `.claude/acceptance-unlock.json` 토큰 생성. 훅이 `SPEC.md`와 `tests/acceptance/**` 편집을 한시 허용한다(경고만 출력). `--approved-by-user` 없이 실행하면 거부된다.
+   3. **수정**: SPEC과 인수 테스트를 고친다.
+   4. **재동결**: `... shared-gate.sh acceptance-freeze --approved-by-user` → 토큰이 **소비(삭제)**되고 사유가 manifest의 `refreezeHistory`에 남는다.
+   5. **재검증**: `... shared-gate.sh acceptance-gate` 재실행. 토큰이 남아 있으면 게이트가 FAIL(`unlock pending — re-freeze first`)하고 stop-hook이 완주를 차단한다.
 4. **구현 편의를 위한 테스트 완화는 스펙 변경이 아니다 — 금지.** 테스트가 어렵다는 이유로 어서션을 약화/삭제하지 않는다.
+5. **flaky 재시도**: 러너가 실패하면 `acceptance-gate`가 **1회 자동 재실행**한다. 2회차 green이면 **`soft_fail`**(`flaky: true` + 1회차 결과 `firstRun`)로 기록되고 완주가 차단된다 — 재시도는 "환경 노이즈인지 테스트 결함인지"를 분리하는 진단이지 green을 만들어 주는 장치가 아니다. 시간·순서·포트 의존을 제거한 뒤 게이트를 재실행해 **1회차에 green**이어야 `pass`가 된다. (해시 무결성 실패는 재시도하지 않는다.)

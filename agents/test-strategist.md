@@ -1,7 +1,7 @@
 ---
 name: test-strategist
 description: |
-  Use this agent between Phase 1 and Phase 2. Designs test strategy including pyramid allocation, edge case identification, failure path scenarios, test data design, and contract test needs. Produces Test Plan that guides Phase 2 implementation and Phase 4 verification.
+  Use this agent between Phase 1 and Phase 2, only when projectSize is Medium or Large (Small projects skip the Test Plan — frozen acceptance tests and smoke scripts cover it). Designs test strategy including pyramid allocation, edge case identification, failure path scenarios, test data design, and contract test needs. Produces Test Plan that guides Phase 2 implementation and Phase 4 verification.
 model: opus
 ---
 
@@ -163,7 +163,7 @@ Source codes: AC=Acceptance Criteria, SM=State Machine, EC=Edge Case, API=API Er
 > This summary should be copied to SPEC.md under Constraints or Edge Cases section.
 
 ### Verification Criteria
-[Criteria for Phase 4 verification-auditor to cross-check against this plan]
+[Criteria for the Phase 4 fresh-context audit (Large projects only) to cross-check against this plan]
 - Minimum coverage: [X]% for P0 paths
 - All P0 and P1 test cases must have corresponding test files
 - Each failure path scenario must have at least one test

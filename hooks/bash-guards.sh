@@ -4,7 +4,9 @@
 #   1) block-no-verify  : --no-verify / git commit -n 차단 (pre-commit hook 보호)
 #   2) commit-msg-guard : [auto] 커밋 메시지의 US-ID suffix 의무화
 #   3) verification-write-guard : .claude-verification.json Bash 경유 쓰기 차단
-# 첫 block에서 즉시 종료. 검사 순서·판정 결과는 기존 3개 훅과 동일.
+#   4) ralph-write-guard : .claude/ralph-loop.local.md Bash 경유 수정/삭제 차단
+#   5) unlock-token-guard : .claude/acceptance-unlock.json Bash 경유 생성/수정 차단
+# 첫 block에서 즉시 종료.
 #
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
 # 출력: 차단 시 {"decision": "block", "reason": "..."}
@@ -269,11 +271,22 @@ check_ralph_write() {
   _check_file_write 'ralph-loop.local.md' 'ralph-loop\.local\.md' "$RALPH_BLOCK_MSG"
 }
 
+# ─── 검사 5: acceptance unlock 토큰 보호 (승인 위조 방지) ───
+# protect-files-guard 는 토큰이 존재하면 SPEC.md / tests/acceptance/** 편집을 한시 허용한다.
+# 토큰을 echo/jq 리다이렉트로 손수 만들면 그 완화가 사용자 승인 없이 열리므로, 발급은
+# shared-gate.sh acceptance-unlock(--approved-by-user 검증) 만, 소비는 acceptance-freeze 만 한다.
+UNLOCK_BLOCK_MSG='acceptance-unlock.json은 승인 토큰 — 직접 생성/수정/삭제 금지. 동결 해제는 사용자 승인 후 shared-gate.sh acceptance-unlock --approved-by-user --reason "<사유>" 로만 발급하고, 재동결(shared-gate.sh acceptance-freeze --approved-by-user)이 토큰을 소비한다. 읽기는 허용.'
+
+check_unlock_token_write() {
+  _check_file_write 'acceptance-unlock.json' 'acceptance-unlock\.json' "$UNLOCK_BLOCK_MSG"
+}
+
 # ─── 순차 실행 (기존 hooks.json 등록 순서와 동일) ───
 check_no_verify
 check_commit_msg
 check_verification_write
 check_ralph_write
+check_unlock_token_write
 
 # 전 검사 통과 → 무출력 (권한 판정 유보)
 exit 0

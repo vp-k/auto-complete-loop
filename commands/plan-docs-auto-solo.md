@@ -1,6 +1,6 @@
 ---
 description: "기획 문서 완성 (솔로형). Claude 작성 + fresh-context 검토 서브에이전트"
-argument-hint: <기획 정의 문서 경로>
+argument-hint: <definition(overview.md)> <doclist(README.md)>
 ---
 
 # Plan Docs Auto Solo (→ /plan-docs-auto --mode solo)

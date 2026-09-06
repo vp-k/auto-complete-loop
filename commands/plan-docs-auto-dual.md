@@ -1,6 +1,6 @@
 ---
 description: "기획 문서 완성 (3자 자동 토론형). codex 1차 + codex 2차 + Claude Code 3자 토론"
-argument-hint: <기획 정의 문서 경로>
+argument-hint: <definition(overview.md)> <doclist(README.md)>
 ---
 
 # Plan Docs Auto Dual (→ /plan-docs-auto --mode dual)

@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.18.0**
+**v4.19.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -63,13 +63,14 @@ Agent 3 [SPEC Compliance Expert]    CODE, IMPL only ┘
 ```
 Each agent reads the code fresh with a single focused lens. Prevents perspective contamination. If the Agent tool is unavailable, falls back to the same split as sequential passes.
 
-**Planning Docs (self-debate)**:
+**Planning Docs (fresh-context reviewer subagent)**:
 ```
-[Writer]  Drafts the document
-[Critic]  "How would this fail in production?"
-[Writer]  Addresses critique
-[Critic]  Repeats until no Critical/High issues remain
+[Writer]            Drafts the document
+[Fresh-context Agent] Reads only the file: "How would this fail in production?"
+[Writer]            Addresses the findings
+                    Repeats until a round has no new Critical/High
 ```
+The reviewer never sees the writing conversation, so it judges what is written, not what was intended. Falls back to self-review only if the Agent tool is unavailable.
 
 **Release Polish (dual-role)**:
 ```
@@ -148,7 +149,7 @@ Options: `--rounds N` (default 3), `--goal "condition"`, `--interactive`
 | `/plan-docs-full <req>` | One-line requirement → PM Planning + Doc Planning + SPEC + smoke scripts + frozen acceptance tests, 6 strict gates (`--mode solo\|codex\|teams\|dual`) |
 | `/plan-docs-auto <def> <docs>` | Doc refinement with codex debate |
 | `/plan-docs-auto-dual <def> <docs>` | 3-way: codex ×2 + Claude |
-| `/plan-docs-auto-solo <def> <docs>` | Claude self-debate (writer vs. critic) |
+| `/plan-docs-auto-solo <def> <docs>` | Fresh-context reviewer subagent (no external AI) |
 
 ### Release
 | Command | Description |

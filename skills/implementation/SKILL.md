@@ -395,7 +395,7 @@ Self-check 후, Agent 도구로 검증 에이전트를 별도 생성하여 fresh
 
 ### Step 2-6: 에러 자동 복구
 
-`rules/error-escalation-rules.md` 참조.
+`Read ${CLAUDE_PLUGIN_ROOT}/rules/error-escalation-rules.md` — 에러 레벨 분류·에스컬레이션 예산·범위 축소 절차의 단일 출처.
 
 에러 기록:
 ```bash

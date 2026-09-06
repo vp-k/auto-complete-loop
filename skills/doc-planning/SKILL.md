@@ -5,9 +5,10 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
 > `{PROGRESS_FILE}`은 오케스트레이터(full-auto.md / plan-docs-full.md의 "파라미터" 표)가 정한 값으로 치환한다
 > (예: full-auto codex/solo: `.claude-full-auto-progress.json`, teams: `.claude-full-auto-teams-progress.json`,
-> plan-docs-full: `.claude-plan-docs-full-progress.json`).
+> plan-docs-full: `.claude-plan-docs-full-progress.json`,
+> `/plan-docs-auto`: `.claude-plan-progress.json` — 이 명령은 Step 1-0의 overview 검증 소절·Step 1-2·Step 1-4만 수행한다, 치환 규칙은 `commands/plan-docs-auto.md` 1단계).
 >
-> `{REVIEW_MODE}`도 같은 "파라미터" 표에서 치환한다 (`codex` | `solo` | `teams` | `dual`).
+> `{REVIEW_MODE}`도 같은 "파라미터" 표에서 치환한다 (`codex` | `solo` | `teams` | `dual`; `/plan-docs-auto`는 `--mode` 값).
 > **이 스킬은 모든 모드의 단일 소스다** — 모드별 분기는 아래 두 곳(Step 1-2 토론 루프, Step 1-6 아키텍처 리뷰)뿐이고,
 > 나머지 스텝(특히 Step 1-9의 게이트 5종)은 모드와 무관하게 동일하게 수행한다.
 
@@ -21,7 +22,7 @@ No Ralph/progress/promise code — managed by the orchestrator.
 ## 전제 조건
 
 - Phase 0 완료 (overview.md, README.md 존재)
-- progress 파일에 Phase 0 outputs 기록 완료
+- progress 파일에 Phase 0 outputs 기록 완료 (`/plan-docs-auto` 경유 시 면제 — 그 progress 파일에는 `phases.*`가 없고 Step 1-2/1-4만 적용한다)
 - `shared-rules.md`가 이미 로드된 상태
 
 ## Phase 1 절차
@@ -104,6 +105,8 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 
    ## 요청
    피드백을 Critical/High/Medium/Low 우선순위로 분류해서 제공해주세요.
+   지적할 것이 없으면 그 판정의 근거(무엇을 확인했는지)를 항목별로 적어주세요.
+   근거 없는 approve와 "전반적으로 좋다" 류의 총평은 반환하지 마세요.
 
    ## E2E 시나리오 관점
    SPEC.md 작성 시 핵심 E2E 시나리오 3-5개를 도출하세요.
@@ -188,6 +191,8 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 **검토자 산출물**: 객관적 기준 기반 피드백, 우선순위별 분류, 구체적 개선안 (검토자가 codex든 서브에이전트든 동일)
 **Claude Code 산출물**: 검토 피드백의 비판적 분석, 실제 필요한 수정만 선별, 최종 문서 수정
 
+**단순 approve 금지** (모드 공통): "동의합니다", "문제 없습니다" 같은 근거 없는 승인은 유효한 검토가 아니다. "수정 없음" 선언은 **검토한 항목과 근거**를 항목별로 명시해야 유효하며(예: "정의 문서 원칙 X, Y 기준으로 검토 완료. 충돌 없음 확인."), 근거 없는 approve만 돌아온 라운드는 수렴 라운드로 계상하지 않고 근거를 요구해 재검토한다 — 수렴 기준이 "신규 Critical/High 0건 라운드에서 즉시 합의"이므로 이 규칙이 없으면 근거 없는 1회 approve가 문서를 확정시킨다.
+
 **검토자 제외 규칙** (모드 공통):
 - 동일 피드백 3회 반복 -> 해당 검토자 제외, Claude Code 단독 결정
 - 근거 없는 approve 3회 -> 해당 검토자 제외, Claude Code 단독 결정
@@ -219,7 +224,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 | 모든 문서 공통 규칙 — Step 1-2 진입 시 1회 | `${CLAUDE_PLUGIN_ROOT}/templates/doc-planning-common.md` |
 | SPEC.md — 작성 시작 시점 | `${CLAUDE_PLUGIN_ROOT}/templates/SPEC.md` (구조 스켈레톤) |
 | 인수 테스트(tests/acceptance/) — Step 1-7.5 진입 시에만 | `${CLAUDE_PLUGIN_ROOT}/templates/acceptance-tests-guide.md` |
-| docs/security-authn-authz.md — 해당 문서 토론 시 (Medium+) | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지) |
+| docs/security-authn-authz.md — 해당 문서 토론 시 (Medium+) | Step 1-0에서 복사된 `docs/security-authn-authz.md` 사본 (원본 `templates/security-authn-authz.md` 중복 Read 금지; 복사 단계가 없는 `/plan-docs-auto`에서는 프로젝트의 해당 파일) |
 | docs/error-policy.md — 해당 문서 토론 시 (Medium+) | `docs/error-policy.md` 사본 (원본 템플릿 중복 Read 금지) |
 | docs/logging-standard.md — 해당 문서 토론 시 (Medium+) | `docs/logging-standard.md` 사본 (원본 템플릿 중복 Read 금지) |
 | docs/DESIGN.md — 해당 문서 토론 시 (hasFrontend=true) | `docs/DESIGN.md` 사본 (원본 템플릿 중복 Read 금지) |

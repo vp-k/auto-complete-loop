@@ -366,7 +366,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension featureComple
 
 ### 에러 분류 (Error Classification)
 
-에러 발생 시 레벨 분류 (`shared-rules.md`의 Error Classification & Escalation 참조):
+에러 발생 시 먼저 `Read ${CLAUDE_PLUGIN_ROOT}/rules/error-escalation-rules.md`를 실행한다 (단일 출처 — 아래 표는 그 요약이며 충돌 시 규칙 파일이 우선):
 
 | 레벨 | 분류 | 예시 |
 |------|------|------|
@@ -426,10 +426,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error \
 - 라이브러리 교체, 패턴 변경, API 변경
 - 3회 소진 시 → L2로 에스컬레이트
 
-**L2: codex 분석 (1회)**
+**L2: codex 분석 + 라운드테이블 (1회)**
 
-1. **안전 지점 확보**: `git stash`로 현재 상태 저장
-2. **codex-cli 호출**:
+1. **안전 지점 확보**: 변경 파일만 `git stash push -- <변경 파일 목록>`으로 저장 (repo-wide `git stash` 금지 — 다른 작업의 변경을 보호)
+2. **라운드테이블 토론**: `roundtable` 에이전트 호출 (error-escalation-rules.md "L2+ 라운드테이블 토론" — Senior Developer(리드)·Architect·QA·Devil's Advocate)
+3. **codex-cli 호출**:
 
 ```bash
 codex exec --skip-git-repo-check '## 근본 원인 분석 요청
@@ -445,7 +446,7 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 '
 ```
 
-3. codex 분석 결과 확보 → L3로 진행
+4. codex 분석 결과 확보 → L3로 진행
 
 **L3: 완전히 다른 접근법 (3회, codex 분석 기반)**
 
@@ -466,7 +467,7 @@ L3 예산 소진 시 record-error가 자동 판정 (in_progress 문서 1개 + �
 
 **L4: 범위 축소 (1회)**
 
-`shared-rules.md`의 Scope Reduction 절차 참조:
+`rules/error-escalation-rules.md`의 범위 축소(L4) 절차를 따른다:
 1. 기능을 최소 동작 버전으로 구현
 2. `scopeReductions` 배열에 기록
 3. `SCOPE_REDUCTIONS.md` 생성/업데이트

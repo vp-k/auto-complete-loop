@@ -34,13 +34,16 @@ DoD의 단일 출처는 **progress 파일의 `dod` 체크리스트**입니다 (`
 4. 결과가 `.claude-verification.json`에 기록되었는지 확인 — 게이트 결과는 각 서브커맨드가 자동 기록하고, 소프트 품질 차원은 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension <key> <result> "<evidence>"` 로 기록 (직접 편집은 가드가 차단함)
 5. 해당 progress 파일의 dod 체크리스트 업데이트 (evidence 포함)
 
-## Error Classification & Escalation
-→ 상세 규칙: `Read ${CLAUDE_PLUGIN_ROOT}/rules/error-escalation-rules.md`
-에러 발생 시 L0→L5 에스컬레이션, 범위 축소 절차는 분리된 규칙 파일 참조.
+## 이 파일에 없는 규칙 (분리된 규칙 파일)
 
-## 프로젝트 규모 판정
-→ 상세 규칙: `Read ${CLAUDE_PLUGIN_ROOT}/rules/project-size-rules.md`
-Small(<5)/Medium(5~15)/Large(8+docs) 기준 및 DoD 키 관리는 분리된 규칙 파일 참조.
+아래 주제는 이 파일이 아니라 각 규칙 파일이 단일 출처다. 여기에 요약을 두지 않으므로 미리 읽지 않고, **로드 시점**에 아래 지시를 그대로 실행한다. 인용할 때도 해당 파일을 직접 가리킨다.
+
+| 주제 | 로드 시점 → 지시 |
+|------|------------------|
+| 에러 레벨 분류, L0→L5 에스컬레이션 예산, L2+ 라운드테이블, TOO_BIG 분할, 범위 축소(L4) 절차, 막힘 패턴 | 첫 에러/게이트 실패를 처리하기 직전 → `Read ${CLAUDE_PLUGIN_ROOT}/rules/error-escalation-rules.md` |
+| 프로젝트 규모 판정(Small/Medium/Large)과 규모별 활성화 항목 | 규모를 판정(pm-planning Step 0-1)하거나 규모 분기를 적용(doc-planning·phase-transition)하기 직전 → `Read ${CLAUDE_PLUGIN_ROOT}/rules/project-size-rules.md` |
+| Phase 전이 조건·DoD evidence | full-auto 오케스트레이터가 시작 시 Read (`full-auto.md` "규칙 로드") |
+| 오케스트레이터 전용 규칙(복구 감지, handoff-update, 컴팩션 트리거) | full-auto 오케스트레이터가 시작 시 Read (`full-auto.md` "규칙 로드"; plan-docs-full은 읽지 않는다) |
 
 ## 의존성 관리 (패키지 설치)
 

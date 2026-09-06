@@ -25,7 +25,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-config
 
 사용자 요구사항을 분석하여 규모를 추정합니다.
 
-**기준** (`rules/project-size-rules.md` 참조):
+**기준** (`Read ${CLAUDE_PLUGIN_ROOT}/rules/project-size-rules.md` — 규모 기준과 규모별 활성화 항목의 단일 출처):
 - **Small**: 기능 5개 미만
 - **Medium**: 기능 5~15개
 - **Large**: 기능 16개 이상, 또는 기획 문서 8개+, 모듈/기능 그룹 4개+, 외부/타팀 이해관계자 3팀+ 중 1개 이상

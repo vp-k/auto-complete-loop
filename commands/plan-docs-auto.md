@@ -1,12 +1,12 @@
 ---
-description: "Planning doc refinement (2-way auto-discussion). codex-cli and Claude Code debate to optimal result"
+description: "Planning doc refinement (auto-discussion). A reviewer (codex-cli, codex x2, or a fresh-context subagent) and Claude Code debate until no new Critical/High"
 argument-hint: <definition(overview.md)> <doclist(README.md)>
 ---
 
-# 기획 문서 완성 (2자 자동 토론형)
+# 기획 문서 완성 (자동 토론형)
 
 정의 문서(헌법)를 기준으로 문서 리스트의 각 문서를 검토/작성합니다.
-codex-cli와 Claude Code가 **순차적으로 자동 토론**하여 신규 Critical/High가 0건인 라운드에서 합의합니다 (최소 라운드 수 없음).
+검토자(`--mode`에 따라 codex-cli, codex 2회, 또는 fresh-context 검토 서브에이전트)와 Claude Code가 **순차적으로 자동 토론**하여 신규 Critical/High가 0건인 라운드에서 합의합니다 (최소 라운드 수 없음).
 
 ## 인수
 
@@ -26,9 +26,13 @@ codex-cli와 Claude Code가 **순차적으로 자동 토론**하여 신규 Criti
 
 $ARGUMENTS에서 `--mode` 값을 파싱합니다. 지정되지 않으면 `codex`로 동작합니다.
 
-- **`--mode solo`**: 3단계에서 외부 AI(codex-cli)를 호출하지 않고, **Agent 툴로 fresh-context 검토 서브에이전트**를 호출해 검토를 받습니다. 같은 컨텍스트에서 역할만 바꾸는 자기검토는 독립성이 없으므로 기본 경로가 아닙니다 — 서브에이전트에는 `templates/doc-planning-common.md`(검토 기준·체크리스트)와 대상 문서·overview.md 경로만 넘기고, `[CRITICAL|HIGH|MEDIUM|LOW] <파일>:<섹션> — <문제> / 근거 / 제안` 형식의 finding만 받습니다 (문서 수정 금지). 상세 프롬프트는 `skills/doc-planning/SKILL.md`의 Step 1-2 "2-B"와 동일합니다. Agent 툴을 쓸 수 없을 때만 같은 기준·출력 형식으로 자기검토를 폴백으로 수행합니다. 수렴 기준: 신규 Critical/High 0건인 라운드에서 즉시 수렴 (최소 라운드 없음 — 1라운드 수렴 정상). 최대 3회 반복.
-- **`--mode codex`** (기본): 아래 3단계의 2자 토론 루프를 그대로 실행합니다.
-- **`--mode dual`**: 3단계에서 codex-cli를 **두 번 독립적으로 호출**하여 3자 토론을 수행합니다. codex 1차 -> codex 2차 -> Claude Code 순서로 순차 검토/반론하며, 두 codex 호출은 서로의 결과를 참조하지 않습니다. 합의 기준: 양쪽 리뷰 모두 신규 Critical/High 0건인 라운드 (아래 "합의 기준" 동일 적용).
+검토자 분기는 `skills/doc-planning/SKILL.md` Step 1-2의 `{REVIEW_MODE}` 분기를 그대로 쓴다 (이 파일에 프롬프트를 다시 적지 않는다):
+
+- **`--mode codex`** (기본): Step 1-2 "2-A" — codex-cli 왕복.
+- **`--mode solo`**: Step 1-2 "2-B" — Agent 툴로 호출한 **fresh-context 검토 서브에이전트**가 검토한다 (같은 컨텍스트의 역할극이 아님). 서브에이전트에는 `templates/doc-planning-common.md`와 대상 문서·정의 문서 경로만 넘기고 finding만 받는다. Agent 툴을 쓸 수 없을 때만 같은 기준의 자기검토로 폴백하고 `reviewFallback`을 기록한다.
+- **`--mode dual`**: Step 1-2 "2-A"를 **서로의 결과를 참조하지 않는 codex 2회 독립 호출**로 수행하고, 두 결과를 합쳐 분석한다. 합의 기준은 양쪽 리뷰 모두 신규 Critical/High 0건인 라운드.
+
+수렴 기준(신규 Critical/High 0건 라운드에서 즉시 합의, 최소 라운드 없음)과 라운드 상한(codex/dual 5, solo 3)은 모드와 무관하게 스킬 Step 1-2 "토론 규칙"을 따른다.
 
 ## 0단계: Ralph Loop 자동 설정 (최우선 실행)
 
@@ -114,7 +118,7 @@ dod 5키가 모두 `checked: true`가 되는 유일한 경로는 위 게이트 �
 **상태 전이:**
 
 - `pending` -> `in_progress`: 해당 문서 토론 시작 시
-- `in_progress` -> `completed`: 2자 합의 완료 시
+- `in_progress` -> `completed`: 검토자와 합의 완료 시 (스킬 Step 1-2 수렴 기준)
 
 **파일 저장 시점:**
 
@@ -165,26 +169,31 @@ DoD의 단일 출처는 progress 파일(`.claude-plan-progress.json`)의 `dod` �
 - 위 비교에서 모든 문서가 `pending`이고 사용자가 "새로 시작" 선택 시
 - 1단계부터 정상 진행
 
-## 1단계: 맥락 파악
+## 1단계: 맥락 파악 (doc-planning 스킬 로드)
 
-정의 문서($1)를 읽고:
+이 명령의 문서 토론 절차는 full-auto Phase 1과 같은 doc-planning 스킬을 **단일 출처**로 쓴다. 절차·프롬프트·체크리스트를 이 파일에 다시 적지 않는다:
 
-- 프로젝트의 핵심 원칙, 경계, 책임 파악
-- 이 문서가 "헌법"으로서 모든 하위 문서의 기준임을 인지
+```
+Read ${CLAUDE_PLUGIN_ROOT}/skills/doc-planning/SKILL.md
+```
 
-### overview.md 구조 검증 (PM Planning 산출물)
+**치환 규칙** (스킬은 full-auto 오케스트레이터 기준으로 쓰여 있다):
 
-정의 문서에 다음 섹션이 존재하는지 검증합니다:
-- Problem Statement
-- Target Users / 페르소나
-- Core Jobs (JTBD)
-- 핵심 가정 + 리스크
-- 성공 기준
+| 스킬의 표기 | 이 명령에서의 값 |
+|-------------|------------------|
+| `{PROGRESS_FILE}` | `.claude-plan-progress.json` |
+| `{REVIEW_MODE}` | `--mode` 값 (`codex`·`solo`·`dual` — `teams`는 이 명령에 없음) |
+| `phases.phase_1.documents` | 최상위 `documents` 배열 ("진행 상태 파일" 섹션의 구조) |
+| 정의 문서 / overview.md | `$1` |
 
-**누락 섹션 감지 시**: Claude가 1회 자동 보완 시도. 보완 후 경고 출력:
-"overview.md에 [섹션명]이 누락되어 자동 보완했습니다. 확인해주세요."
+**적용 범위**: 이 명령은 스킬의 다음 부분만 수행한다.
+- Step 1-0의 "overview.md 구조 검증" 소절 (필수 섹션 5종, 누락 시 1회 자동 보완 + 경고 — 하드 실패 아님)
+- Step 1-2 자동 토론 루프 전체 (검토자 분기 2-A/2-B, 토론 프로세스, 토론 규칙, 라운드 상한, 템플릿 lazy-load 규칙, `doc-planning-common.md`의 기획 수준 원칙·문서 품질 체크리스트·검토 기준·피드백 우선순위)
+- Step 1-4 복구 시 토론 재개
 
-이 검증은 **하드 실패가 아닌 자동 보완** — 기존 프로젝트(PM Planning 없이 직접 /plan-docs-auto 실행) 호환성 유지.
+수행하지 않는 부분: Step 1-0의 표준 문서 3종·DESIGN.md 복사(`projectScope`/`projectSize`가 이 progress 파일에 없다), Step 1-1(문서 등록은 2단계가 담당), Step 1-3(아래 "Iteration 단위"가 대체), Step 1-5~1-10(Phase 1 게이트·아키텍처 리뷰·검증 스크립트·인수 테스트 동결·test-strategist). 이 명령의 완료 게이트는 "3단계 종료 후" 4종뿐이다 — SPEC.md를 다룰 때 provenance 마커는 스킬 규칙대로 기록하되, `provenance-gate`는 이 명령에 없고 `/plan-docs-full`이 검증한다.
+
+정의 문서($1)를 읽고 프로젝트의 핵심 원칙·경계·책임을 파악한다. 이 문서가 "헌법"으로서 모든 하위 문서의 기준임을 인지하고, 이어서 스킬 Step 1-0의 "overview.md 구조 검증"을 적용한다 (기존 프로젝트가 PM Planning 없이 직접 이 명령을 실행해도 호환되도록 자동 보완만 한다).
 
 ## 2단계: 문서 목록 파악
 
@@ -217,195 +226,20 @@ jq --arg def "$1" --arg readme "$2" \
 
 **복구 시**: 이 단계는 건너뛰고 `.claude-plan-progress.json`에서 문서 목록 사용
 
-## 3단계: 2자 자동 토론 루프
+## 3단계: 자동 토론 루프 (스킬 Step 1-2 수행)
 
-선택된 모든 문서에 대해 순차적으로 2자 토론 수행:
+선택된 모든 문서에 대해 순차적으로 `skills/doc-planning/SKILL.md` **Step 1-2**를 1단계의 치환 규칙으로 수행한다. 검토자만 `{REVIEW_MODE}`로 갈리고(2-A: codex/dual, 2-B: solo), 나머지는 스킬과 동일하다:
 
-### 토론 프로세스
+- 토론 프로세스 8단계 (문서 시작 → 검토 요청 → 비판적 분석/반론 → 수렴 판단 → 체크리스트 → 확정(+ 새 아키텍처 결정은 `docs/adr/`) → 완료 처리 + `/compact` → 다음 문서)
+- 수렴 기준: 신규 Critical/High 0건 라운드에서 합의, 최소 라운드 없음, Medium/Low 반영은 재검토 대상이 아님
+- 검토자 제외 규칙(동일 피드백 3회 / 근거 없는 approve 3회), 라운드 상한(codex/dual 5, solo 3)과 상한 도달 후 Critical 잔존 시 AskUserQuestion
+- 표준 템플릿 문서 1라운드 상한 — 단, 이 명령은 템플릿 복사를 하지 않으므로 파일명이 아니라 **내용이 실제 템플릿 사본(placeholder 잔존)일 때만** 적용한다. 사용자가 직접 쓴 `docs/error-policy.md`·`docs/DESIGN.md` 등은 일반 문서로 토론한다
+- 문서 품질 체크리스트·검토 기준·피드백 우선순위: `templates/doc-planning-common.md` (Step 1-2 진입 시 1회 Read, 미충족 항목이 있으면 합의 불가)
 
-1. **문서 시작**
-   - 문서 확인 (없으면 생성, 있으면 업데이트 대상)
-   - `.claude-plan-progress.json` 업데이트: `currentDocument` 설정, 해당 문서 `status` -> `in_progress`
-2. **codex-cli**에게 피드백 요청
-3. **Claude Code**가 codex 피드백 분석/반론
-   - 각 피드백의 타당성 검토
-   - 수용할 피드백과 반론할 피드백 구분
-   - 반론 시 근거와 대안 제시
-   - 수용한 피드백으로 문서 수정
-4. **수렴 판단 (라운드마다)** — 재검토 라운드는 기본 동작이 아니다:
-   - 이번 라운드 피드백에 **신규 Critical/High가 0건**이면 → 수용한 Medium/Low만 반영하고 **합의 성립** (재검토 라운드 없이 5로 진행)
-   - 신규 Critical/High가 있으면 → 수정 반영 후 codex-cli에게 재검토 요청 → 2로 복귀
-   - **각 라운드 완료 시** `.claude-plan-progress.json`의 `round` 값 업데이트
-5. **문서 품질 체크리스트 확인** (완료 처리 전 필수)
-6. 합의된 내용으로 최종 문서 확정
-7. **문서 완료 처리**
-   - `.claude-plan-progress.json` 업데이트: 해당 문서 `status` -> `completed`, `round` 삭제
-   - `/compact` 실행 (다음 문서 시작 전 컨텍스트 정리)
-8. 다음 문서로 자동 진행 (목록 끝까지 반복)
+이 명령 고유 사항:
 
-### 복구 시 토론 재개
-
-복구로 인해 `in_progress` 문서부터 재시작하는 경우:
-
-1. 해당 문서 다시 읽기
-2. 정의 문서 핵심 원칙 다시 로드
-3. `round` 값이 있으면 해당 라운드부터, 없으면 처음부터 토론 시작
-4. 이전 토론 내용은 없으므로 새로 시작 (맥락은 파일로만 복구)
-
-### codex-cli 호출 방법
-
-**단일 줄 프롬프트:**
-```bash
-codex exec --skip-git-repo-check '피드백 요청 내용'
-```
-
-**여러 줄 프롬프트:**
-```bash
-codex exec --skip-git-repo-check '## 역할
-당신은 기획 문서 품질 검토 전문가입니다.
-아래 파일들을 직접 읽고 검토하세요.
-
-## 검토 대상
-- 정의 문서 (헌법): [파일 경로] — 직접 읽고 핵심 원칙과 Non-Goals를 파악하세요
-- 검토할 문서: [파일 경로] — 직접 읽고 정의 문서 기준으로 검토하세요
-
-## 이전 토론 요약
-[Claude Code의 분석 결과]
-
-## 요청
-위 문서를 정의 문서 기준으로 검토하고 피드백을 우선순위별로 제공해주세요.
-'
-```
-
-### 프롬프트 템플릿
-
-**codex-cli용 (첫 라운드):**
-```text
-## 역할
-당신은 기획 문서 품질 검토 전문가입니다.
-아래 파일들을 직접 읽고 검토하세요.
-
-## 검토 대상
-- 정의 문서 (헌법): [파일 경로] — 직접 읽고 핵심 원칙과 Non-Goals를 파악하세요
-- 검토할 문서: [파일 경로] — 직접 읽고 정의 문서 기준으로 검토하세요
-
-## 요청
-피드백을 Critical/High/Medium/Low 우선순위로 분류해서 제공해주세요.
-```
-
-**codex-cli용 (2라운드 이후):**
-```text
-## 역할
-당신은 기획 문서 품질 검토 전문가입니다.
-아래 파일들을 직접 읽고 검토하세요.
-
-## 검토 대상
-- 정의 문서 (헌법): [파일 경로] — 직접 읽고 핵심 원칙과 Non-Goals를 파악하세요
-- 검토할 문서: [파일 경로] — 직접 읽고 정의 문서 기준으로 검토하세요
-
-## 이전 토론 요약
-[Claude Code의 분석 결과]
-
-## 요청
-이전 토론을 고려하여 피드백을 Critical/High/Medium/Low 우선순위로 분류해서 제공해주세요.
-```
-
-### 토론 규칙
-
-**핵심 원칙: 비판적 시각**
-- 모든 참여자는 이전 피드백을 **비판적으로 검토**해야 함
-- 단순 동의보다 반론/보완/대안 제시 우선
-- "정말 필요한 수정인가?" 관점에서 과도한 피드백 필터링
-
-**codex-cli 역할**:
-- 객관적 기준에 따라 피드백 제공
-- 우선순위별로 분류 (Critical > High > Medium > Low)
-- 구체적인 개선 방안 제시
-
-**Claude Code 역할**:
-- codex 피드백을 **비판적으로 분석**
-- 실제로 필요한 수정만 선별
-- 최종 문서 수정 작업 수행
-
-### 기획 수준 원칙
-
-**MVP 수준 금지 — 프로덕션 릴리즈 수준 기획:**
-- "나중에 추가" 식의 미완성 기획은 토론에서 Critical 피드백으로 분류
-- 모든 기능은 에러 처리, 유효성 검증, 보안을 포함한 완전한 형태로 기획
-- "추후 구현", "Phase 2에서", "MVP에서는 제외" 같은 문구가 있으면 -> 해당 항목을 현재 기획에 포함시키거나, 명시적 Non-Goals로 정의 문서에서 제외했는지 확인
-
-**백엔드 테스트 주도 개발 (TDD) 지원:**
-- 백엔드 API/서비스 관련 기획 문서는 반드시 테스트 시나리오를 포함
-- 각 엔드포인트마다: 정상 응답, 유효성 실패, 인증 실패, 권한 부족, 중복 요청 등의 테스트 케이스 명시
-- 이 테스트 시나리오가 구현 시 TDD의 "실패하는 테스트 먼저 작성"의 기반이 됨
-
-**예시 — API 문서에 포함해야 할 테스트 시나리오:**
-```
-### POST /api/auth/register
-테스트 케이스:
-- 정상 등록 -> 201 + 유저 객체
-- 이메일 중복 -> 409 Conflict
-- 비밀번호 8자 미만 -> 400 Bad Request
-- 이메일 형식 오류 -> 400 Bad Request
-- 필수 필드 누락 -> 400 Bad Request
-- rate limit 초과 -> 429 Too Many Requests
-```
-
-**AI 제외 규칙**:
-- **codex 동일 피드백 3회 반복** -> codex 제외, Claude Code가 단독 결정
-- **codex 근거 없는 approve 3회** -> codex 제외, Claude Code가 단독 결정
-- codex 제외 시 Claude Code가 문서 품질 체크리스트 기반으로 자체 완성
-
-**단순 approve 금지**:
-- "동의합니다", "좋습니다" 같은 단순 승인은 유효하지 않음
-- "수정 없음" 선언 시 반드시 **검토한 항목과 근거** 명시 필요
-- 예: "정의 문서 원칙 X, Y 기준으로 검토 완료. 충돌 없음 확인."
-
-**합의 기준 (조기 종료 우선)**:
-- 한 라운드에서 신규 Critical/High 0건 = 합의 성립. Medium/Low는 Claude가 타당성을 판단해 수용분만 반영하고 종료 — "수정 없음" 선언을 추가 라운드로 확인받지 않는다
-- **최소 라운드 수는 없다**: 명확한 문서가 1라운드에 끝나는 것이 정상. 라운드 수를 채우기 위한 재검토 금지
-- 5회 이상 토론에도 Critical 잔존 시 AskUserQuestion으로 사용자 결정
-
-### 문서 품질 체크리스트 (합의 전 필수 확인)
-
-토론 합의 전, Claude Code가 다음을 확인:
-
-**기본 품질:**
-- [ ] 유저스토리 또는 목적이 명시되어 있는가?
-- [ ] 구체적인 데이터 구조가 정의되어 있는가? (해당 시)
-- [ ] 에러/예외 시나리오가 포함되어 있는가?
-- [ ] 다른 문서와의 참조 관계가 올바른가?
-- [ ] 개발자가 추가 질문 없이 구현 가능한 수준인가?
-
-**릴리즈 수준 완성도 (MVP 수준 금지):**
-- [ ] 에러 핸들링이 모든 경로에 정의되어 있는가? (happy path만 있으면 불합격)
-- [ ] 인증/인가 요구사항이 명시되어 있는가? (해당 시)
-- [ ] 입력 유효성 검증 규칙이 정의되어 있는가?
-- [ ] 로깅/모니터링 요구사항이 포함되어 있는가?
-- [ ] 배포/마이그레이션 고려사항이 있는가? (해당 시)
-- [ ] 성능 제약(응답시간, 동시접속, 쿼리 제한)이 명시되어 있는가?
-
-**백엔드 TDD 준비:**
-- [ ] 백엔드 API/서비스 문서에 테스트 시나리오가 포함되어 있는가?
-- [ ] 각 엔드포인트별 성공/실패 테스트 케이스가 명시되어 있는가?
-- [ ] 경계값/예외 상황의 테스트 케이스가 포함되어 있는가?
-
-미충족 항목이 있으면 합의 불가. 해당 항목을 보완 후 재검토.
-
-### 검토 기준
-
-- 정의 문서의 원칙과 충돌하지 않는가?
-- Non-Goals를 침범하지 않는가?
-- 이미 작성된 문서들과 충돌하지 않는가?
-- 데이터 구조/스키마가 일치하는가?
-- 용어/명명 규칙이 통일되어 있는가?
-
-### 피드백 우선순위
-
-1. **Critical**: 정의 문서와 충돌, Non-Goals 침범
-2. **High**: 다른 문서와 불일치, 누락된 필수 정보
-3. **Medium**: 명확성 부족, 예시 부족
-4. **Low**: 형식, 표현 개선
+- 문서 상태 전이는 최상위 `documents` 배열에 기록한다 (`currentDocument`, 해당 문서의 `status`, `round`; 완료 시 `round` 삭제)
+- 복구로 `in_progress` 문서부터 재시작할 때는 스킬 Step 1-4를 따른다 — 이전 토론 내용은 없으므로 맥락은 파일로만 복구한다
 
 ### Handoff (Iteration 종료 전 필수)
 
@@ -452,7 +286,7 @@ dod 5키는 위 게이트의 PASS로만 `checked: true`가 됩니다. 게이트�
 
 **허용된 질문 시점:**
 - 처음 실행 시 작업할 문서 범위 선택 (복구 시에는 생략)
-- 토론이 교착 상태일 때 (codex 제외됨, 7회 토론 초과)
+- 토론이 교착 상태일 때 — 검토자가 제외됐거나, 라운드 상한(codex/dual 5, solo 3) 도달 후 Critical 잔존 (스킬 Step 1-2 토론 규칙)
 
 **금지된 질문 (절대 하지 않음):**
 - "다음 문서로 진행할까요?"
@@ -465,7 +299,6 @@ dod 5키는 위 게이트의 PASS로만 `checked: true`가 됩니다. 게이트�
 > `shared-rules.md`의 공통 강제 규칙을 따릅니다.
 
 **plan-docs-auto 추가 규칙:**
-- 막히면 → 토론 라운드 추가
-- 7라운드 초과 시 → Critical/High 피드백만 처리하고 마무리
-- codex 제외 시 → Claude Code가 단독으로 결정하고 마무리
+- 라운드 상한·검토자 제외 후 처리는 스킬 Step 1-2 토론 규칙을 따른다 — 상한을 이유로 Critical을 미해결로 넘기지 않는다
+- 검토자 제외 시 → Claude Code가 `doc-planning-common.md` 체크리스트 기준으로 단독 결정하고 마무리
 - **원칙:** 문서 목록이 비워질 때까지 멈추지 않음

@@ -123,14 +123,23 @@ promise 발행 시 스톱훅이 게이트 키와 별개로 다음 **기록 3종*
 1. **handoff 갱신** + 2. **결정 기록** — 모든 Ralph 워크플로우 공통 조건 (`templates/ralph-loop-setup.md` §5 완료 조건 4·5).
    각 지점에서 언제 무엇을 기록하는지는 `rules/shared-rules.md`의 "결정 기록 (단일 출처)" 참조.
 3. **assumptionReview** — `confirmed` | `none` | `escalated` 중 하나 (pm-planning Step 0-0.6) — full-auto·plan-docs-full 전용
+   - `confirmed`로 기록할 때 `--count`는 자기신고가 아니라 이번 run의 `record-decision --scope interview`
+     기록 건수와 **교차 검증**된다 (불일치 시 게이트가 실측값을 출력하고 exit 1).
+
+**promise 직전 체크리스트**: `handoff-update`(`--iteration` 생략) → `record-decision`(또는 `--none --why`) → `assumptionReview` 기록 확인.
+세 줄을 promise 출력 **직전에** 실행/확인한다 (`templates/ralph-loop-setup.md` §5 완료 조건 4·5).
 
 ## 공통 규칙 로드
 
 ```
+Read ${CLAUDE_PLUGIN_ROOT}/templates/ralph-loop-setup.md
 Read ${CLAUDE_PLUGIN_ROOT}/rules/orchestration-rules.md
 Read ${CLAUDE_PLUGIN_ROOT}/rules/phase-transition-rules.md
 ```
 
-위 두 파일 및 **Read로 로드하는 모든 Phase 스킬**(pm-planning, doc-planning, implementation,
+`ralph-loop-setup.md` §5가 **Ralph 워크플로우 공통 완료 조건의 단일 출처**입니다 — 이 명령의 완료 조건은
+그 6개 조건 + 아래 "추가 완료 조건"(orchestration-rules.md)으로 구성됩니다.
+
+위 세 파일 및 **Read로 로드하는 모든 Phase 스킬**(pm-planning, doc-planning, implementation,
 code-review, verification 등)에 등장하는 파라미터(`{PROMISE_TAG}`, `{PROGRESS_FILE}`, `{PHASE_1_SKILL}`, `{PHASE_3_SKILL}`, `{REVIEW_MODE}`)는
 이 파일 상단의 "파라미터" 섹션 값으로 치환하여 적용합니다.

@@ -464,6 +464,17 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       _CUR_ITER="${ITERATION:-0}"
       [[ "$_CUR_ITER" =~ ^[0-9]+$ ]] || _CUR_ITER=0
 
+      # 현재 실행 식별자 — init이 progress에 발급한 runId. 결정 기록은 iteration만이 아니라
+      # runId까지 일치해야 이번 실행의 기록으로 인정한다. 그렇지 않으면 이전 실행이 남긴
+      # .claude/acl-decisions.jsonl 레코드가 같은 iteration 번호만으로 이번 검사를 통과시킨다.
+      # runId가 없는 progress(v4.20 이하)는 iteration만 보는 하위호환 경로로 떨어진다.
+      _CUR_RUN_ID=""
+      for _pf in "${VERIFIED_PROGRESS_FILES[@]:-}"; do
+        [[ -z "$_pf" ]] || [[ ! -f "$_pf" ]] && continue
+        _rid=$(jq -r '.runId // empty' "$_pf" 2>/dev/null || echo "")
+        [[ -n "$_rid" ]] && { _CUR_RUN_ID="$_rid"; break; }
+      done
+
       if [[ "$_DECISION_LOG_ENABLED" != "true" ]]; then
         echo "Auto Complete Loop: NOTE - progress에 decisionLog.enabled가 없어 결정 기록 검사를 건너뜁니다 (v4.20.0 이전 스키마). 'shared-gate.sh init'으로 새로 만든 progress에는 자동 포함됩니다."
       else
@@ -473,19 +484,19 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
           _last_it=$(jq -r '.handoff.lastIteration // "null"' "$_pf" 2>/dev/null || echo "null")
           if [[ "$_last_it" != "$_CUR_ITER" ]]; then
             VERIFICATION_PASSED="false"
-            FAILURE_REASONS="${FAILURE_REASONS}${_pf}: handoff.lastIteration=${_last_it} (이번 iteration=${_CUR_ITER}) — 이번 iteration의 handoff를 갱신하지 않았다. 'shared-gate.sh handoff-update --progress-file ${_pf} --iteration ${_CUR_ITER} --next-steps \"<다음 단계>\"'를 실행하라. "
+            FAILURE_REASONS="${FAILURE_REASONS}${_pf}: handoff.lastIteration=${_last_it} (이번 iteration=${_CUR_ITER}) — 이번 iteration의 handoff를 갱신하지 않았다. 'shared-gate.sh handoff-update --progress-file ${_pf} --next-steps \"<다음 단계>\"'를 실행하라. "
           fi
         done
 
         # (b) 결정 기록 확인 — 이번 iteration에 kind=decision 또는 kind=none이 최소 1건
         _dec_for_iter=0
         if [[ -f ".claude/acl-decisions.jsonl" ]]; then
-          _dec_for_iter=$(jq -s --argjson it "$_CUR_ITER"             '[.[] | select(.iteration == $it and (.kind == "decision" or .kind == "none"))] | length'             .claude/acl-decisions.jsonl 2>/dev/null || echo 0)
+          _dec_for_iter=$(jq -s --argjson it "$_CUR_ITER" --arg run "$_CUR_RUN_ID" '[.[] | select(.iteration == $it and (.kind == "decision" or .kind == "none")) | select($run == "" or (.runId // "") == $run)] | length' .claude/acl-decisions.jsonl 2>/dev/null || echo 0)
         fi
         [[ "$_dec_for_iter" =~ ^[0-9]+$ ]] || _dec_for_iter=0
         if [[ "$_dec_for_iter" -eq 0 ]]; then
           VERIFICATION_PASSED="false"
-          FAILURE_REASONS="${FAILURE_REASONS}iteration ${_CUR_ITER}의 결정 기록 없음(.claude/acl-decisions.jsonl) — 이번 iteration에서 내린 결정을 'shared-gate.sh record-decision --what \"<결정>\" --why \"<이유>\"'로 남기거나, 정말 결정이 없었다면 'shared-gate.sh record-decision --none --why \"<왜 결정이 없었는지>\"'를 실행하라. "
+          FAILURE_REASONS="${FAILURE_REASONS}iteration ${_CUR_ITER}${_CUR_RUN_ID:+ (run ${_CUR_RUN_ID})}의 결정 기록 없음(.claude/acl-decisions.jsonl) — 이번 iteration에서 내린 결정을 'shared-gate.sh record-decision --what \"<결정>\" --why \"<이유>\"'로 남기거나, 정말 결정이 없었다면 'shared-gate.sh record-decision --none --why \"<왜 결정이 없었는지>\"'를 실행하라. "
         fi
       fi
 
@@ -631,6 +642,9 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       done
       archive_or_remove ".claude-verification.json" "$ARCHIVE_DIR"
       archive_or_remove ".claude/acl-events.jsonl" "$ARCHIVE_DIR"
+      # 결정 로그도 실행 단위로 마감한다 — 남겨 두면 다음 실행이 시작 시점부터
+      # "이번 iteration 결정 있음"을 옛 기록으로 충족해 버린다 (runId 검사와 이중 방어).
+      archive_or_remove ".claude/acl-decisions.jsonl" "$ARCHIVE_DIR"
       # 오래된 아카이브 정리 (7일 초과 디렉토리 삭제)
       if [[ -d "$ARCHIVE_ROOT" ]]; then
         find "$ARCHIVE_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null || true
@@ -803,11 +817,12 @@ if [[ -n "$_reminder_pf" ]]; then
     _rm_notes=""
     _rm_last=$(jq -r '.handoff.lastIteration // "null"' "$_reminder_pf" 2>/dev/null || echo "null")
     if [[ "$_rm_last" != "$ITERATION" ]]; then
-      _rm_notes="${_rm_notes}"$'\n'"- handoff 미갱신: bash \${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update --progress-file ${_reminder_pf} --iteration ${ITERATION} --next-steps \"<다음 단계>\""
+      _rm_notes="${_rm_notes}"$'\n'"- handoff 미갱신: bash \${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update --progress-file ${_reminder_pf} --next-steps \"<다음 단계>\""
     fi
     _rm_dec=0
+    _rm_run=$(jq -r '.runId // empty' "$_reminder_pf" 2>/dev/null || echo "")
     if [[ -f ".claude/acl-decisions.jsonl" ]]; then
-      _rm_dec=$(jq -s --argjson it "$ITERATION" '[.[] | select(.iteration == $it and (.kind == "decision" or .kind == "none"))] | length' .claude/acl-decisions.jsonl 2>/dev/null || echo 0)
+      _rm_dec=$(jq -s --argjson it "$ITERATION" --arg run "$_rm_run" '[.[] | select(.iteration == $it and (.kind == "decision" or .kind == "none")) | select($run == "" or (.runId // "") == $run)] | length' .claude/acl-decisions.jsonl 2>/dev/null || echo 0)
     fi
     [[ "$_rm_dec" =~ ^[0-9]+$ ]] || _rm_dec=0
     if [[ "$_rm_dec" -eq 0 ]]; then

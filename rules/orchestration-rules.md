@@ -17,12 +17,15 @@
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{PROGRESS_FILE}"
 ```
 
-### Ralph Loop 완료 조건
+### 추가 완료 조건 (ralph-loop-setup §5 조건 3)
 
-`<promise>{PROMISE_TAG}</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
-1. `{PROGRESS_FILE}`의 모든 steps status가 `completed`
-2. `{PROGRESS_FILE}`의 `dod` 체크리스트가 모두 checked
-3. `.claude-verification.json`의 모든 검증 항목이 통과:
+> **완료 조건의 단일 출처는 `templates/ralph-loop-setup.md` §5**입니다 — steps/dod 완료(조건 1·2),
+> **handoff 갱신(조건 4)**, **이번 iteration의 결정 기록(조건 5)**, 직전 확인(조건 6)은 거기에만 적습니다.
+> 이 절은 그 §5 **조건 3("명령 문서의 추가 완료 조건")**에 해당하는 full-auto 계열 고유 항목만 정의합니다.
+
+`<promise>{PROMISE_TAG}</promise>` 발행 전, §5의 6개 조건에 더해 아래가 모두 참이어야 합니다:
+
+1. `.claude-verification.json`의 모든 검증 항목이 통과:
    - build/typeCheck/lint/test: `exitCode: 0`
    - secretScan/artifactCheck/designPolish/functionalFlow/integrationSmoke 등 result 기반 게이트: `result: "pass"` 또는 `"skip"` 또는 `"warn"` 또는 `"soft_fail"` (**`fail`은 하드 차단** — 특히 functionalFlow/integrationSmoke가 fail이면 완주 불가. `page-render-check` non-strict의 `soft_fail` 기록은 허용됨)
    - **smokeCheck**: `result: "pass"` 또는 `result: "skip"` (**`soft_fail`은 stop-hook이 `fail`로 처리** — `soft_fail`과 `fail` 모두 불합격, 서버가 기동되지 않으면 완주 불가)
@@ -41,11 +44,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
      - `external-service-check`: SPEC.md 명시 외부 서비스의 SDK/config 존재
      - `service-test-check`: `hasBackend=true` 시 서비스/라우트 테스트 파일 존재
      - `integration-smoke`: `hasFrontend+hasBackend` 시 연동 검증 (API URL, CORS, 서버 기동) 통과
-4. 구현 품질 게이트 확인:
+2. 구현 품질 게이트 확인:
    - `implementation-depth`: 소스 stub 5건 미만 (SOFT — 5건 이상이면 수정 권장)
    - `functional-flow`: smoke 스크립트 통과 (존재 시, SKIP 허용)
    - `test-quality`: assertion 비율 ≥ 70%, skip 비율 ≤ 20% (SOFT)
-5. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
 
 ### 게이트 등급 — 무엇이 진짜 차단인가
 
@@ -128,19 +130,20 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh recover --progress-file {PROGR
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
   --progress-file {PROGRESS_FILE} \
   --phase "phase_2" \
-  --iteration 3 \
   --completed "Phase 2: auth.md, user-profile.md 구현 완료" \
   --next-steps "Phase 2: post.md 구현 시작" \
-  --decision "JWT + refresh token 방식 확정" \
   --warnings "rate limiting 미구현" \
   --approach ""
 ```
 
 **필수 옵션**: `--next-steps` (최소 이것만 있어도 동작)
-**선택 옵션**: `--phase`, `--completed`, `--iteration`, `--decision` (복수 가능), `--warnings`, `--approach`
+**선택 옵션**: `--phase`, `--completed`, `--iteration`, `--warnings`, `--approach`
+`--iteration`은 **생략**한다 — Ralph frontmatter의 현재 iteration이 자동으로 들어가고, 그 값이 stop-hook이 검사하는 값과 같은 출처다.
 
-> `handoff-update --decision`은 `keyDecisions`를 **치환**한다(요약 갱신용). 결정을 **기록**하는 경로는
-> `record-decision`이며 이쪽이 단일 출처다 — 이유 검사·append-only 로그·keyDecisions append를 함께 수행한다.
+> `handoff-update --decision`은 하위호환으로 남아 있으며 `keyDecisions`에 **append**한다(치환 아님).
+> 다만 이것으로는 결정 로그(`.claude/acl-decisions.jsonl`)에 아무것도 남지 않아 stop-hook의
+> "이번 iteration 결정 기록" 검사를 통과하지 못한다. **결정을 남기는 경로는 아래 `record-decision`뿐**이다
+> — 이유(`--why`) 검사·append-only 로그·keyDecisions append를 함께 수행한다.
 > 규칙은 shared-rules.md "결정 기록 (단일 출처)" 참조.
 
 ```bash
@@ -177,7 +180,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
 > 공통 강제 규칙(1~7)은 shared-rules.md 참조
 
 8. **자체 탐색**: codex 호출 규약은 shared-rules.md "외부 AI 자체 탐색 (codex 호출 시)" 참조
-9. **handoff + 결정 기록 필수**: 매 iteration 종료 시 handoff 필드 업데이트(`--iteration N` 포함) + 이번 iteration의 결정을 `record-decision`으로 기록(결정이 없으면 `--none --why`). 둘 다 stop-hook이 완주 시점에 fail-closed로 검사한다.
+9. **handoff + 결정 기록 필수**: 매 iteration 종료 시 handoff 필드 업데이트(`--iteration`은 생략 — frontmatter 자동) + 이번 iteration의 결정을 `record-decision`으로 기록(결정이 없으면 `--none --why`). 둘 다 stop-hook이 완주 시점에 fail-closed로 검사한다.
 10. **스크립트 우선**: 구조적/기계적 검사는 `shared-gate.sh`로 먼저 실행
 
 ## 포기 방지 규칙 (강제)

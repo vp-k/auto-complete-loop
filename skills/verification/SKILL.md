@@ -63,6 +63,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh implementation-depth --progres
 - SOFT gate: 5건 미만이면 WARN (진행 가능), 5건 이상이면 FAIL (수정 필요)
 - **SOFT→HARD 승격**: 연속 2회 실패(직전 fail/warn 포함) 시 HARD로 자동 승격되어 exit 1 — pass가 나오면 warn 등급으로 복귀
 - 수정 후 재실행하여 임계값 미만 확인
+- **게이트 예외를 수용하고 진행하기로 했다면**(WARN 잔존·`soft_fail` 수용·`skip` 판정) 그 자리에서
+  `record-decision --scope implementation --what "<무엇을 예외 처리했는가>" --why "<왜 안전한가>"`를 남긴다
+  (규칙: `rules/shared-rules.md` "결정 기록 (단일 출처)").
 
 ### Step 4-1.8: 기능 플로우 검증
 
@@ -394,7 +397,8 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-gate --progress-fil
    출력이 마지막 리뷰 라운드(roundResults 마지막 항목)의 `sourceHash`와 **같으면** → Phase 4에서 소스 변경 없음. 이 스텝 스킵, Step 4-7로 진행.
 3. **다르면 델타 리뷰 라운드 1회 실행**: Phase 3 스킬의 라운드 절차(지문 캡처 → 리뷰어 실제 호출 → 검증 → roundResults/findingHistory 기록)를 재사용하되, **리뷰 범위는 마지막 라운드 이후의 diff만**으로 한정한다 (`git diff <마지막 라운드 시점 커밋>..HEAD`). 이 라운드는 재기록 라운드이므로:
    - 수렴 라운드 규칙 적용 대상 — 신규 finding이 Medium/Low뿐이면 수정 없이 `deferred` 기록 (소스 불변 → 지문 정합 자동 충족)
-   - 수정 라운드 상한(5회) 계상에서 제외 (v4.16.0 규칙과 동일)
+   - 수정 라운드 상한(5회) 계상에서 제외 — 라운드 마감 시 `code-review-findings --round-kind rerecord`로 호출한다
+     (계수 주체는 모델이 아니라 게이트다: `fix`만 `reviewRounds.withFixes`를 올린다)
 4. **신규 Critical/High가 나오면**: 수정 → 커밋 → 3을 반복 (Phase 3 리뷰 루프 규칙 동일 적용 — C/H는 deferred 불가). 수정 커밋이 발생했으면 이미 통과한 게이트가 옛 코드 기준이 되므로 **acceptance-gate를 재실행**하고, 런타임 코드(서버 기동 경로)가 변경됐으면 **runtime-gate도 재실행**한다.
 5. **순서 불변식**: 이 스텝 이후(4-7, 4-7.5 포함) 어떤 경로로든 소스 수정이 발생하면 **반드시 이 스텝으로 돌아와** 커밋 → 델타 리뷰 → 게이트 재실행 순서를 다시 밟는다. "소스 변경 → 델타 리뷰 → 게이트"는 어떤 경로에서도 뒤집히지 않는다. **명시적 예외 1건**: Step 4-8의 version bump 커밋 — 모든 게이트 통과 후 버전 파일만 변경하는 릴리즈 메타데이터 커밋으로, 리뷰 대상 소스 변경이 아니므로 델타 리뷰를 트리거하지 않는다 (단, 커밋 범위가 버전 파일을 벗어나면 예외가 아니다 — Step 4-8의 커밋 범위 규칙 참조).
 
@@ -564,4 +568,5 @@ has_breaking=$(git log --oneline "$base_branch"..HEAD | grep -ciE 'breaking|BREA
 ### Iteration 관리
 
 - Group A (Step 4-1~4-4), Group B (Step 4-5~4-7.5)로 분할 가능
-- 처리 완료 후 handoff 업데이트하고 자연스럽게 종료
+- 처리 완료 후 handoff 업데이트하고, 이번 iteration의 결정을 `record-decision`으로 남긴 뒤
+  (없었으면 `--none --why`) 자연스럽게 종료 — 완료 조건은 `templates/ralph-loop-setup.md` §5

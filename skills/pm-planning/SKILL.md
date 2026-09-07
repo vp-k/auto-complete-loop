@@ -123,6 +123,11 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh assumption-review \
   --progress-file {PROGRESS_FILE} --status confirmed --count 2
 ```
 
+> **`--count`는 자기신고가 아니다.** `--status confirmed`일 때 게이트가 이번 run의
+> `record-decision --scope interview` 기록 건수를 세어 `--count`와 **대조**하고, 다르면 실측값을 출력하며
+> exit 1로 거부한다. 따라서 3단계에서 **항목마다 record-decision을 빠짐없이** 남겨야 하고,
+> `--count`는 그 건수와 정확히 일치해야 한다.
+
 | 상황 | status | 처리 |
 |------|--------|------|
 | assumption이 1건 이상, 사용자 확인 완료 | `confirmed` | 승인/수정 결과를 반영 후 진행 |

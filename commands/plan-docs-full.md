@@ -111,7 +111,18 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 5. **기록 3종** (stop-hook이 fail-closed로 검사 — 게이트 스크립트가 아니라 progress/로그를 직접 본다):
    - handoff 갱신 + 이번 iteration 결정 기록 1건 이상 — 공통 조건 (`templates/ralph-loop-setup.md` §5 완료 조건 4·5)
    - `assumptionReview.status`가 `confirmed` | `none` | `escalated` (pm-planning Step 0-0.6 — `assumption-review` 서브커맨드, 이 워크플로우 전용)
+     - `confirmed`일 때 `--count`는 이번 run의 `record-decision --scope interview` 기록 건수와 **교차 검증**된다 (불일치 시 exit 1)
 6. 위 조건을 **직전에 확인**한 결과여야 함
+
+### promise 직전 체크리스트 (완주 차단 예방)
+
+`<promise>` 출력 **직전**에 아래 3줄을 순서대로 실행/확인한다 (stop-hook이 fail-closed로 검사하는 기록 — 빠지면 완주가 차단되고 iteration이 한 번 더 돈다):
+
+1. `handoff-update --progress-file {PROGRESS_FILE} --next-steps "..."` (`--iteration`은 생략 — frontmatter에서 자동)
+2. `record-decision --what "<결정>" --why "<이유>"` — 결정이 없었으면 `record-decision --none --why "<왜 없었는지>"`
+3. (full-auto·plan-docs-full만) `assumptionReview.status` 기록 확인
+
+근거·상세는 `templates/ralph-loop-setup.md` §5 완료 조건 4·5.
 
 ### Iteration 단위 작업 규칙
 

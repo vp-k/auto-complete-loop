@@ -9,11 +9,18 @@ SESSION_START="$SCRIPT_DIR/../hooks/session-start.sh"
 setup() { setup_temp_dir; }
 teardown() { teardown_temp_dir; }
 
+# progress 파일이 있으면 그 runId를 레코드에 박는다 (record-decision과 같은 형상).
+# 주입 훅은 이번 run의 결정만 보여주므로, runId가 다르면 의도적으로 걸러진다.
 _seed_decisions() {
   mkdir -p .claude
-  local i
+  local i rid="" pf
+  for pf in .claude-*progress*.json; do
+    [[ -f "$pf" ]] || continue
+    rid=$(jq -r '.runId // empty' "$pf" 2>/dev/null || echo "")
+    [[ -n "$rid" ]] && break
+  done
   for i in 1 2 3 4 5 6; do
-    printf '{"id":"D-000%s","ts":"t","phase":"","iteration":1,"kind":"decision","what":"결정 %s","why":"사유 %s","alternatives":[],"reversible":"yes","scope":"planning","source":"adr"}\n' "$i" "$i" "$i"
+    printf '{"id":"D-000%s","ts":"t","phase":"","iteration":1,"kind":"decision","runId":"%s","what":"결정 %s","why":"사유 %s","alternatives":[],"reversible":"yes","scope":"planning","source":"adr"}\n' "$i" "$rid" "$i" "$i"
   done > .claude/acl-decisions.jsonl
 }
 
@@ -73,4 +80,29 @@ _seed_decisions() {
   printf 'not json\n' > .claude/acl-decisions.jsonl
   run bash "$SESSION_START"
   [ "$status" -eq 0 ]
+}
+
+# ─── 실행 격리(runId): 이전 run의 결정은 주입되지 않는다 ───
+
+@test "pre-compact: 이전 run의 결정은 주입하지 않는다" {
+  run_gate init --template full-auto "test" "req"
+  _seed_decisions
+  # progress의 runId를 새 값으로 바꾸면 = 새 run이 시작된 상태
+  jq '.runId = "run-20260101T000000Z-cafebabe"' .claude-full-auto-progress.json > t \
+    && mv t .claude-full-auto-progress.json
+  run bash "$PRE_COMPACT"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"D-0006"* ]]
+  [[ "$output" != *"Recent Decisions"* ]]
+}
+
+@test "session-start: 이전 run의 결정은 건수에 잡히지 않는다" {
+  run_gate init --template full-auto "test" "req"
+  _seed_decisions
+  jq '.runId = "run-20260101T000000Z-cafebabe"' .claude-full-auto-progress.json > t \
+    && mv t .claude-full-auto-progress.json
+  run bash "$SESSION_START"
+  [ "$status" -eq 0 ]
+  ctx=$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext // ""')
+  [[ "$ctx" != *"최근 결정"* ]]
 }

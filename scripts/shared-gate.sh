@@ -48,7 +48,7 @@
 #                                                       - tests/acceptance/ 해시 동결 (구현 시작 후 재동결은 사용자 승인 필수, unlock 토큰 소비)
 #   acceptance-gate                                     - 동결 무결성 검증 + run.sh 실행 (HARD_FAIL, 디렉토리 없으면 skip)
 #   layer-coverage                                      - projectScope 대비 레이어 아티팩트 검증 (HARD_FAIL, scope 없으면 skip)
-#   code-review-findings                                - progress의 open CRITICAL/HIGH 리뷰 finding 계수 (HARD_FAIL)
+#   code-review-findings [--round-kind fix|verify|rerecord] - progress의 open CRITICAL/HIGH 리뷰 finding 계수 + 리뷰 라운드 계수 (HARD_FAIL; 신고 kind는 소스 지문으로 교차검증 — 지문이 바뀌었으면 fix로 계상)
 #   provenance-gate                                     - SPEC 핵심 섹션 provenance 마커 검증 (HARD_FAIL)
 #   doc-split record --parent <p> --children <a,b>      - TOO_BIG 문서 분할 기록 (record-error exit 4 후에만)
 #   review-escalation-check [--mark-complete]           - 위험 트리거 기반 리뷰 승격 판정/증거 검증
@@ -62,8 +62,9 @@
 #   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신 (--iteration 생략 시 ralph frontmatter)
 #   record-decision --what <s> --why <s> [...]         - 결정 1건 기록 (why 필수, append-only 로그)
 #   record-decision --none --why <s>                   - 이번 iteration에 결정 없음 기록
-#   record-decision --list [--iteration N] [--last N]  - 결정 로그 조회
+#   record-decision --list [--iteration N] [--last N] [--all] - 결정 로그 조회 (기본: 이번 run만)
 #   assumption-review --status <s> --count <N>         - assumption 일괄 확인 결과 기록
+#                                                        (confirmed는 --count를 scope=interview 결정 기록 수와 대조)
 
 set -euo pipefail
 
@@ -232,7 +233,7 @@ main() {
       echo "                                               Files ADDED after freeze are a WARN (addedFiles); modified/deleted stay FAIL"
       echo "  layer-coverage                               - Verify projectScope layers exist on filesystem (HARD_FAIL; skip if no projectScope)"
       echo "                                               Sole writer of qualityDimensions.layerCoverage (checked by stop-hook)"
-      echo "  code-review-findings                         - Count open CRITICAL/HIGH review findings in progress (HARD_FAIL)"
+      echo "  code-review-findings [--round-kind fix|verify|rerecord] - Count open CRITICAL/HIGH review findings + review rounds (HARD_FAIL; kind cross-checked with source fingerprint)"
       echo "  record-dimension <key> <result> [evidence...] - Record soft quality dimension to qualityDimensions.<key>"
       echo "                                               result: pass|warn|fail|skip. 'layerCoverage' rejected (layer-coverage gate only)."
       echo "                                               Only sanctioned write path for soft dimensions — direct edits to .claude-verification.json are blocked by the guard."
@@ -250,8 +251,9 @@ main() {
       echo "                                               without a reason is a wrong decision; the script refuses it (exit 1)."
       echo "                                               Also mirrors 'D-NNNN: what - why' into handoff.keyDecisions (append)."
       echo "  record-decision --none --why '<why>'       - Record that this iteration had no decision (keyDecisions untouched)"
-      echo "  record-decision --list [--iteration N] [--last N] - Query the decision log"
+      echo "  record-decision --list [--iteration N] [--last N] [--all] - Query the decision log (default: current run only)"
       echo "  assumption-review --status confirmed|none|escalated --count <N> [--note '<s>']"
+      echo "                                            - confirmed cross-checks --count against scope=interview decisions"
       echo "                                             - Record the pre-start assumption bulk review into progress.assumptionReview"
       echo "                                               (stop-hook requires this key in full-auto / plan-docs-full)"
       echo ""

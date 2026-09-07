@@ -2,6 +2,16 @@
 
 # ─── init: progress JSON 초기화 ───
 
+# 실행 식별자(runId) 생성 — progress 파일 1개 = 1 실행.
+# 결정 로그(.claude/acl-decisions.jsonl)의 각 레코드에 함께 박아, 이전 실행이 남긴 기록이
+# 다음 실행의 "이번 iteration 결정 있음" 검사를 대신 통과시키는 것을 막는다(stop-hook).
+_gen_run_id() {
+  local ts rnd
+  ts=$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || echo "unknown")
+  rnd=$(printf '%04x%04x' "$((RANDOM % 65536))" "$((RANDOM % 65536))" 2>/dev/null || echo "0000")
+  printf 'run-%s-%s' "$ts" "$rnd"
+}
+
 cmd_init() {
   local template="full-auto"
   local project="unnamed"
@@ -55,7 +65,8 @@ cmd_init() {
     return 0
   fi
 
-  local safe_project safe_requirement
+  local run_id safe_project safe_requirement
+  run_id=$(_gen_run_id)
   safe_project=$(jq -Rn --arg v "$project" '$v')
   safe_requirement=$(jq -Rn --arg v "$requirement" '$v')
 
@@ -67,6 +78,7 @@ cmd_init() {
   "project": $safe_project,
   "userRequirement": $safe_requirement,
   "status": "in_progress",
+  "runId": "$run_id",
   "currentPhase": "phase_0",
   "gateHistory": [],
   "steps": [
@@ -126,6 +138,7 @@ ENDJSON
   "project": $safe_project,
   "created": "$(timestamp)",
   "status": "in_progress",
+  "runId": "$run_id",
   "definitionDoc": null,
   "readmePath": null,
   "documents": [],
@@ -159,6 +172,9 @@ ENDJSON
   "project": $safe_project,
   "created": "$(timestamp)",
   "status": "in_progress",
+  "runId": "$run_id",
+  "definitionDoc": null,
+  "readmePath": null,
   "documents": [],
   "dod": {
     "build_pass": { "checked": false, "evidence": null },
@@ -203,6 +219,7 @@ ENDJSON
   "scope": $safe_requirement,
   "currentRound": 0,
   "status": "in_progress",
+  "runId": "$run_id",
   "roundResults": [],
   "findingHistory": [],
   "dod": {
@@ -230,6 +247,7 @@ ENDJSON
   "project": $safe_project,
   "created": "$(timestamp)",
   "status": "in_progress",
+  "runId": "$run_id",
   "definitionDoc": null,
   "readmePath": null,
   "steps": [
@@ -248,7 +266,9 @@ ENDJSON
   "dod": {
     "build_pass": { "checked": false, "evidence": null },
     "test_pass": { "checked": false, "evidence": null },
+    "e2e_pass": { "checked": false, "evidence": null },
     "security_review": { "checked": false, "evidence": null },
+    "secret_scan": { "checked": false, "evidence": null },
     "docs_complete": { "checked": false, "evidence": null },
     "final_verification": { "checked": false, "evidence": null }
   },
@@ -272,6 +292,7 @@ ENDJSON
   "project": $safe_project,
   "created": "$(timestamp)",
   "status": "in_progress",
+  "runId": "$run_id",
   "mode": null,
   "docsDir": null,
   "projectType": null,
@@ -317,6 +338,7 @@ ENDJSON
   "project": $safe_project,
   "created": "$(timestamp)",
   "status": "in_progress",
+  "runId": "$run_id",
   "docsDir": "docs/",
   "steps": [
     {"name": "구조적 검사", "status": "pending", "evidence": {}},

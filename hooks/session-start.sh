@@ -82,9 +82,19 @@ fi
 # 결정 로그 요약 (관측 전용 1줄) — 이 세션이 "왜 그렇게 되어 있는지"를 모른 채 재결정하는 것을 막는다.
 ACL_DECISIONS_FILE=".claude/acl-decisions.jsonl"
 DECISIONS_SECTION=""
+# 현재 실행 식별자 — progress 탐지는 아래에서 하므로 여기서는 파일명 패턴으로 직접 찾는다.
+# runId가 다른(=이전 실행) 결정을 이번 세션의 전제로 주입하지 않기 위한 필터.
+ACL_RUN_ID=""
+if command -v jq &>/dev/null; then
+  for _acl_pf in .claude-*progress*.json; do
+    [[ -f "$_acl_pf" ]] || continue
+    ACL_RUN_ID=$(jq -r '.runId // empty' "$_acl_pf" 2>/dev/null || echo "")
+    [[ -n "$ACL_RUN_ID" ]] && break
+  done
+fi
 if command -v jq &>/dev/null && [[ -f "$ACL_DECISIONS_FILE" ]]; then
-  DECISIONS_LINE=$(jq -rn '
-    [inputs] as $d
+  DECISIONS_LINE=$(jq -rn --arg run "$ACL_RUN_ID" '
+    ([inputs] | map(select($run == "" or (.runId // "") == $run))) as $d
     | if ($d | length) == 0 then empty
       else ($d[-1]) as $last
         | "최근 결정 \($d | length)건, 마지막: \($last.id) \($last.what) — \($last.why)"

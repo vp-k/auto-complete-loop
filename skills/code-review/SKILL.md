@@ -69,6 +69,11 @@ No Ralph/progress/promise code — managed by the orchestrator.
 
    Finding 검증, severity별 수정 처리, 품질 게이트 재실행, 라운드 결과 기록, Suppression List, 리뷰 완료 조건, Phase 3 완료, Iteration 관리 모두 위 템플릿을 따릅니다.
 
+   > **결정 기록 필수**: MEDIUM/LOW를 `deferred`로 넘기거나 severity를 강등(C/H → M/L)하거나 finding을
+   > `dismissed`로 기각했다면, 그 판단마다
+   > `record-decision --scope review --source severity --what "<finding ID와 처분>" --why "<왜 그 처분인가>"`를 남긴다
+   > (규칙: `rules/shared-rules.md` "결정 기록 (단일 출처)").
+
 3. **자동 커밋** (품질 게이트 통과 시):
    ```bash
    git add -A && git commit -m "[auto] Phase 3 코드 리뷰 Round N 수정 완료"

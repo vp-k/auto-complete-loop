@@ -210,3 +210,82 @@ seed_progress() {
   fp2=$(run_gate source-hash)
   [ "$fp" = "$fp2" ]
 }
+
+# ─── (M5) 리뷰 라운드 카운터: 게이트가 센다 (모델 자기 계수 아님) ───
+
+@test "round-counter: --round-kind fix만 withFixes를 올리고 verify/rerecord는 total만 올린다" {
+  fp=$(run_gate source-hash)
+  seed_progress "$fp"
+  run_gate code-review-findings --progress-file "$PF" --round-kind fix
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "1" ]
+  [ "$(jq -r '.reviewRounds.total' .claude-verification.json)" = "1" ]
+
+  run_gate code-review-findings --progress-file "$PF" --round-kind verify
+  run_gate code-review-findings --progress-file "$PF" --round-kind rerecord
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "1" ]
+  [ "$(jq -r '.reviewRounds.total' .claude-verification.json)" = "3" ]
+  [ "$(jq -r '.reviewRounds.cap' .claude-verification.json)" = "5" ]
+  [ "$(jq -r '.reviewRounds.lastKind' .claude-verification.json)" = "rerecord" ]
+}
+
+@test "round-counter: 기본 round-kind는 verify (기존 호출부 동작 보존)" {
+  fp=$(run_gate source-hash)
+  seed_progress "$fp"
+  run run_gate code-review-findings --progress-file "$PF"
+  [ "$status" -eq 0 ]
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "0" ]
+  [ "$(jq -r '.reviewRounds.total' .claude-verification.json)" = "1" ]
+  [[ "$output" == *"라운드 계수"* ]]
+}
+
+@test "round-counter: 소스가 바뀌었는데 verify로 신고하면 fix로 계상한다 (자기신고 세탁 차단)" {
+  fp=$(run_gate source-hash)
+  seed_progress "$fp"
+  run_gate code-review-findings --progress-file "$PF" --round-kind fix
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "1" ]
+  [ "$(jq -r '.reviewRounds.sourceHash' .claude-verification.json)" = "$fp" ]
+
+  # 코드를 고치고(지문 변경) 리뷰 라운드를 다시 기록한 뒤 '확인 전용'이라고 신고
+  echo b >> f.txt
+  fp2=$(run_gate source-hash)
+  [ "$fp" != "$fp2" ]
+  seed_progress "$fp2"
+  run run_gate code-review-findings --progress-file "$PF" --round-kind verify
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"(fix)로 계상한다"* ]]
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "2" ]
+  [ "$(jq -r '.reviewRounds.lastKind' .claude-verification.json)" = "fix" ]
+  [ "$(jq -r '.reviewRounds.declaredKind' .claude-verification.json)" = "verify" ]
+
+  # 소스 불변이면 신고대로 verify (계수 안 함)
+  run run_gate code-review-findings --progress-file "$PF" --round-kind verify
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"(fix)로 계상한다"* ]]
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "2" ]
+  [ "$(jq -r '.reviewRounds.lastKind' .claude-verification.json)" = "verify" ]
+}
+
+@test "round-counter: 잘못된 --round-kind는 거부" {
+  fp=$(run_gate source-hash)
+  seed_progress "$fp"
+  run run_gate code-review-findings --progress-file "$PF" --round-kind nope
+  [ "$status" -ne 0 ]
+}
+
+@test "round-counter: 수정 라운드 5회 후 open C/H가 남으면 REVIEW_ROUND_CAP 에스컬레이션을 요구" {
+  fp=$(run_gate source-hash)
+  jq -n --arg h "$fp" '{
+    findingHistory: [{id:"SEC-CRIT-001",severity:"CRITICAL",status:"open"}],
+    roundResults: [{round:1, sourceHash:$h, findings:{bySeverity:{}}}]
+  }' > "$PF"
+
+  local i
+  for i in 1 2 3 4; do
+    run_gate code-review-findings --progress-file "$PF" --round-kind fix || true
+  done
+  run run_gate code-review-findings --progress-file "$PF" --round-kind fix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"REVIEW_ROUND_CAP reached"* ]]
+  [[ "$output" == *"--type REVIEW_ROUND_CAP --level L2"* ]]
+  [ "$(jq -r '.reviewRounds.withFixes' .claude-verification.json)" = "5" ]
+}

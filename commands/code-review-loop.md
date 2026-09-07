@@ -103,6 +103,16 @@ findingHistory 각 항목 스키마:
 
 - 6단계의 종료 조건 = (rounds 또는 goal 조건 충족) && (빌드/테스트 통과) && 7단계(Live App Testing) 통과
 
+### promise 직전 체크리스트 (완주 차단 예방)
+
+`<promise>` 출력 **직전**에 아래 3줄을 순서대로 실행/확인한다 (stop-hook이 fail-closed로 검사하는 기록 — 빠지면 완주가 차단되고 iteration이 한 번 더 돈다):
+
+1. `handoff-update --progress-file .claude-review-loop-progress.json --next-steps "..."` (`--iteration`은 생략 — frontmatter에서 자동)
+2. `record-decision --what "<결정>" --why "<이유>"` — 결정이 없었으면 `record-decision --none --why "<왜 없었는지>"`
+3. (full-auto·plan-docs-full만) `assumptionReview.status` 기록 확인
+
+근거·상세는 `templates/ralph-loop-setup.md` §5 완료 조건 4·5.
+
 ### Iteration 단위
 
 - 한 iteration = 리뷰 1라운드 (2~6단계). 종료 조건 충족 후 7단계 수행.

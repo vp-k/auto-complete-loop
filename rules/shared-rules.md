@@ -233,8 +233,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --none \
   --why "문서 오탈자 수정만 수행했고 설계·구현 선택지가 발생하지 않았다"
 
-# 조회
+# 조회 (기본은 이번 실행(runId)의 기록만 — 이전 실행까지 보려면 --all)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --last 5
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --all
 ```
 
 | 옵션 | 값 | 의미 |
@@ -249,11 +250,24 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --last 
 
 기록되는 것: `.claude/acl-decisions.jsonl` 한 줄(JSON) + `decision.recorded` 이벤트 +
 `handoff.keyDecisions`에 `"D-NNNN: <what> — <why>"` **append**(`--none`은 append하지 않음).
+각 줄에는 progress의 `runId`(init이 실행마다 발급)가 함께 박힌다 — **실행 식별자**다.
+
+> `handoff-update --decision`은 `handoff.keyDecisions`에 **append**만 하는 하위호환 옵션이며
+> 결정 로그에는 남지 않는다. 완주 검사를 통과시키는 것은 `record-decision`뿐이다.
 
 ### 강제
 
 stop-hook이 완주 선언 시 **이번 iteration의 결정 기록이 0건이면 차단**한다
 (progress에 `decisionLog.enabled`가 있는 워크플로우 — `init`으로 만든 모든 템플릿이 해당).
+
+**실행 격리(runId)**: 검사는 iteration뿐 아니라 **현재 실행의 runId**로도 필터링한다. 이전 실행이
+남긴 `.claude/acl-decisions.jsonl`의 옛 기록이 다음 실행의 검사를 대신 통과시키는 일이 없다
+(progress에 `runId`가 없는 v4.20 이하 파일은 iteration만 보는 하위호환 경로). 완주에 성공하면
+결정 로그도 progress·이벤트 로그와 함께 아카이브된다 — 같은 방어를 두 겹으로 둔다.
+
+**assumption 교차 검증**: `assumption-review --status confirmed --count N`의 `N`은 자기신고가 아니라
+이번 실행의 `record-decision --scope interview` 기록 건수와 대조되며, 다르면 exit 1이다.
+
 어떤 지점에서 record-decision을 호출해야 하는지는 각 스킬/커맨드 문서에 지점별로 명시되어 있다.
 
 ## 외부 AI 자체 탐색 (codex 호출 시)

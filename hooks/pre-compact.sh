@@ -62,9 +62,12 @@ fi
 # 최근 결정 5건 (.claude/acl-decisions.jsonl — record-decision이 유일한 기록 경로).
 # "왜 그렇게 했는가"는 컨텍스트 압축에서 가장 먼저 사라지면서 가장 비싸게 되돌려지므로
 # 요약 지시문에 명시적으로 심는다.
+# 현재 실행(runId)의 결정만 — 이전 실행의 결정을 이번 실행의 전제로 요약에 심으면
+# 컴팩션 후 모델이 남의 결정을 자기 결정으로 이어받는다. runId가 없는 progress는 전체.
 DECISIONS_LOG=".claude/acl-decisions.jsonl"
+CUR_RUN_ID=$(jq -r '.runId // empty' "$PROGRESS_FILE" 2>/dev/null || true)
 if [ -f "$DECISIONS_LOG" ]; then
-  RECENT_DECISIONS=$(jq -rn '[inputs] | .[-5:] | .[] | "  - \(.id) [\(.scope)] \(.what) — \(.why)"' "$DECISIONS_LOG" 2>/dev/null || true)
+  RECENT_DECISIONS=$(jq -rn --arg run "${CUR_RUN_ID:-}" '[inputs] | map(select($run == "" or (.runId // "") == $run)) | .[-5:] | .[] | "  - \(.id) [\(.scope)] \(.what) — \(.why)"' "$DECISIONS_LOG" 2>/dev/null || true)
   if [ -n "$RECENT_DECISIONS" ]; then
     echo "Recent Decisions (최근 5건, 이 목록은 요약에 반드시 보존할 것):"
     echo "$RECENT_DECISIONS"

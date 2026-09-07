@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" bash-guards.sh",
-            "description": "통합 Bash 가드: --no-verify 차단 + [auto] 커밋 US-ID 검증 + verification.json 쓰기 차단 (단일 디스패처)"
+            "description": "통합 Bash 가드(단일 디스패처, 검사 6종): 1) --no-verify/commit -n 차단 2) [auto] 커밋 US-ID 검증 3) .claude-verification.json 쓰기 차단 4) ralph-loop.local.md 수정/삭제 차단 5) acceptance-unlock.json 생성/수정 차단 6) acl-decisions.jsonl 쓰기/삭제 차단"
           }
         ]
       },

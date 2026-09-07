@@ -332,10 +332,18 @@ cmd_handoff_update() {
       --warnings)    warnings="${2:?--warnings requires value}"; shift 2 ;;
       --approach)    approach="${2:?--approach requires value}"; shift 2 ;;
       --iteration)   iteration="${2:?--iteration requires value}"; shift 2 ;;
-      --decision)    decisions+=("${2:?--decision requires value}"); shift 2 ;;
+      --decision)    decisions+=("${2:?--decision requires value}"); shift 2 ;;  # append (치환 아님) — record-decision 권장
       *) die "Unknown option: $1. Usage: handoff-update --phase <p> --completed <c> --next-steps <n> [--warnings <w>] [--approach <a>] [--iteration <i>] [--decision <d>]..." ;;
     esac
   done
+
+  # --decision 하위호환 안내: 결정의 단일 출처는 record-decision 이다.
+  # 여기서 받은 값은 keyDecisions에 append만 되고 .claude/acl-decisions.jsonl에는 남지 않으므로
+  # stop-hook의 "이번 iteration 결정 기록" 검사를 만족시키지 못한다.
+  if [[ ${#decisions[@]} -gt 0 ]]; then
+    echo "NOTE: handoff-update --decision은 handoff.keyDecisions에 append만 한다 (기존 항목 보존)." >&2
+    echo "      결정 기록의 단일 출처는 'record-decision --what <결정> --why <이유>'다 — 그쪽만이 결정 로그에 남고 완주 검사를 통과시킨다." >&2
+  fi
 
   # 최소 필수 인수
   [[ -n "$next_steps" ]] || die "handoff-update requires at least --next-steps"
@@ -372,7 +380,7 @@ cmd_handoff_update() {
     | if $warnings != "" then .handoff.warnings = $warnings else . end
     | if $approach != "" then .handoff.currentApproach = $approach else . end
     | if $iteration != "" then .handoff.lastIteration = ($iteration | tonumber) else . end
-    | if $decisions != null then .handoff.keyDecisions = $decisions else . end
+    | if $decisions != null then .handoff.keyDecisions = ((.handoff.keyDecisions // []) + $decisions) else . end
   '
 
   echo "OK: handoff updated"
@@ -469,10 +477,57 @@ cmd_source_hash() {
 # v4.9.0: 마지막 라운드의 sourceHash를 현재 quality_fingerprint와 대조 (불일치/부재 = fail,
 # 비-git = skip) — 리뷰 pass 이후의 무리뷰 코드 변경을 fail-closed로 차단한다.
 
+# 수정이 발생한 리뷰 라운드 상한. 도달 후에도 open CRITICAL/HIGH가 남으면
+# 모델의 자체 계수가 아니라 이 게이트가 REVIEW_ROUND_CAP 에스컬레이션을 요구한다.
+REVIEW_ROUND_CAP=5
+
 cmd_code_review_findings() {
   echo "=== Code Review Findings Gate ==="
   require_jq
   require_progress
+
+  # --round-kind: 이 게이트 호출이 어떤 라운드의 마감인지.
+  #   fix      — 수정이 발생한 라운드 (상한 5에 계상)
+  #   verify   — 확인 전용(수정 0건) 라운드 (상한 비계상, 기본값 → 기존 호출부 동작 보존)
+  #   rerecord — 귀속용 재기록 라운드 (상한 비계상)
+  local round_kind="verify"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --round-kind) round_kind="${2:?--round-kind requires value}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  case "$round_kind" in
+    fix|verify|rerecord) ;;
+    *) die "--round-kind must be one of: fix|verify|rerecord (got '$round_kind')" ;;
+  esac
+
+  # 누적 카운터를 verification.json에 기록 — 모델이 라운드 수를 세어 스스로 지키던 것을
+  # 결정론적 기록으로 옮긴다 (게이트가 센다).
+  local _rr_prev_fix=0 _rr_prev_total=0 _rr_prev_fp="" _rr_cur_fp=""
+  if [[ -f "$VERIFICATION_FILE" ]]; then
+    _rr_prev_fix=$(jq -r '.reviewRounds.withFixes // 0' "$VERIFICATION_FILE" 2>/dev/null || echo 0)
+    _rr_prev_total=$(jq -r '.reviewRounds.total // 0' "$VERIFICATION_FILE" 2>/dev/null || echo 0)
+    _rr_prev_fp=$(jq -r '.reviewRounds.sourceHash // ""' "$VERIFICATION_FILE" 2>/dev/null || echo "")
+  fi
+  [[ "$_rr_prev_fix" =~ ^[0-9]+$ ]] || _rr_prev_fix=0
+  [[ "$_rr_prev_total" =~ ^[0-9]+$ ]] || _rr_prev_total=0
+  # --round-kind는 모델의 자기신고다. 마지막 마감 이후 소스 지문이 바뀌었는데 verify/rerecord로
+  # 신고하면 "수정했지만 상한에 안 세이는 라운드"가 된다 — 지문이 다르면 신고와 무관하게 fix로 계상한다.
+  # (verify/rerecord는 정의상 소스 불변 라운드다. 첫 호출·비-git은 대조 근거가 없어 신고를 따른다.)
+  _rr_cur_fp=$(quality_fingerprint 2>/dev/null || echo "")
+  local _rr_declared="$round_kind"
+  if [[ "$round_kind" != "fix" ]] && [[ -n "$_rr_prev_fp" ]] && [[ -n "$_rr_cur_fp" ]] && [[ "$_rr_prev_fp" != "$_rr_cur_fp" ]]; then
+    echo "[code-review-findings] NOTE: --round-kind ${round_kind}로 신고했지만 마지막 라운드 마감 이후 소스 지문이 바뀌었다 — 수정 라운드(fix)로 계상한다."
+    round_kind="fix"
+  fi
+  local _rr_fix=$_rr_prev_fix
+  [[ "$round_kind" == "fix" ]] && _rr_fix=$((_rr_prev_fix + 1))
+  local _rr_total=$((_rr_prev_total + 1))
+  record_verification "reviewRounds" "$(jq -n --argjson w "$_rr_fix" --argjson t "$_rr_total" \
+    --arg k "$round_kind" --arg d "$_rr_declared" --arg fp "$_rr_cur_fp" --arg ts "$(timestamp)" --argjson cap "$REVIEW_ROUND_CAP" \
+    '{withFixes:$w, total:$t, cap:$cap, lastKind:$k, declaredKind:$d, sourceHash:$fp, updatedAt:$ts}')"
+  echo "[code-review-findings] 라운드 계수: withFixes=${_rr_fix}/${REVIEW_ROUND_CAP} (total=${_rr_total}, kind=${round_kind}${_rr_declared:+, declared=${_rr_declared}})"
 
   # 기록 헬퍼 — 계약: codeReviewFindings {result: pass|fail, criticalOpen: N, highOpen: N, sourceHashCheck}
   # $5(sourceHashCheck) 생략 시 "skip" (기존 호출부 호환)
@@ -585,6 +640,13 @@ cmd_code_review_findings() {
     echo "[code-review-findings] FAIL: open CRITICAL/HIGH finding(s) remain"
     echo "  Fix them (or record dismissal with rationale) and set status=fixed in findingHistory."
     echo "  Note: CRITICAL/HIGH with status=deferred/regressed count as open (deferral is MEDIUM/LOW-only)."
+    if (( _rr_fix >= REVIEW_ROUND_CAP )); then
+      echo "[code-review-findings] REVIEW_ROUND_CAP reached: 수정 라운드 ${_rr_fix}회(상한 ${REVIEW_ROUND_CAP})인데 open CRITICAL/HIGH가 남아 있다."
+      echo "  상한을 이유로 C/H를 deferred 처리하는 것은 금지다. 다음을 실행해 리뷰 승격으로 넘겨라:"
+      echo "    bash \${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <대상> --type REVIEW_ROUND_CAP --level L2 --msg \"수정 라운드 ${_rr_fix}회 후 open C/H ${critical_open}/${high_open} 잔존\""
+      echo "  (승격 라운드는 상한 예외 — review-escalation-check가 증거를 요구한다.)"
+      note="${note:+$note; }REVIEW_ROUND_CAP reached (withFixes=${_rr_fix})"
+    fi
     append_gate_history "code-review-findings" "fail" "{\"criticalOpen\":$critical_open,\"highOpen\":$high_open}"
     _crf_record "fail" "$critical_open" "$high_open" "$note" "$sh_check"
     echo "=== CODE REVIEW FINDINGS: FAIL ==="

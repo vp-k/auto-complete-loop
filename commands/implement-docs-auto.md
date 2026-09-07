@@ -26,9 +26,17 @@ argument-hint: <definition(overview.md)> <doclist(README.md)>
 |----------|-----|
 | PROMISE_TAG | `ALL_DOCS_VERIFIED` |
 | PROGRESS_FILE | `.claude-progress.json` |
-| INIT_TEMPLATE | (없음) — progress 파일은 2단계에서 생성 |
+| INIT_TEMPLATE | `implement` |
 | MAX_ITERATIONS | (기본값) |
-| EXTRA_INIT | (없음) |
+| EXTRA_INIT | 인수로 받은 정의 문서/README 경로를 progress에 기록 (아래 명령) |
+
+```bash
+# EXTRA_INIT — init 직후 1회. 명령 고유 필드만 채운다 (나머지 키는 init 템플릿이 만든다)
+jq --arg d "${1:-}" --arg r "${2:-}" \
+  '.definitionDoc = (if $d == "" then null else $d end)
+   | .readmePath = (if $r == "" then null else $r end)' \
+  .claude-progress.json > .tmp.json && mv .tmp.json .claude-progress.json
+```
 
 ### 인수 파싱
 
@@ -45,6 +53,16 @@ argument-hint: <definition(overview.md)> <doclist(README.md)>
   - build/typeCheck/lint/test: `exitCode: 0`
   - secretScan/artifactCheck/designPolish 등 result 기반 게이트: `result: "pass"` 또는 `"skip"` 또는 `"warn"` 또는 `"soft_fail"` (`fail`만 차단)
   - **smokeCheck는 예외**: `result: "pass"` 또는 `"skip"`만 허용 — **stop-hook이 `soft_fail`도 `fail`로 처리하여 완주를 차단**한다 (서버 미기동 = 완주 불가). 키 부재(스모크 미실행)는 차단하지 않음
+
+### promise 직전 체크리스트 (완주 차단 예방)
+
+`<promise>` 출력 **직전**에 아래 3줄을 순서대로 실행/확인한다 (stop-hook이 fail-closed로 검사하는 기록 — 빠지면 완주가 차단되고 iteration이 한 번 더 돈다):
+
+1. `handoff-update --progress-file .claude-progress.json --next-steps "..."` (`--iteration`은 생략 — frontmatter에서 자동)
+2. `record-decision --what "<결정>" --why "<이유>"` — 결정이 없었으면 `record-decision --none --why "<왜 없었는지>"`
+3. (full-auto·plan-docs-full만) `assumptionReview.status` 기록 확인
+
+근거·상세는 `templates/ralph-loop-setup.md` §5 완료 조건 4·5.
 
 ### Iteration 단위
 
@@ -308,7 +326,7 @@ codex exec --skip-git-repo-check '## 코드 리뷰
 2. Critical/High는 즉시 수정
 3. Medium/Low는 **리뷰 3회 이내에만** 수정 (판단하여 수용 또는 사유와 함께 스킵) — 이후에는 기록만 하고 진행
 4. 수정 후 재리뷰 요청
-5. **Critical/High가 0건이 될 때까지** 반복 — 단 **리뷰 사이클 상한 5회**: 초과 시 `record-error --type REVIEW_ROUND_CAP --level L2`로 기록하고 에스컬레이션 (무한 재리뷰 금지, "모든 피드백 소멸"을 종료 조건으로 삼지 않는다)
+5. **Critical/High가 0건이 될 때까지** 반복 — 단 **수정 라운드 상한 5회**: 라운드를 마감할 때마다 `code-review-findings --round-kind fix`(수정 발생) / `--round-kind verify`(확인 전용) / `--round-kind rerecord`(귀속 재기록)를 호출한다. 상한 계수는 게이트가 하며(`reviewRounds.withFixes`), 도달 후에도 open C/H가 남으면 게이트가 `REVIEW_ROUND_CAP reached`를 출력하고 `record-error --type REVIEW_ROUND_CAP --level L2` 실행을 요구한다 (무한 재리뷰 금지, "모든 피드백 소멸"을 종료 조건으로 삼지 않는다)
 
 **권장사항 처리:**
 
@@ -569,46 +587,20 @@ L3 예산 소진 시 record-error가 자동 판정 (in_progress 문서 1개 + �
 
 ### 진행 상황 파일
 
-프로젝트 시작 시 `.claude-progress.json` 파일 생성:
+0단계의 `shared-gate.sh init --template implement`가 아래 키를 만들어 둡니다 — 이 문서는 그 키를 참조만 하고, 파일을 직접 작성하지 않습니다 (구조의 단일 출처는 `scripts/gates/init.sh`의 implement 템플릿):
 
-```json
-{
-  "project": "프로젝트명",
-  "created": "2025-01-02T10:00:00Z",
-  "status": "in_progress",
-  "documents": [
-    {"name": "문서1.md", "status": "pending", "phase": null, "tickets": []},
-    {"name": "문서2.md", "status": "pending", "phase": null, "tickets": []}
-  ],
-  "dod": {
-    "build_pass": { "checked": false, "evidence": null },
-    "test_pass": { "checked": false, "evidence": null },
-    "code_review_pass": { "checked": false, "evidence": null },
-    "e2e_pass": { "checked": false, "evidence": null }
-  },
-  "currentDocument": null,
-  "lastCommitSha": null,
-  "errorHistory": {
-    "currentError": null,
-    "attempts": []
-  },
-  "completedFiles": [],
-  "context": {
-    "architecture": null,
-    "patterns": null
-  },
-  "documentSummaries": {},
-  "lastVerifiedAt": null,
-  "handoff": {
-    "lastIteration": null,
-    "completedInThisIteration": "",
-    "nextSteps": "",
-    "keyDecisions": [],
-    "warnings": "",
-    "currentApproach": ""
-  }
-}
-```
+| 키 | 용도 |
+|----|------|
+| `project` · `created` · `status` · `runId` | 실행 식별 (`runId`는 결정 기록 귀속에 쓰임) |
+| `definitionDoc` · `readmePath` | EXTRA_INIT가 채우는 명령 고유 인수 |
+| `documents[]` (`name` `status` `phase` `tickets`) | 문서별 구현 진행 |
+| `dod` (`build_pass` `test_pass` `code_review_pass` `e2e_pass`) | 완주 조건 |
+| `currentDocument` · `lastCommitSha` · `lastVerifiedAt` | 진행 커서 |
+| `errorHistory` (`currentError` `attempts`) | 에러 에스컬레이션 |
+| `completedFiles` · `context`(`architecture` `patterns`) · `documentSummaries` | 맥락 복구 |
+| `decisionLog.enabled` | 결정 기록 fail-closed 대상 표시 |
+| `handoff` | iteration 인계 |
+
 
 **상태 전이:**
 

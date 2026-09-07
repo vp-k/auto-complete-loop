@@ -11,6 +11,9 @@ DECISIONS_FILE=".claude/acl-decisions.jsonl"
 # --why 최소 길이 (공백 제거 후 문자 수). 이 아래는 사유로 인정하지 않는다.
 DECISION_WHY_MIN_LEN=10
 
+# 락 디렉토리를 스테일로 간주하는 경과 시간(초). 이보다 오래된 락은 회수하고 재획득한다.
+DECISION_LOCK_STALE_SEC=30
+
 # 유니코드 문자 수 계산 (bash ${#var}는 로케일에 따라 바이트를 셀 수 있어 jq로 결정론화)
 _decision_charlen() {
   printf '%s' "$1" | jq -Rs 'length' 2>/dev/null || echo 0
@@ -28,6 +31,21 @@ _decision_default_iteration() {
   printf '%s' "$it"
 }
 
+# 현재 실행 식별자(runId) — progress 파일의 runId가 유일한 출처.
+# init이 실행마다 새로 발급하므로 결정 레코드에 함께 박으면, 이전 실행이 남긴 기록이
+# 다음 실행의 "이번 iteration 결정 있음" 검사를 대신 통과시키는 일이 불가능해진다.
+# v4.20 이하 progress에는 키가 없어 빈 문자열 → iteration만 보는 하위호환 경로.
+_decision_current_run_id() {
+  local pf="${PROGRESS_FILE:-}" rid=""
+  if [[ -z "$pf" ]] || [[ ! -f "$pf" ]]; then
+    pf=$(detect_progress_file 2>/dev/null || true)
+  fi
+  if [[ -n "$pf" ]] && [[ -f "$pf" ]]; then
+    rid=$(jq -r '.runId // empty' "$pf" 2>/dev/null || true)
+  fi
+  printf '%s' "$rid"
+}
+
 _decision_default_phase() {
   local ph=""
   if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "${PROGRESS_FILE:-}" ]]; then
@@ -42,19 +60,25 @@ _decision_count() {
   local n
   n=$(jq -s 'length' "$DECISIONS_FILE" 2>/dev/null || true)
   if [[ ! "$n" =~ ^[0-9]+$ ]]; then
-    n=$(wc -l < "$DECISIONS_FILE" 2>/dev/null | tr -d ' ' || echo 0)
+    # jq 파싱 실패 폴백: 레코드는 항상 1줄 1 JSON 객체이므로 '{'로 시작하는 줄만 센다
+    # (wc -l은 파일 끝 개행 유무·빈 줄까지 세어 실제 레코드 수와 어긋나고, id 채번이 충돌한다)
+    n=$(grep -c '^{' "$DECISIONS_FILE" 2>/dev/null | tr -d ' ' || echo 0)
   fi
   [[ "$n" =~ ^[0-9]+$ ]] || n=0
   echo "$n"
 }
 
+# want_run: 현재 실행으로 좁힐 runId. 빈 문자열이면 전체(하위호환·--all).
 _decision_list() {
-  local want_iter="${1:-}" want_last="${2:-}"
+  local want_iter="${1:-}" want_last="${2:-}" want_run="${3:-}"
   if [[ ! -f "$DECISIONS_FILE" ]]; then
     echo "결정 기록 없음 ($DECISIONS_FILE)"
     return 0
   fi
   local filter='[inputs]'
+  if [[ -n "$want_run" ]]; then
+    filter="$filter | map(select(.runId == $(jq -Rn --arg v "$want_run" '$v')))"
+  fi
   if [[ -n "$want_iter" ]]; then
     [[ "$want_iter" =~ ^[0-9]+$ ]] || die "--iteration must be a non-negative integer, got '$want_iter'"
     filter="$filter | map(select(.iteration == $want_iter))"
@@ -76,11 +100,12 @@ cmd_record_decision() {
   local what="" why="" reversible="yes" scope="other" src="inline"
   local phase="" iteration="" kind="decision"
   local alternatives=()
-  local list_mode="false" list_iteration="" list_last=""
+  local list_mode="false" list_iteration="" list_last="" list_all="false"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --list)         list_mode="true"; shift ;;
+      --all)          list_all="true"; shift ;;
       --last)         list_last="${2:?--last requires value}"; shift 2 ;;
       --none)         kind="none"; shift ;;
       --what)         what="${2:?--what requires value}"; shift 2 ;;
@@ -91,12 +116,16 @@ cmd_record_decision() {
       --source)       src="${2:?--source requires value}"; shift 2 ;;
       --phase)        phase="${2:?--phase requires value}"; shift 2 ;;
       --iteration)    iteration="${2:?--iteration requires value}"; list_iteration="$2"; shift 2 ;;
-      *) die "Unknown option: $1. Usage: record-decision --what <s> --why <s> [--alternatives <s>]... [--reversible yes|no] [--scope <s>] [--source <s>] [--phase <p>] [--iteration <n>] | --none --why <s> | --list [--iteration N] [--last N]" ;;
+      *) die "Unknown option: $1. Usage: record-decision --what <s> --why <s> [--alternatives <s>]... [--reversible yes|no] [--scope <s>] [--source <s>] [--phase <p>] [--iteration <n>] | --none --why <s> | --list [--iteration N] [--last N] [--all]" ;;
     esac
   done
 
   if [[ "$list_mode" == "true" ]]; then
-    _decision_list "$list_iteration" "$list_last"
+    # 기본은 현재 실행(runId)만 — 이전 실행의 결정을 이번 실행의 근거로 착각하지 않게 한다.
+    # --all로 전체 이력을 본다. runId가 없는 progress(v4.20 이하)면 자동으로 전체.
+    local list_run=""
+    [[ "$list_all" == "true" ]] || list_run=$(_decision_current_run_id)
+    _decision_list "$list_iteration" "$list_last" "$list_run"
     return 0
   fi
 
@@ -135,12 +164,40 @@ cmd_record_decision() {
 
   [[ -n "$iteration" ]] || iteration=$(_decision_default_iteration)
   [[ -n "$phase" ]] || phase=$(_decision_default_phase)
+  local run_id
+  run_id=$(_decision_current_run_id)
 
   # ── 원자적 append (id 채번 경합 방지: mkdir 스핀락) ──
   mkdir -p .claude 2>/dev/null || die "cannot create .claude directory"
-  local lockdir="${DECISIONS_FILE}.lock.d" locked="false" i
+  local lockdir="${DECISIONS_FILE}.lock.d" lockmeta="${DECISIONS_FILE}.lock.d/owner"
+  local locked="false" i _lk_pid _lk_ts _now
   for ((i = 0; i < 20; i++)); do
-    if mkdir "$lockdir" 2>/dev/null; then locked="true"; break; fi
+    if mkdir "$lockdir" 2>/dev/null; then
+      locked="true"
+      printf '%s %s\n' "$$" "$(date -u '+%s' 2>/dev/null || echo 0)" > "$lockmeta" 2>/dev/null || true
+      break
+    fi
+    # 스테일 락 회수 — 죽은 프로세스가 남긴 디렉토리가 영구히 락을 막지 않게 한다.
+    # (기존에는 2초 뒤 무조건 lock 없이 append로 넘어가 id 채번 경합이 그대로 열려 있었다)
+    _lk_pid=""; _lk_ts=""
+    if [[ -f "$lockmeta" ]]; then
+      read -r _lk_pid _lk_ts < "$lockmeta" 2>/dev/null || true
+    fi
+    [[ "$_lk_ts" =~ ^[0-9]+$ ]] || _lk_ts=0
+    if (( _lk_ts == 0 )); then
+      # owner 메타가 아직 없다 — 죽은 락이 아니라 다른 프로세스가 mkdir 직후 메타를 쓰기 전인
+      # 찰나일 수 있다(그때 회수하면 둘 다 락을 쥐고 id 채번이 충돌한다). 디렉토리 mtime으로
+      # 나이를 재고, 그것도 못 얻으면 회수하지 않고 기다린다(fail-closed).
+      _lk_ts=$(stat -c %Y "$lockdir" 2>/dev/null || stat -f %m "$lockdir" 2>/dev/null || echo 0)
+      [[ "$_lk_ts" =~ ^[0-9]+$ ]] || _lk_ts=0
+    fi
+    _now=$(date -u '+%s' 2>/dev/null || echo 0)
+    if [[ -d "$lockdir" ]] && (( _lk_ts > 0 && _now > 0 && _now - _lk_ts > DECISION_LOCK_STALE_SEC )); then
+      echo "WARNING: record-decision: stale lock 회수 (pid=${_lk_pid:-unknown}, age>${DECISION_LOCK_STALE_SEC}s)" >&2
+      rm -f "$lockmeta" 2>/dev/null || true
+      rmdir "$lockdir" 2>/dev/null || true
+      continue
+    fi
     sleep 0.1
   done
   [[ "$locked" == "true" ]] || echo "WARNING: record-decision: lock busy for $DECISIONS_FILE (waited 2s) — proceeding without lock" >&2
@@ -162,13 +219,14 @@ cmd_record_decision() {
       --argjson iteration "$iteration" --arg kind "$kind" \
       --arg what "$what" --arg why "$why" --argjson alternatives "$alt_json" \
       --arg reversible "$reversible" --arg scope "$scope" --arg source "$src" \
-      '{id:$id, ts:$ts, phase:$phase, iteration:$iteration, kind:$kind, what:$what, why:$why, alternatives:$alternatives, reversible:$reversible, scope:$scope, source:$source}' 2>/dev/null); then
+      --arg runId "$run_id" \
+      '{id:$id, ts:$ts, runId:$runId, phase:$phase, iteration:$iteration, kind:$kind, what:$what, why:$why, alternatives:$alternatives, reversible:$reversible, scope:$scope, source:$source}' 2>/dev/null); then
     printf '%s\n' "$line" >> "$DECISIONS_FILE"
   else
-    [[ "$locked" == "true" ]] && rmdir "$lockdir" 2>/dev/null
+    [[ "$locked" == "true" ]] && { rm -f "$lockmeta" 2>/dev/null; rmdir "$lockdir" 2>/dev/null; }
     die "failed to build decision record JSON"
   fi
-  [[ "$locked" == "true" ]] && rmdir "$lockdir" 2>/dev/null
+  [[ "$locked" == "true" ]] && { rm -f "$lockmeta" 2>/dev/null; rmdir "$lockdir" 2>/dev/null; }
 
   # ── 관측 이벤트 (베스트에포트) ──
   log_event "decision.recorded" "$(jq -cn --arg id "$id" --arg scope "$scope" --arg kind "$kind" \
@@ -220,6 +278,30 @@ cmd_assumption_review() {
   fi
   if [[ "$status" == "confirmed" ]] && (( count == 0 )); then
     die "--status confirmed인데 --count 0이다. assumption이 0건이면 --status none을 쓰라."
+  fi
+
+  # confirmed는 자기신고가 아니라 기록으로 증명한다 —
+  # pm-planning Step 0-0.6은 승인받은 assumption 항목마다 record-decision --scope interview를
+  # 남기게 되어 있으므로, 그 건수와 --count가 다르면 "표를 보여주지 않고 숫자만 적은" 경우다.
+  if [[ "$status" == "confirmed" ]]; then
+    local measured run_id
+    run_id=$(_decision_current_run_id)
+    measured=0
+    if [[ -f "$DECISIONS_FILE" ]]; then
+      measured=$(jq -s --arg run "$run_id" \
+        '[.[] | select(.scope == "interview" and .kind == "decision")
+              | select($run == "" or (.runId // "") == $run)] | length' \
+        "$DECISIONS_FILE" 2>/dev/null || echo 0)
+    fi
+    [[ "$measured" =~ ^[0-9]+$ ]] || measured=0
+    if (( measured != count )); then
+      echo "ERROR: assumption-review --count $count 와 실제 결정 기록 ${measured}건이 다르다 (scope=interview${run_id:+, runId=$run_id})." >&2
+      echo "  승인받은 assumption 항목마다 'record-decision --scope interview --source provenance --what ... --why ...'를" >&2
+      echo "  먼저 남긴 뒤, 그 건수와 같은 값으로 --count를 적어라 (자기신고 숫자는 증거가 아니다)." >&2
+      echo "  현재 기록 조회: bash scripts/shared-gate.sh record-decision --list" >&2
+      exit 1
+    fi
+    echo "   교차 검증: scope=interview 결정 기록 ${measured}건 = --count $count"
   fi
 
   jq_inplace "$PROGRESS_FILE" --arg s "$status" --argjson c "$count" --arg ts "$(timestamp)" --arg n "$note" \

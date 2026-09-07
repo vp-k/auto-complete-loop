@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.20.0**
+**v4.21.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -237,7 +237,7 @@ Memory is not storage — every lesson is written as a **condition for the next 
 - **How it comes back**: `session-start` hook injects the most recent LESSON entries into the next session's context, so the next run starts already knowing what broke and what to do about it
 - **No loops**: identical "next-run conditions" are deduplicated before append
 
-### Decision Log (v4.20.0 — 이유 없는 결정은 잘못된 결정이다)
+### Decision Log (v4.20.0, hardened in v4.21.0 — 이유 없는 결정은 잘못된 결정이다)
 
 A decision without a recorded reason gets re-decided by the next iteration, the next session, or the
 next person — and the cost of reversing it lands there. v4.20.0 funnels every decision into one
@@ -263,11 +263,19 @@ append-only log so that never happens silently.
   `--iteration` is omitted, so the model never has to count), (2) the log has at least one entry for that iteration
   (`record-decision --none --why "..."` records that there were none), and (3) `assumptionReview.status`
   is set. Progress files without `decisionLog.enabled` (pre-4.20.0) get one NOTE line instead.
+- **Scoped to one run (v4.21.0)**: `init` issues a `runId` (`run-<UTC>-<hex>`) into the progress file and
+  every decision record carries it. The stop-hook check, `--list`, and the pre-compact / session-start
+  injections all filter by the current `runId`, so a leftover `acl-decisions.jsonl` from a previous run
+  can no longer satisfy this run's check; on successful completion the log is archived alongside the
+  progress and event logs. Progress files without `runId` fall back to the iteration-only path.
   On the continue path the hook only appends a reminder to the next prompt — blocking there would
   stall the loop instead of advancing it.
 - **Comes back**: `pre-compact` injects the last 5 decisions into the compaction summary (the "why"
   is the first thing context compression drops and the most expensive to reconstruct);
   `session-start` adds one observational line; `status` shows the 3 most recent.
+- **Back-compat**: `handoff-update --decision` still works but only **appends** to
+  `handoff.keyDecisions` (it never replaced the list silently again) and prints a NOTE that
+  `record-decision` is the only channel that satisfies the completion check.
 
 ### Pre-Start Assumption Review (v4.20.0)
 
@@ -279,6 +287,9 @@ and each is recorded in the decision log. Zero assumptions means no question is 
 (`--status none`); a non-interactive run records `escalated` and lets the downstream provenance and
 clarification gates do the blocking. `assumption-review` writes the result and the stop-hook requires
 it in full-auto and plan-docs-full — a missing key means the step was skipped entirely.
+Since v4.21.0 `--count` is not self-reported: with `--status confirmed` the gate counts this run's
+`record-decision --scope interview` entries and rejects (exit 1, printing the measured number) when
+they disagree — writing a number without showing the table no longer passes.
 Assumptions that appear later, while writing Phase 1 docs, are folded into the existing Step 1-9
 clarification batch-ask rather than becoming a second round-trip.
 
@@ -295,7 +306,7 @@ The 51 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compa
 | `acceptance-gate` | HARD | Tampered or red acceptance tests, or SPEC modified after freeze (full-auto; skip = fail) |
 | `live-testing-gate` | HARD | Open LIVE-CRITICAL/HIGH findings from real-app testing |
 | `layer-coverage` | HARD | Declared frontend/backend layers missing on filesystem |
-| `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed; code changed after the last review round (sourceHash mismatch) |
+| `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed; code changed after the last review round (sourceHash mismatch); counts review rounds (`--round-kind fix` → `reviewRounds.withFixes`, cap 5 → demands `record-error --type REVIEW_ROUND_CAP --level L2`; the declared kind is cross-checked against the source fingerprint — `verify`/`rerecord` after the source changed is counted as `fix`, the declaration kept in `declaredKind`) |
 | `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections, 4-dimension clarity (Goal/Constraints/SC/Context), missing/unwritten `docs/DESIGN.md` on frontend projects, UI States table not reflected in any `AC-F-*` (auto-records plan-template DoD keys) |
 | `provenance-gate` | HARD | SPEC core sections without provenance markers (user-fact/repo-fact/assumption/blocker); assumptions in unsafe domains (credentials/payments/prod deploy/destructive data/PII); unresolved blockers |
 | `clarification-gate` | HARD | `[NEEDS-CLARIFICATION]` tags left in docs |

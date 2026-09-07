@@ -84,6 +84,30 @@ _run_hook() {
   [[ "$output" == *"iteration 2의 결정 기록 없음"* ]]
 }
 
+@test "stop-hook: 다른 run의 결정은 같은 iteration이어도 이번 run을 대신하지 못한다" {
+  _fixture 2 true
+  jq '.runId = "run-20260101T000000Z-cafebabe"' "$PROG" > t && mv t "$PROG"
+  printf '%s\n' '{"id":"D-0001","iteration":2,"kind":"decision","runId":"run-20250101T000000Z-deadbeef","what":"w","why":"y"}' > .claude/acl-decisions.jsonl
+  _run_hook
+  [[ "$output" == *"결정 기록 없음"* ]]
+  [[ "$output" == *"run-20260101T000000Z-cafebabe"* ]]
+}
+
+@test "stop-hook: 같은 run의 결정이면 통과한다" {
+  _fixture 2 true
+  jq '.runId = "run-20260101T000000Z-cafebabe"' "$PROG" > t && mv t "$PROG"
+  printf '%s\n' '{"id":"D-0001","iteration":2,"kind":"decision","runId":"run-20260101T000000Z-cafebabe","what":"w","why":"y"}' > .claude/acl-decisions.jsonl
+  _run_hook
+  [[ "$output" != *"결정 기록 없음"* ]]
+}
+
+@test "stop-hook: progress에 runId가 없으면 iteration만 보는 하위호환 경로" {
+  _fixture 2 true
+  printf '%s\n' '{"id":"D-0001","iteration":2,"kind":"decision","runId":"run-20250101T000000Z-deadbeef","what":"w","why":"y"}' > .claude/acl-decisions.jsonl
+  _run_hook
+  [[ "$output" != *"결정 기록 없음"* ]]
+}
+
 @test "stop-hook: 이번 iteration의 결정이 있으면 그 사유는 사라진다" {
   _fixture 2 true
   printf '%s\n' '{"id":"D-0001","iteration":2,"kind":"decision","what":"w","why":"y"}' > .claude/acl-decisions.jsonl
@@ -167,4 +191,44 @@ EOF
   _run_hook
   reason=$(printf '%s' "$output" | jq -rs 'map(select(type == "object" and has("reason")))[-1].reason' 2>/dev/null || echo "")
   [[ "$reason" != *"마감 누락"* ]]
+}
+
+# ─── (c) full-auto progress에도 assumptionReview가 fail-closed로 요구된다 ───
+
+@test "stop-hook: full-auto progress에서도 assumptionReview 미기록이면 차단" {
+  local FA=".claude-full-auto-progress.json"
+  mkdir -p .claude
+  cat > .claude/ralph-loop.local.md <<EOF
+---
+iteration: 2
+max_iterations: 50
+completion_promise: FULL_AUTO_COMPLETE
+progress_file: $FA
+---
+
+작업 프롬프트 본문
+EOF
+  cat > "$FA" <<'EOF'
+{
+  "schemaVersion": 8,
+  "runId": "run-20260101T000000Z-cafebabe",
+  "steps": [{"name": "s1", "status": "completed"}],
+  "dod": {"k": {"checked": true, "evidence": "e"}},
+  "handoff": {"lastIteration": 2, "nextSteps": "n", "keyDecisions": []},
+  "decisionLog": {"enabled": true}
+}
+EOF
+  printf '%s\n' '{"id":"D-0001","iteration":2,"kind":"decision","runId":"run-20260101T000000Z-cafebabe","what":"w","why":"y"}' > .claude/acl-decisions.jsonl
+  echo '{}' > .claude-verification.json
+  cat > transcript.jsonl <<'EOF'
+{"role":"assistant","message":{"content":[{"type":"text","text":"완료했습니다. <promise>FULL_AUTO_COMPLETE</promise>"}]}}
+EOF
+  printf '{"transcript_path":"%s/transcript.jsonl"}' "$TEST_DIR" > hook-input.json
+
+  _run_hook
+  [[ "$output" == *"assumptionReview 미기록"* ]]
+
+  jq '.assumptionReview = {"status":"confirmed","count":1}' "$FA" > t && mv t "$FA"
+  _run_hook
+  [[ "$output" != *"assumptionReview 미기록"* ]]
 }

@@ -69,9 +69,17 @@ $ARGUMENTS에서 `--mode` 플래그를 파싱합니다:
 |----------|-----|
 | PROMISE_TAG | `RELEASE_READY` |
 | PROGRESS_FILE | `.claude-polish-progress.json` |
-| INIT_TEMPLATE | (없음) — progress 파일은 1단계(프로젝트 분석) 완료 후 생성 |
+| INIT_TEMPLATE | `polish` |
 | MAX_ITERATIONS | (기본값) |
-| EXTRA_INIT | (없음) |
+| EXTRA_INIT | 인수로 받은 정의 문서/README 경로를 progress에 기록 (아래 명령) |
+
+```bash
+# EXTRA_INIT — init 직후 1회. 명령 고유 필드만 채운다 (나머지 키는 init 템플릿이 만든다)
+jq --arg d "${1:-}" --arg r "${2:-}" \
+  '.definitionDoc = (if $d == "" then null else $d end)
+   | .readmePath = (if $r == "" then null else $r end)' \
+  .claude-polish-progress.json > .tmp.json && mv .tmp.json .claude-polish-progress.json
+```
 
 ### 인수 파싱
 
@@ -89,6 +97,16 @@ $ARGUMENTS에서 `--mode` 플래그를 파싱합니다:
 
 - `.claude-verification.json`의 모든 검증 항목 exitCode가 0
 
+### promise 직전 체크리스트 (완주 차단 예방)
+
+`<promise>` 출력 **직전**에 아래 3줄을 순서대로 실행/확인한다 (stop-hook이 fail-closed로 검사하는 기록 — 빠지면 완주가 차단되고 iteration이 한 번 더 돈다):
+
+1. `handoff-update --progress-file .claude-polish-progress.json --next-steps "..."` (`--iteration`은 생략 — frontmatter에서 자동)
+2. `record-decision --what "<결정>" --why "<이유>"` — 결정이 없었으면 `record-decision --none --why "<왜 없었는지>"`
+3. (full-auto·plan-docs-full만) `assumptionReview.status` 기록 확인
+
+근거·상세는 `templates/ralph-loop-setup.md` §5 완료 조건 4·5.
+
 ### Iteration 단위 (단계 그룹화)
 
 8단계를 4개 iteration 그룹으로 분리 (각 그룹 = 1 iteration):
@@ -101,45 +119,18 @@ $ARGUMENTS에서 `--mode` 플래그를 파싱합니다:
 
 프로젝트 루트에 진행 상태 파일을 생성/관리하여 중단 시 복구 지원:
 
-```json
-{
-  "project": "프로젝트명",
-  "created": "2025-01-03T10:00:00Z",
-  "status": "in_progress",
-  "definitionDoc": "정의문서경로 (옵션)",
-  "readmePath": "README경로 (옵션)",
-  "steps": [
-    {"name": "프로젝트 분석", "status": "completed", "group": 1, "evidence": {}},
-    {"name": "기획 대비 검토", "status": "in_progress", "group": 1, "round": 2, "evidence": {}},
-    {"name": "빌드 검증", "status": "pending", "group": 2, "evidence": {}},
-    {"name": "테스트 검증", "status": "pending", "group": 2, "evidence": {}},
-    {"name": "보안 검토", "status": "pending", "group": 3, "evidence": {}},
-    {"name": "문서화 확인", "status": "pending", "group": 3, "evidence": {}},
-    {"name": "릴리즈 체크리스트", "status": "pending", "group": 4, "evidence": {}},
-    {"name": "최종 검증", "status": "pending", "group": 4, "evidence": {}}
-  ],
-  "currentStep": "기획 대비 검토",
-  "turnCount": 0,
-  "lastCompactAt": 0,
-  "dod": {
-    "build_pass": { "checked": false, "evidence": null },
-    "test_pass": { "checked": false, "evidence": null },
-    "e2e_pass": { "checked": false, "evidence": null },
-    "security_review": { "checked": false, "evidence": null },
-    "secret_scan": { "checked": false, "evidence": null },
-    "docs_complete": { "checked": false, "evidence": null },
-    "final_verification": { "checked": false, "evidence": null }
-  },
-  "handoff": {
-    "lastIteration": null,
-    "completedInThisIteration": "",
-    "nextSteps": "",
-    "keyDecisions": [],
-    "warnings": "",
-    "currentApproach": ""
-  }
-}
-```
+0단계의 `shared-gate.sh init --template polish`가 아래 키를 만들어 둡니다 — 이 문서는 그 키를 참조만 하고, 파일을 직접 작성하지 않습니다 (구조의 단일 출처는 `scripts/gates/init.sh`의 polish 템플릿):
+
+| 키 | 용도 |
+|----|------|
+| `project` · `created` · `status` · `runId` | 실행 식별 (`runId`는 결정 기록 귀속에 쓰임) |
+| `definitionDoc` · `readmePath` | EXTRA_INIT가 채우는 명령 고유 인수 |
+| `steps[]` (8단계, `group` 1~4, `evidence`) | 단계 진행 상태 |
+| `currentStep` · `turnCount` · `lastCompactAt` | 진행 커서 |
+| `dod` (`build_pass` `test_pass` `e2e_pass` `security_review` `secret_scan` `docs_complete` `final_verification`) | 완주 조건 |
+| `decisionLog.enabled` | 결정 기록 fail-closed 대상 표시 |
+| `handoff` | iteration 인계 |
+
 
 **각 단계 완료 시 dod 업데이트:**
 - 3단계(빌드 검증) 완료 → `dod.build_pass` checked + evidence
@@ -176,7 +167,8 @@ $ARGUMENTS에서 `--mode` 플래그를 파싱합니다:
 - 린트/포맷 도구 확인
 - **기획 문서 제공 여부 확인** ($1, $2)
 
-분석 완료 후 `.claude-polish-progress.json` 파일 생성.
+progress 파일은 0단계의 `init --template polish`가 이미 생성했다 — 여기서 새로 만들지 않는다.
+분석 결과는 해당 단계의 `evidence`에만 기록한다 (`update-step`).
 
 단계 완료 시 evidence 기록:
 ```json

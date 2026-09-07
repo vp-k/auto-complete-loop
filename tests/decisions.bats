@@ -203,6 +203,26 @@ WHY_OK="세션 스토어 없이 수평 확장해야 하고 만료 규약이 SPEC
 
 # ─── --list ───
 
+@test "record-decision: 스테일 락(owner 메타 30초 초과)은 회수하고 기록한다" {
+  mkdir -p .claude/acl-decisions.jsonl.lock.d
+  printf '%s %s\n' 99999 "$(( $(date -u '+%s') - 100 ))" > .claude/acl-decisions.jsonl.lock.d/owner
+  run run_gate record-decision --what "JWT로 확정" --why "$WHY_OK"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stale lock 회수"* ]]
+  [ ! -d .claude/acl-decisions.jsonl.lock.d ]
+  [ "$(grep -c '^{' .claude/acl-decisions.jsonl)" = "1" ]
+}
+
+@test "record-decision: owner 메타가 없는 방금 생긴 락은 회수하지 않는다 (mkdir↔메타 기록 찰나 보호)" {
+  mkdir -p .claude/acl-decisions.jsonl.lock.d
+  run run_gate record-decision --what "JWT로 확정" --why "$WHY_OK"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"stale lock 회수"* ]]
+  [[ "$output" == *"lock busy"* ]]
+  [ -d .claude/acl-decisions.jsonl.lock.d ]
+  [ "$(grep -c '^{' .claude/acl-decisions.jsonl)" = "1" ]
+}
+
 @test "record-decision --list: 기록이 없으면 안내만 하고 성공한다" {
   run run_gate record-decision --list
   [ "$status" -eq 0 ]
@@ -257,6 +277,10 @@ WHY_OK="세션 스토어 없이 수평 확장해야 하고 만료 규약이 SPEC
 
 @test "assumption-review: confirmed 기록" {
   run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "가정 1 승인" --why "$WHY_OK"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "가정 2 승인" --why "$WHY_OK"
   run run_gate assumption-review --progress-file .claude-full-auto-progress.json --status confirmed --count 2
   [ "$status" -eq 0 ]
   run jq -r '.assumptionReview.status' .claude-full-auto-progress.json
@@ -295,4 +319,159 @@ WHY_OK="세션 스토어 없이 수평 확장해야 하고 만료 규약이 SPEC
   [ "$output" = "1" ]
   run jq -r '.assumptionReview.note' .claude-full-auto-progress.json
   [ "$output" = "비대화형" ]
+}
+
+# ─── (e) --why 경계값: 정확히 10자는 통과, 9자는 거부 ───
+
+@test "record-decision: --why가 정확히 10자면 통과한다 (경계값)" {
+  run run_gate record-decision --what "경계값 결정" --why "일이삼사오육칠팔구십"
+  [ "$status" -eq 0 ]
+  run jq -r '.why' .claude/acl-decisions.jsonl
+  [ "$output" = "일이삼사오육칠팔구십" ]
+}
+
+@test "record-decision: --why가 9자면 거부한다 (경계값)" {
+  run run_gate record-decision --what "경계값 결정" --why "일이삼사오육칠팔구"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"이유 없는 결정은 기록할 수 없다"* ]]
+  [ ! -f .claude/acl-decisions.jsonl ]
+}
+
+@test "record-decision: 공백은 길이에서 제외된다 (10자 + 공백 → 통과)" {
+  run run_gate record-decision --what "경계값 결정" --why "일 이 삼 사 오 육 칠 팔 구 십"
+  [ "$status" -eq 0 ]
+}
+
+# ─── (b) init 템플릿 7종 전부 decisionLog.enabled ───
+
+@test "init: 템플릿 7종 전부 decisionLog.enabled=true + runId를 발급한다" {
+  local t f
+  # init은 기존 progress 파일을 자동 탐지해 재사용하므로 템플릿마다 빈 디렉토리에서 실행한다
+  for t in full-auto:.claude-full-auto-progress.json \
+           plan:.claude-plan-progress.json \
+           implement:.claude-progress.json \
+           review:.claude-review-loop-progress.json \
+           polish:.claude-polish-progress.json \
+           e2e:.claude-e2e-progress.json \
+           doc-check:.claude-doc-check-progress.json; do
+    f="${t#*:}"
+    mkdir -p "$TEST_DIR/tpl-${t%%:*}"
+    cd "$TEST_DIR/tpl-${t%%:*}"
+    run run_gate init --template "${t%%:*}" "test" "req"
+    [ "$status" -eq 0 ]
+    [ -f "$f" ]
+    run jq -r '.decisionLog.enabled' "$f"
+    [ "$output" = "true" ]
+    run jq -r '.runId' "$f"
+    [[ "$output" =~ ^run-[0-9]{8}T[0-9]{6}Z-[0-9a-f]+$ ]]
+    cd "$TEST_DIR"
+  done
+}
+
+# ─── (h) runId 스탬핑 + 실행 간 격리 ───
+
+@test "record-decision: progress의 runId를 레코드에 박는다" {
+  run_gate init --template full-auto "test" "req"
+  local rid
+  rid=$(jq -r '.runId' .claude-full-auto-progress.json)
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "runId 스탬핑 확인" --why "$WHY_OK"
+  run jq -r '.runId' .claude/acl-decisions.jsonl
+  [ "$output" = "$rid" ]
+}
+
+@test "record-decision --list: 기본은 이번 run만, --all은 전부 보여준다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "이전 run 결정" --why "$WHY_OK"
+
+  # 새 run 시작 (init 재실행 → 새 runId 발급)
+  rm -f .claude-full-auto-progress.json
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "이번 run 결정" --why "$WHY_OK"
+
+  run run_gate record-decision --list --progress-file .claude-full-auto-progress.json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"이번 run 결정"* ]]
+  [[ "$output" != *"이전 run 결정"* ]]
+
+  run run_gate record-decision --list --all --progress-file .claude-full-auto-progress.json
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"이번 run 결정"* ]]
+  [[ "$output" == *"이전 run 결정"* ]]
+}
+
+# ─── (d) handoff-update --decision 하위호환 의미론 (치환이 아니라 append) ───
+
+@test "handoff-update --decision: 반복 호출해도 기존 항목을 덮어쓰지 않는다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate handoff-update --progress-file .claude-full-auto-progress.json \
+    --next-steps "n1" --decision "결정 A"
+  run_gate handoff-update --progress-file .claude-full-auto-progress.json \
+    --next-steps "n2" --decision "결정 B"
+
+  run jq -r '.handoff.keyDecisions | length' .claude-full-auto-progress.json
+  [ "$output" = "2" ]
+  run jq -r '.handoff.keyDecisions | join("|")' .claude-full-auto-progress.json
+  [ "$output" = "결정 A|결정 B" ]
+}
+
+@test "handoff-update --decision: 결정 로그에는 남지 않고 NOTE로 record-decision을 안내한다" {
+  run_gate init --template full-auto "test" "req"
+  run run_gate handoff-update --progress-file .claude-full-auto-progress.json \
+    --next-steps "n" --decision "요약만"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"record-decision"* ]]
+  [ ! -f .claude/acl-decisions.jsonl ]
+}
+
+# ─── (f) assumption-review --count 교차 검증 ───
+
+@test "assumption-review: confirmed --count가 interview 결정 기록 수와 다르면 거부" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "가정 1 승인" --why "$WHY_OK"
+
+  run run_gate assumption-review --progress-file .claude-full-auto-progress.json \
+    --status confirmed --count 3
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"실제 결정 기록 1건"* ]]
+  run jq -r '.assumptionReview.status // "missing"' .claude-full-auto-progress.json
+  [ "$output" = "missing" ]
+}
+
+@test "assumption-review: interview 이외 scope의 결정은 count에 잡히지 않는다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope implementation --what "구현 결정" --why "$WHY_OK"
+  run run_gate assumption-review --progress-file .claude-full-auto-progress.json \
+    --status confirmed --count 1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"실제 결정 기록 0건"* ]]
+}
+
+@test "assumption-review: 이전 run의 interview 결정은 이번 run의 count를 채우지 못한다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "이전 run 가정" --why "$WHY_OK"
+
+  rm -f .claude-full-auto-progress.json
+  run_gate init --template full-auto "test" "req"
+  run run_gate assumption-review --progress-file .claude-full-auto-progress.json \
+    --status confirmed --count 1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"실제 결정 기록 0건"* ]]
+}
+
+@test "assumption-review: count가 일치하면 교차 검증 결과를 출력하고 통과" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "가정 1 승인" --why "$WHY_OK"
+  run run_gate assumption-review --progress-file .claude-full-auto-progress.json \
+    --status confirmed --count 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"교차 검증"* ]]
+  run jq -r '.assumptionReview.count' .claude-full-auto-progress.json
+  [ "$output" = "1" ]
 }

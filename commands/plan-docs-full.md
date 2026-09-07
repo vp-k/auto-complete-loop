@@ -95,7 +95,13 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 
 `<promise>{PROMISE_TAG}</promise>`를 출력하려면 다음이 **모두** 참이어야 합니다:
 
-1. `{PROGRESS_FILE}`의 `phases.phase_0` + `phases.phase_1` 모든 step status가 `completed`
+1. `{PROGRESS_FILE}`의 **최상위 `documents` 배열**이 비어 있지 않고 모든 항목이 `completed`
+   (`status: "split"`인 부모 문서는 제외 — 자식 문서 완료가 대신한다)
+   - 이것이 stop-hook이 이 progress 파일에서 **실제로 검사하는** 진행 조건이다. `plan` 템플릿
+     (`scripts/gates/init.sh`)에는 `phases`·`steps`가 없고 stop-hook은 없는 키를 건너뛰므로,
+     "phase_0/phase_1의 step이 전부 completed"는 검사되지 않는 문장이었다 → 실제 스키마로 정정(v4.22.0).
+   - Phase 진행 상태는 `phases.phase_*.outputs`에 기록해도 좋지만(게이트·훅이 읽지 않는 기록용),
+     **완주 판정의 근거는 최상위 `documents` + `dod`뿐이다**.
 2. `{PROGRESS_FILE}`의 `dod`(아래 DoD 키 목록) 모두 `checked: true`
 3. **게이트 7종 모두 통과** (직전 실행 결과 — 이전 iteration 재사용 금지):
    - `spec-completeness` exit 0 (CRITICAL 0건)
@@ -204,8 +210,17 @@ DoD 갱신은 스킬의 Step 0-11에서 처리합니다.
 Read ${PHASE_1_SKILL}
 ```
 
+**치환 규칙** (스킬은 full-auto 오케스트레이터의 progress 스키마 기준으로 쓰여 있고, 이 명령은 `plan` 템플릿을 쓴다):
+
+| 스킬의 표기 | 이 명령에서의 값 |
+|-------------|------------------|
+| `{PROGRESS_FILE}` | 위 파라미터 표의 값 |
+| `{REVIEW_MODE}` | `--mode` 값 (`codex`·`solo`·`teams`·`dual`) |
+| `phases.phase_1.documents` (Step 1-1 문서 등록·상태 전이) | **최상위 `documents` 배열** — stop-hook이 완주 판정에 쓰는 유일한 진행 배열이다. 여기에 등록하지 않으면 `documents array is empty`로 완주가 차단된다 |
+| `phases.phase_*.outputs.*` | 그대로 사용 (plan 템플릿에 없으면 jq가 생성 — 게이트·훅이 읽지 않는 기록용) |
+
 스킬 절차 그대로 수행. 산출:
-- `docs/*.md` (각 도메인 기획문서, 모두 `completed` 상태)
+- `docs/*.md` (각 도메인 기획문서, 모두 `completed` 상태 — 최상위 `documents`에도 동일 상태 반영)
 - `SPEC.md` (또는 `docs/SPEC.md`) — User Stories + API Contract + Data Model
 - `tests/api-smoke.sh` (hasBackend=true 시) / `tests/ui-smoke.*` (hasFrontend=true 시) / `tests/lib-smoke.sh` (library/CLI 시)
 - `tests/acceptance/` — run.sh + US별 인수 테스트 (스킬 Step 1-7.5에서 생성 + `acceptance-freeze` 실행. red 상태가 정상 — TDD red→green)
@@ -217,9 +232,9 @@ Read ${PHASE_1_SKILL}
 
 ```bash
 # SPEC.md + smoke 스크립트 실존 확인 후 즉시 기록
-jq_inplace {PROGRESS_FILE} \
-  '.dod.spec_md_generated = {checked:true, evidence:"SPEC.md 생성 확인 (경로: <SPEC.md 또는 docs/SPEC.md>)"}
-   | .dod.smoke_scripts_generated = {checked:true, evidence:"projectScope 기준 smoke 스크립트 존재 확인 (tests/api-smoke.sh 등)"}'
+jq '.dod.spec_md_generated = {checked:true, evidence:"SPEC.md 생성 확인 (경로: <SPEC.md 또는 docs/SPEC.md>)"}
+    | .dod.smoke_scripts_generated = {checked:true, evidence:"projectScope 기준 smoke 스크립트 존재 확인 (tests/api-smoke.sh 등)"}' \
+  {PROGRESS_FILE} > {PROGRESS_FILE}.tmp && mv {PROGRESS_FILE}.tmp {PROGRESS_FILE}
 ```
 
 파일이 없으면 기록하지 말고 Phase 1(Step 1-7)을 재수행합니다.
@@ -280,15 +295,19 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh acceptance-freeze \
 각 게이트 통과 시 DoD 갱신:
 
 ```bash
-jq_inplace {PROGRESS_FILE} \
-  '.dod.spec_completeness_passed = {checked:true, evidence:"shared-gate.sh spec-completeness PASS"}
+jq '.dod.spec_completeness_passed = {checked:true, evidence:"shared-gate.sh spec-completeness PASS"}
    | .dod.doc_completeness_passed = {checked:true, evidence:"shared-gate.sh doc-completeness PASS"}
    | .dod.doc_consistency_passed = {checked:true, evidence:"shared-gate.sh doc-consistency PASS (0 issues)"}
    | .dod.definition_conflict_resolved = {checked:true, evidence:"N matches reviewed, all recorded in nonGoalsAudit"}
    | .dod.spec_to_tests_passed = {checked:true, evidence:"shared-gate.sh spec-to-tests PASS"}
    | .dod.acceptance_frozen = {checked:true, evidence:"shared-gate.sh acceptance-freeze PASS (verification.json acceptanceFreeze=pass)"}
-   | .dod.clarification_resolved = {checked:true, evidence:"clarification-gate PASS in Phase 1 Step 1-9"}'
+   | .dod.clarification_resolved = {checked:true, evidence:"clarification-gate PASS in Phase 1 Step 1-9"}' \
+  {PROGRESS_FILE} > {PROGRESS_FILE}.tmp && mv {PROGRESS_FILE}.tmp {PROGRESS_FILE}
 ```
+
+> `jq_inplace`는 `scripts/lib/utils.sh`의 **내부 함수**다 — 셸에서 직접 호출하면 `command not found`가 난다.
+> progress 파일의 모델 기록분은 위처럼 `jq … > tmp && mv` 패턴으로 쓴다. `.claude-verification.json`과
+> `.claude/acl-decisions.jsonl`은 이 패턴으로도 쓰지 않는다 (bash-guards가 차단 — 게이트 서브커맨드만이 기록자다).
 
 ## 4단계: 최종 보고 + Promise 발행
 

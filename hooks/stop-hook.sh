@@ -24,16 +24,30 @@ if [[ -z "$HOOK_INPUT" ]]; then
 fi
 
 # jq 의존성 사전 검증
-# fail-open: jq가 없으면 검증 불가 → 경고 후 stop을 승인(approve)하여 루프를 끝낸다.
-# (fail-closed로 block하면 jq 없는 환경에서 사용자가 무한 루프에 갇히므로 의도적으로 fail-open)
+# fail-closed: jq가 없으면 이 훅의 모든 검증(progress·verification·DoD·게이트)이 불가능하다.
+# 예전에는 approve로 빠져나가 "증거 0인 완주"를 승인했다 — jq만 지우면 모든 게이트를 우회하는
+# 단일 지점이었다. 이제는 block하고 설치를 안내한다.
+# 탈출구는 ACL_ALLOW_NO_JQ=1 하나뿐이다 (사용자가 명시적으로 검증 포기를 선언한 경우).
 if ! command -v jq &>/dev/null; then
-  echo "Auto Complete Loop: ERROR - jq is required but not found. Install jq to use Ralph Loop."
-  # 감사 (M2): jq 부재로 인한 fail-open 우회(증거 없이 완료 승인)를 이벤트 로그에 남긴다.
-  # jq가 없으므로 portable하게 직접 append (best-effort — 실패해도 우회는 진행).
   _sh_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
+  # Ralph 루프가 활성이 아니면 차단하지 않는다 — 검증할 완주가 없고, jq 없는 일반 세션을
+  # 영구히 멈추지 못하게 만드는 것은 이 훅의 목적이 아니다 (차단은 활성 루프에만).
+  if [[ ! -f ".claude/ralph-loop.local.md" ]]; then
+    echo "Auto Complete Loop: WARNING - jq not found (Ralph 루프 비활성이라 검증을 건너뛴다). 루프 사용 전 jq를 설치하세요." >&2
+    exit 0
+  fi
+  if [[ "${ACL_ALLOW_NO_JQ:-}" == "1" ]]; then
+    echo "Auto Complete Loop: WARNING - jq not found, but ACL_ALLOW_NO_JQ=1 — 검증 없이 종료를 승인한다 (증거 없는 완주)."
+    { mkdir -p .claude 2>/dev/null \
+      && printf '{"ts":"%s","event":"jq_missing_bypass","hook":"stop-hook","allowFlag":true}\n' "$_sh_ts" >> .claude/acl-events.jsonl 2>/dev/null; } || true
+    echo '{"decision": "approve"}'
+    exit 0
+  fi
+  echo "Auto Complete Loop: ERROR - jq is required but not found. Install jq to use Ralph Loop." >&2
   { mkdir -p .claude 2>/dev/null \
-    && printf '{"ts":"%s","event":"jq_missing_bypass","hook":"stop-hook"}\n' "$_sh_ts" >> .claude/acl-events.jsonl 2>/dev/null; } || true
-  echo '{"decision": "approve"}'
+    && printf '{"ts":"%s","event":"jq_missing_block","hook":"stop-hook","allowFlag":false}\n' "$_sh_ts" >> .claude/acl-events.jsonl 2>/dev/null; } || true
+  # jq가 없으므로 JSON을 직접 조립한다 (reason에 따옴표·개행을 넣지 않는다).
+  printf '%s\n' '{"decision": "block", "reason": "jq가 설치되어 있지 않아 완주 검증(progress/verification/DoD/게이트)을 수행할 수 없습니다. jq 설치 후 계속하세요 — Windows: winget install jqlang.jq, macOS: brew install jq, Debian/Ubuntu: sudo apt-get install -y jq. 검증 없이 종료해야 한다면 ACL_ALLOW_NO_JQ=1 을 설정하고 다시 시도하세요(증거 없는 완주로 이벤트 로그에 남습니다)."}'
   exit 0
 fi
 
@@ -325,6 +339,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
     # 워크플로우 판별 (파일명 기반) — 아래 검사들의 스코핑에 사용
     WF_FULL_AUTO="false"
     WF_PLAN_DOCS_FULL="false"
+    WF_IMPLEMENT="false"
     DOCS_ONLY="false"
     _docs_only_all="true"
     _wf_count=0
@@ -333,6 +348,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       case "$_wf_pf" in
         .claude-full-auto*progress*.json)      WF_FULL_AUTO="true"; _docs_only_all="false" ;;
         .claude-plan-docs-full*progress*.json) WF_PLAN_DOCS_FULL="true" ;;
+        .claude-progress.json)                 WF_IMPLEMENT="true"; _docs_only_all="false" ;;  # implement-docs-auto
         .claude-plan-progress.json)            : ;;  # plan-docs-auto (문서 전용)
         .claude-doc-check-progress.json)       : ;;  # check-docs (문서 전용)
         *)                                     _docs_only_all="false" ;;
@@ -582,6 +598,13 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         # specToTests는 plan-docs-full 전용 (full-auto에서는 요구하지 않음)
       fi
 
+      if [[ "$WF_IMPLEMENT" == "true" ]]; then
+        # implement-docs-auto: dod.code_review_pass의 유일한 기록자는 code-review-findings 게이트다.
+        # 게이트를 한 번도 돌리지 않고 DoD만 checked로 세워 완주하는 경로를 fail-closed로 막는다
+        # (progress 파일은 훅이 경고만 하고 쓰기를 막지 않으므로 DoD 자체는 위조 가능하다).
+        _require_vgate "codeReviewFindings" "pass" "shared-gate.sh code-review-findings --round-kind <fix|verify|rerecord> --progress-file .claude-progress.json"
+      fi
+
       if [[ "$WF_PLAN_DOCS_FULL" == "true" ]]; then
         # plan-docs-full: 기획 게이트 모두 pass (provenance 포함 — 신규 기획은 마커 필수)
         # 순수 기획 워크플로우 → 착수 전 명확화는 항상 수행되어야 함 (pass|escalated 강제)
@@ -604,16 +627,29 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
       # A3: 세션 학습 추출 — progress 파일 삭제 전에 핵심 결정/패턴을 LESSON 포맷으로 저장
       for pf in "${VERIFIED_PROGRESS_FILES[@]}"; do
         if [[ -f "$pf" ]]; then
-          _has_handoff=$(jq 'has("handoff")' "$pf" 2>/dev/null || echo "false")
-          if [[ "$_has_handoff" == "true" ]]; then
+          # handoff 유무로 게이팅하지 않는다 — 범위 축소는 handoff 밖(phases.phase_2)에 있다.
+          _has_extractable=$(jq 'has("handoff") or has("phases") or has("scopeReductions")' "$pf" 2>/dev/null || echo "false")
+          if [[ "$_has_extractable" == "true" ]]; then
             _key_decisions=$(jq -r '
               [.handoff.keyDecisions // [] | .[]? ] | if length > 0 then join("; ") else empty end
             ' "$pf" 2>/dev/null || true)
+            # 범위 축소는 handoff가 아니라 phases.phase_2.scopeReductions(또는 최상위)에 있고,
+            # 항목은 문자열이 아니라 {feature, original, reduced, reason, ticket} 객체다.
             _scope_reductions=$(jq -r '
-              [.handoff.scopeReductions // [] | .[]? ] | if length > 0 then "Scope reductions: " + join("; ") else empty end
+              [ (((.phases.phase_2.scopeReductions // []) + (.scopeReductions // [])) | .[]?)
+                | if type == "object"
+                  then ((.feature // .original // "unknown")
+                        + (if (.reduced // "") != "" then " → " + .reduced else "" end)
+                        + (if (.reason // "") != "" then " (" + .reason + ")" else "" end)
+                        + (if (.ticket // "") != "" then " [" + .ticket + "]" else "" end))
+                  else tostring end ]
+              | if length > 0 then "Scope reductions: " + join("; ") else empty end
             ' "$pf" 2>/dev/null || true)
+            # handoff.warnings는 handoff-update가 쓰는 단일 문자열이다 (배열 아님).
             _warnings=$(jq -r '
-              [.handoff.warnings // [] | .[]? ] | if length > 0 then "Warnings: " + join("; ") else empty end
+              (.handoff.warnings // "")
+              | (if type == "array" then (map(tostring) | join("; ")) else tostring end)
+              | if . != "" and . != "null" then "Warnings: " + . else empty end
             ' "$pf" 2>/dev/null || true)
 
             if [[ -n "$_key_decisions" ]] || [[ -n "$_scope_reductions" ]] || [[ -n "$_warnings" ]]; then

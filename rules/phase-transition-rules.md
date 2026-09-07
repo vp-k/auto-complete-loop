@@ -179,7 +179,12 @@ Phase 3 완료 시:
     append하는 것은 금지 (0-finding 승격 라운드는 지문 불변이므로 추가 조치 불필요)
 
   *** Code Review Findings 게이트 (전이 전 필수 — HARD gate) ***
-  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --round-kind <fix|verify|rerecord> --progress-file {PROGRESS_FILE}
+  - --round-kind 생략 금지 (생략 시 기본값 verify → 수정 라운드가 상한 5에 계수되지 않는다):
+      fix      = 이번에 마감하는 라운드에서 소스 수정이 1건이라도 있었다 (승격 리뷰 finding 수정 포함)
+      verify   = 확인 전용 라운드 (수정 0건 — 수렴 라운드: 신규 finding이 MEDIUM/LOW뿐이라 전부 deferred)
+      rerecord = 귀속용 재기록 라운드 (직전 소스 변경을 새 지문에 귀속하려 리뷰를 1회 더 돌렸고 그 라운드의 수정은 0건)
+    신고와 무관하게, 마지막 마감 이후 소스 지문이 바뀌었으면 게이트가 fix로 계상한다 (declaredKind에 신고값 보존)
   - open CRITICAL/HIGH finding을 집계하여 1건 이상이면 FAIL → Phase 4 전이 차단 (수정 후 재실행)
   - PASS 결과가 verification.json의 codeReviewFindings에 기록되어야 전이 가능 (미실행 = 전이 불가, fail-closed)
   - dod.code_review_pass는 이 게이트의 PASS 결과로만 세팅한다 (모델 직접 기록 금지)

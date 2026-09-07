@@ -276,8 +276,19 @@ progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHi
    ```
 2. 리뷰 finding 게이트 실행 — `dod.code_review_pass`는 이 게이트가 PASS 시 직접 기록한다 (모델이 직접 세팅 금지):
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file .claude-full-auto-progress.json
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --round-kind <fix|verify|rerecord> --progress-file .claude-full-auto-progress.json
    ```
+   **`--round-kind` 판정 (생략 금지)** — 이번에 마감하는 라운드가 어떤 라운드였는지 그대로 신고한다.
+   생략하면 기본값 `verify`로 떨어져 수정 라운드가 상한(5)에 계수되지 않는다 (상한이 산문으로만 남는다):
+
+   | 이번 라운드 | 넘길 값 |
+   |------------|--------|
+   | 소스 수정이 **1건이라도** 있었다 (finding 수정 · E2E 수정 · 승격 finding 수정 포함) | `fix` |
+   | 확인 전용 — 수정 0건 (수렴 라운드: 신규 finding이 MEDIUM/LOW뿐이라 전부 `deferred`) | `verify` |
+   | 귀속용 재기록 라운드 (직전 소스 변경을 새 지문에 귀속하려 리뷰를 1회 더 돌린 라운드, 그 라운드 자체의 수정은 0건) | `rerecord` |
+
+   `verify`/`rerecord`로 신고해도 마지막 마감 이후 소스 지문이 바뀌었으면 게이트가 `fix`로 계상한다
+   (신고값은 `declaredKind`에 보존). 즉 신고는 편의일 뿐 세탁 수단이 아니다.
 3. Phase 전이는 오케스트레이터가 수행
 
 ## Iteration 관리

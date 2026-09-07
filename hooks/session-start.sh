@@ -86,11 +86,28 @@ DECISIONS_SECTION=""
 # runId가 다른(=이전 실행) 결정을 이번 세션의 전제로 주입하지 않기 위한 필터.
 ACL_RUN_ID=""
 if command -v jq &>/dev/null; then
+  # progress 파일이 여러 개면 glob 첫 매치(=이름순)가 아니라 **가장 최근에 갱신된** 것을 쓴다.
+  # (예: .claude-full-auto-progress.json이 남아 있는데 지금 도는 것은 .claude-progress.json인 경우
+  #  이름순 선택은 옛 실행의 runId를 집어 결정 로그 필터가 이번 실행 기록을 통째로 감춘다.)
+  _acl_newest_pf=""
+  _acl_newest_mt=-1
   for _acl_pf in .claude-*progress*.json; do
     [[ -f "$_acl_pf" ]] || continue
+    # stat은 GNU(-c)/BSD(-f) 두 형식만 지원 — 둘 다 없으면 0으로 두고 순서대로 폴백한다.
+    _acl_mt=$(stat -c %Y "$_acl_pf" 2>/dev/null || stat -f %m "$_acl_pf" 2>/dev/null || echo 0)
+    [[ "$_acl_mt" =~ ^[0-9]+$ ]] || _acl_mt=0
+    if (( _acl_mt > _acl_newest_mt )); then
+      _acl_newest_mt=$_acl_mt
+      _acl_newest_pf="$_acl_pf"
+    fi
+  done
+  # 최신 파일에 runId가 없으면(구 스키마) 나머지에서 순서대로 찾는다.
+  for _acl_pf in "$_acl_newest_pf" .claude-*progress*.json; do
+    [[ -n "$_acl_pf" ]] && [[ -f "$_acl_pf" ]] || continue
     ACL_RUN_ID=$(jq -r '.runId // empty' "$_acl_pf" 2>/dev/null || echo "")
     [[ -n "$ACL_RUN_ID" ]] && break
   done
+  unset _acl_newest_pf _acl_newest_mt _acl_mt
 fi
 if command -v jq &>/dev/null && [[ -f "$ACL_DECISIONS_FILE" ]]; then
   DECISIONS_LINE=$(jq -rn --arg run "$ACL_RUN_ID" '

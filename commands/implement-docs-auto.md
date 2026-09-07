@@ -53,6 +53,7 @@ jq --arg d "${1:-}" --arg r "${2:-}" \
   - build/typeCheck/lint/test: `exitCode: 0`
   - secretScan/artifactCheck/designPolish 등 result 기반 게이트: `result: "pass"` 또는 `"skip"` 또는 `"warn"` 또는 `"soft_fail"` (`fail`만 차단)
   - **smokeCheck는 예외**: `result: "pass"` 또는 `"skip"`만 허용 — **stop-hook이 `soft_fail`도 `fail`로 처리하여 완주를 차단**한다 (서버 미기동 = 완주 불가). 키 부재(스모크 미실행)는 차단하지 않음
+  - **`codeReviewFindings: "pass"` 필수 (fail-closed)** — 키 부재 = `code-review-findings` 게이트 미실행 = 리뷰 미검증. `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --round-kind <fix|verify|rerecord> --progress-file .claude-progress.json`을 마지막 리뷰 라운드 마감으로 실행해야 한다 (DoD `code_review_pass`도 이 게이트만 기록)
 
 ### promise 직전 체크리스트 (완주 차단 예방)
 
@@ -98,7 +99,27 @@ DoD를 `.claude-progress.json`의 `dod` 필드에 기록 (`shared-gate.sh init -
 |--------|----------|
 | `build_pass` / `test_pass` | `shared-gate.sh quality-gate`가 실행 결과로 자동 기록 |
 | `e2e_pass` | `shared-gate.sh e2e-gate`가 실행 결과로 자동 기록 |
-| `code_review_pass` | codex 리뷰 통과(open Critical/High 0건 — Medium/Low는 3회 규칙에 따라 deferred 가능) 시 **명시적 jq 세팅**: `jq_inplace .claude-progress.json '.dod.code_review_pass = {checked:true, evidence:"codex 리뷰 N라운드 통과, open CRITICAL/HIGH: 0"}'` |
+| `code_review_pass` | `shared-gate.sh code-review-findings`가 PASS 시 자동 기록 (**모델 직접 세팅 금지** — 아래 참조) |
+
+`code_review_pass`의 유일한 기록자는 게이트다. 리뷰 라운드를 마감할 때마다 다음을 실행한다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings \
+  --round-kind <fix|verify|rerecord> --progress-file .claude-progress.json
+```
+
+**`--round-kind` 판정 (생략 금지)** — 생략하면 기본값 `verify`로 떨어져 수정 라운드가 상한(5)에 계수되지 않는다:
+
+| 이번 라운드 | 넘길 값 |
+|------------|--------|
+| 소스 수정이 **1건이라도** 있었다 | `fix` |
+| 확인 전용 — 수정 0건 (Medium/Low만 남아 전부 `deferred`) | `verify` |
+| 귀속용 재기록 라운드 (직전 소스 변경을 새 지문에 귀속하려 리뷰를 1회 더 돌린 라운드) | `rerecord` |
+
+게이트는 open CRITICAL/HIGH(=`deferred`/`regressed` 포함)가 0건이고 마지막 라운드의 `sourceHash`가 현재 지문과
+일치할 때만 PASS하며, 그때 `dod.code_review_pass`를 `{checked:true, evidence:"code-review-findings PASS at ..."}`로
+기록한다. **stop-hook이 이 워크플로우(`.claude-progress.json`)의 완주 조건으로 `codeReviewFindings=pass`를
+fail-closed로 요구한다** — 게이트를 한 번도 돌리지 않았으면 promise를 내도 완주가 차단된다.
 
 ## 1단계: 문서 목록 파악
 

@@ -213,14 +213,16 @@ WHY_OK="세션 스토어 없이 수평 확장해야 하고 만료 규약이 SPEC
   [ "$(grep -c '^{' .claude/acl-decisions.jsonl)" = "1" ]
 }
 
-@test "record-decision: owner 메타가 없는 방금 생긴 락은 회수하지 않는다 (mkdir↔메타 기록 찰나 보호)" {
+@test "record-decision: owner 메타가 없는 방금 생긴 락은 회수하지 않고 fail-closed로 거부한다" {
   mkdir -p .claude/acl-decisions.jsonl.lock.d
   run run_gate record-decision --what "JWT로 확정" --why "$WHY_OK"
-  [ "$status" -eq 0 ]
+  # 락을 못 잡으면 D-NNNN 채번이 경합하므로 기록하지 않고 실패해야 한다
+  [ "$status" -ne 0 ]
   [[ "$output" != *"stale lock 회수"* ]]
   [[ "$output" == *"lock busy"* ]]
+  [[ "$output" == *"재시도"* ]]
   [ -d .claude/acl-decisions.jsonl.lock.d ]
-  [ "$(grep -c '^{' .claude/acl-decisions.jsonl)" = "1" ]
+  [ ! -f .claude/acl-decisions.jsonl ]
 }
 
 @test "record-decision --list: 기록이 없으면 안내만 하고 성공한다" {

@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.21.0**
+**v4.22.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -233,7 +233,9 @@ Memory is not storage — every lesson is written as a **condition for the next 
 - **What gets recorded** (`.claude/acl-learnings.local.md`, `## LESSON` entries with a `다음 실행 조건:` line):
   - Error escalation reaching L3+ (root-cause analysis outcomes)
   - Stuck-pattern loop escapes — 3-strike (same failure 3× consecutive), OSCILLATION (two failure states alternating A-B-A-B), DIMINISHING_RETURNS (6 consecutive failed verifications with ≥3 distinct signatures) — each with a pattern-specific next-run condition
-  - Successful completion (key decisions/warnings extracted from progress handoff before cleanup)
+  - Successful completion (key decisions/warnings extracted from progress handoff before cleanup;
+    v4.22.0 fixed the extraction paths — scope reductions come from `phases.phase_2.scopeReductions`
+    and warnings accept a string or an array, so both stopped rendering as empty lines)
 - **How it comes back**: `session-start` hook injects the most recent LESSON entries into the next session's context, so the next run starts already knowing what broke and what to do about it
 - **No loops**: identical "next-run conditions" are deduplicated before append
 
@@ -248,7 +250,10 @@ append-only log so that never happens silently.
   `verification.json`, so the reason check cannot be bypassed by appending a line by hand.
   ADRs, provenance markers, `docs/CLARIFICATIONS.md` and `severityAdjustments` keep their own jobs
   (explain structure / mark origin / track questions / justify severity) and **mirror** into the log
-  via `--source adr|provenance|clarification|severity|scope-reduction|inline`.
+  via `--source adr|provenance|clarification|severity|scope-reduction|inline`. Numbering is
+  serialized by a directory spinlock that is **fail-closed since v4.22.0**: if the lock cannot be
+  acquired within 5s nothing is appended and the caller is told to retry, instead of writing an
+  unlocked line that could reuse a `D-NNNN`.
 - **Reason required, deterministically**: `--why` must be ≥ 10 characters after stripping whitespace
   (counted in Unicode codepoints via jq, so the rule doesn't shift with locale). Below that, the
   record is refused — "필요해서" is not a reason. What the model supplies is `what` / `why` /
@@ -293,6 +298,31 @@ they disagree — writing a number without showing the table no longer passes.
 Assumptions that appear later, while writing Phase 1 docs, are folded into the existing Step 1-9
 clarification batch-ask rather than becoming a second round-trip.
 
+### Fail-Closed Hardening (v4.22.0)
+
+A gate that gives up quietly is worse than no gate — it produces evidence of a check that never ran.
+v4.22.0 closes the four places where this framework still failed *open*:
+
+- **`record-decision` lock**: the `D-NNNN` numbering spinlock waited 5s and then appended **without**
+  the lock, so two concurrent recorders could mint the same id. It now fails closed — nothing is
+  written, the caller is told to retry, and a lock left by a dead process is still auto-reclaimed
+  after 30s via its `owner` metadata.
+- **stop-hook without `jq`**: a missing `jq` used to `approve` the stop, i.e. complete the run with
+  zero verification. It now **blocks** with install instructions when a Ralph loop is active;
+  `ACL_ALLOW_NO_JQ=1` is the explicit, event-logged escape hatch. Sessions with no active loop are
+  untouched (blocking there could never be satisfied).
+- **Review round budget**: rounds are counted only after the review evidence and the source
+  fingerprint check out, so a failed gate call no longer burns a round; unknown options are rejected
+  rather than swallowed by a catch-all `shift`.
+- **`code_review_pass` in implement workflows**: the DoD key was model-settable with no gate behind
+  it. The stop-hook now requires `codeReviewFindings=pass` in `.claude-verification.json`, and the
+  implement command instructs the gate as the sole recorder of that key.
+
+Two extraction bugs are fixed alongside: the completion **LESSON** now reads scope reductions from
+`phases.phase_2.scopeReductions` (objects, rendered as `feature → reduced (reason) [ticket]`) and
+warnings as a string or array — previously both silently produced empty lines — and `session-start`
+picks the run id from the **most recently updated** progress file instead of the first glob match.
+
 ### Quality Gates
 
 The 51 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
@@ -306,7 +336,7 @@ The 51 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compa
 | `acceptance-gate` | HARD | Tampered or red acceptance tests, or SPEC modified after freeze (full-auto; skip = fail) |
 | `live-testing-gate` | HARD | Open LIVE-CRITICAL/HIGH findings from real-app testing |
 | `layer-coverage` | HARD | Declared frontend/backend layers missing on filesystem |
-| `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed; code changed after the last review round (sourceHash mismatch); counts review rounds (`--round-kind fix` → `reviewRounds.withFixes`, cap 5 → demands `record-error --type REVIEW_ROUND_CAP --level L2`; the declared kind is cross-checked against the source fingerprint — `verify`/`rerecord` after the source changed is counted as `fix`, the declaration kept in `declaredKind`) |
+| `code-review-findings` | HARD | Open CRITICAL/HIGH review findings; review never performed; code changed after the last review round (sourceHash mismatch); counts review rounds (`--round-kind fix` → `reviewRounds.withFixes`, cap 5 → demands `record-error --type REVIEW_ROUND_CAP --level L2`; the declared kind is cross-checked against the source fingerprint — `verify`/`rerecord` after the source changed is counted as `fix`, the declaration kept in `declaredKind`). Since v4.22.0 the round budget is charged **only for rounds that actually happened** — "no review evidence" and stale-fingerprint re-runs leave `withFixes` untouched — and an unknown option (e.g. `--round-knid`) is rejected instead of silently falling back to `verify` |
 | `spec-completeness` | HARD | Missing SPEC sections, TBDs in core sections, 4-dimension clarity (Goal/Constraints/SC/Context), missing/unwritten `docs/DESIGN.md` on frontend projects, UI States table not reflected in any `AC-F-*` (auto-records plan-template DoD keys) |
 | `provenance-gate` | HARD | SPEC core sections without provenance markers (user-fact/repo-fact/assumption/blocker); assumptions in unsafe domains (credentials/payments/prod deploy/destructive data/PII); unresolved blockers |
 | `clarification-gate` | HARD | `[NEEDS-CLARIFICATION]` tags left in docs |
@@ -333,7 +363,7 @@ The 51 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compa
 
 | Tier | Enforced by | Effect on failure |
 |------|-------------|-------------------|
-| **훅 강제 (하드)** | stop-hook (fail-closed) + protect-files-guard | Completion (promise) impossible until fixed; frozen files can't be edited. Workflow-scoped keys: `specToTests`/`acceptanceFreeze` (plan-docs-full only), `docCodeCheck`/`serviceTestCheck`/`acceptanceTests` (full-auto only) |
+| **훅 강제 (하드)** | stop-hook (fail-closed) + protect-files-guard | Completion (promise) impossible until fixed; frozen files can't be edited. Workflow-scoped keys: `specToTests`/`acceptanceFreeze` (plan-docs-full only), `docCodeCheck`/`serviceTestCheck`/`acceptanceTests` (full-auto only), `codeReviewFindings` (implement workflows, v4.22.0 — `dod.code_review_pass` alone no longer completes) |
 | **게이트 기록 (전이 차단)** | `shared-gate.sh` subcommands | Step/Phase transition blocked; results written to `.claude-verification.json` by the script only (model must never write it directly) |
 | **자문 (SOFT)** | Warnings only | Proceed allowed; fix recommended. Only `implementation-depth`/`test-quality` escalate to HARD on repeat failure |
 

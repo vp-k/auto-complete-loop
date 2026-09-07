@@ -14,6 +14,9 @@ DECISION_WHY_MIN_LEN=10
 # 락 디렉토리를 스테일로 간주하는 경과 시간(초). 이보다 오래된 락은 회수하고 재획득한다.
 DECISION_LOCK_STALE_SEC=30
 
+# 락 획득 대기 틱 수(1틱 = 0.1s). 50 틱 = 최대 5초 대기 후 fail-closed.
+DECISION_LOCK_WAIT_TICKS=50
+
 # 유니코드 문자 수 계산 (bash ${#var}는 로케일에 따라 바이트를 셀 수 있어 jq로 결정론화)
 _decision_charlen() {
   printf '%s' "$1" | jq -Rs 'length' 2>/dev/null || echo 0
@@ -171,7 +174,7 @@ cmd_record_decision() {
   mkdir -p .claude 2>/dev/null || die "cannot create .claude directory"
   local lockdir="${DECISIONS_FILE}.lock.d" lockmeta="${DECISIONS_FILE}.lock.d/owner"
   local locked="false" i _lk_pid _lk_ts _now
-  for ((i = 0; i < 20; i++)); do
+  for ((i = 0; i < DECISION_LOCK_WAIT_TICKS; i++)); do
     if mkdir "$lockdir" 2>/dev/null; then
       locked="true"
       printf '%s %s\n' "$$" "$(date -u '+%s' 2>/dev/null || echo 0)" > "$lockmeta" 2>/dev/null || true
@@ -200,7 +203,11 @@ cmd_record_decision() {
     fi
     sleep 0.1
   done
-  [[ "$locked" == "true" ]] || echo "WARNING: record-decision: lock busy for $DECISIONS_FILE (waited 2s) — proceeding without lock" >&2
+  # fail-closed: 락을 못 잡으면 D-NNNN 채번이 경합하므로 기록하지 않고 종료한다.
+  # (기존에는 경고만 남기고 무락 append 해서 동일 번호 중복이 가능했다)
+  if [[ "$locked" != "true" ]]; then
+    die "record-decision: lock busy for $DECISIONS_FILE (waited $((DECISION_LOCK_WAIT_TICKS / 10))s) — 기록하지 않았다. 다른 프로세스의 record-decision이 끝나기를 기다려 재시도하라. 멈춘 프로세스가 남긴 락이면 ${DECISION_LOCK_STALE_SEC}s 후 자동 회수된다."
+  fi
 
   local next_num id line
   next_num=$(_decision_count)

@@ -493,10 +493,14 @@ cmd_code_review_findings() {
   local round_kind="verify"
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --round-kind) round_kind="${2:?--round-kind requires value}"; shift 2 ;;
-      *) shift ;;
+      --round-kind)   round_kind="${2:?--round-kind requires value}"; shift 2 ;;
+      --round-kind=*) round_kind="${1#*=}"; shift ;;
+      # 알 수 없는 인자를 삼키면 --round-kind 오타가 조용히 기본값(verify)으로 떨어져
+      # 상한 계수가 무력화된다 — handoff-update와 같이 fail-closed로 거부한다.
+      *) die "Unknown option: $1. Usage: code-review-findings [--round-kind fix|verify|rerecord]" ;;
     esac
   done
+  [[ -n "$round_kind" ]] || die "--round-kind requires a value (fix|verify|rerecord)"
   case "$round_kind" in
     fix|verify|rerecord) ;;
     *) die "--round-kind must be one of: fix|verify|rerecord (got '$round_kind')" ;;
@@ -524,10 +528,15 @@ cmd_code_review_findings() {
   local _rr_fix=$_rr_prev_fix
   [[ "$round_kind" == "fix" ]] && _rr_fix=$((_rr_prev_fix + 1))
   local _rr_total=$((_rr_prev_total + 1))
-  record_verification "reviewRounds" "$(jq -n --argjson w "$_rr_fix" --argjson t "$_rr_total" \
-    --arg k "$round_kind" --arg d "$_rr_declared" --arg fp "$_rr_cur_fp" --arg ts "$(timestamp)" --argjson cap "$REVIEW_ROUND_CAP" \
-    '{withFixes:$w, total:$t, cap:$cap, lastKind:$k, declaredKind:$d, sourceHash:$fp, updatedAt:$ts}')"
-  echo "[code-review-findings] 라운드 계수: withFixes=${_rr_fix}/${REVIEW_ROUND_CAP} (total=${_rr_total}, kind=${round_kind}${_rr_declared:+, declared=${_rr_declared}})"
+  # 실제 기록은 게이트 자체 실패(리뷰 증거 없음 / sourceHash stale·missing)를 통과한 뒤에 한다.
+  # 그 두 실패는 "라운드가 성립하지 않았다"는 뜻이므로, 계수하면 stale 상태의 재실행만으로
+  # 상한 예산이 소진된다 (호출은 아래 _rr_commit_rounds).
+  _rr_commit_rounds() {
+    record_verification "reviewRounds" "$(jq -n --argjson w "$_rr_fix" --argjson t "$_rr_total" \
+      --arg k "$round_kind" --arg d "$_rr_declared" --arg fp "$_rr_cur_fp" --arg ts "$(timestamp)" --argjson cap "$REVIEW_ROUND_CAP" \
+      '{withFixes:$w, total:$t, cap:$cap, lastKind:$k, declaredKind:$d, sourceHash:$fp, updatedAt:$ts}')"
+    echo "[code-review-findings] 라운드 계수: withFixes=${_rr_fix}/${REVIEW_ROUND_CAP} (total=${_rr_total}, kind=${round_kind}${_rr_declared:+, declared=${_rr_declared}})"
+  }
 
   # 기록 헬퍼 — 계약: codeReviewFindings {result: pass|fail, criticalOpen: N, highOpen: N, sourceHashCheck}
   # $5(sourceHashCheck) 생략 시 "skip" (기존 호출부 호환)
@@ -586,6 +595,7 @@ cmd_code_review_findings() {
       quality_fingerprint >/dev/null 2>&1 && _nv_shc="missing"
       note="no review evidence (empty findingHistory, no roundResults) — code review has not run"
       echo "[code-review-findings] FAIL: $note"
+      echo "[code-review-findings] NOTE: 라운드가 성립하지 않아 라운드 계수를 올리지 않는다 (withFixes=${_rr_prev_fix} 유지)."
       append_gate_history "code-review-findings" "fail" '{"criticalOpen":0,"highOpen":0,"reason":"no evidence"}'
       _crf_record "fail" 0 0 "$note" "$_nv_shc"
       echo "=== CODE REVIEW FINDINGS: FAIL ==="
@@ -630,11 +640,15 @@ cmd_code_review_findings() {
     echo "  Remedy: 수정을 커밋한 뒤 **전체 라운드 절차(소스 지문 캡처 → 리뷰어 실제 호출 →"
     echo "          finding 검증/수정 → 라운드 기록)를 1회 더 실행**하세요. open finding이 있으면"
     echo "          그 라운드에서 함께 수정/기각합니다. 리뷰어 호출 없이 라운드 항목만 append하는 것은 금지."
+    echo "[code-review-findings] NOTE: 라운드가 성립하지 않아 라운드 계수를 올리지 않는다 (withFixes=${_rr_prev_fix} 유지)."
     append_gate_history "code-review-findings" "fail" "$(jq -n --arg s "$sh_check" '{reason:("sourceHash " + $s)}')"
     _crf_record "fail" "$critical_open" "$high_open" "sourceHash $sh_check — unreviewed changes" "$sh_check"
     echo "=== CODE REVIEW FINDINGS: FAIL ==="
     return 1
   fi
+
+  # 여기까지 왔으면 리뷰 증거가 있고 지문도 정합하다 = 라운드가 성립했다 → 계수 확정
+  _rr_commit_rounds
 
   if [[ $((critical_open + high_open)) -gt 0 ]]; then
     echo "[code-review-findings] FAIL: open CRITICAL/HIGH finding(s) remain"

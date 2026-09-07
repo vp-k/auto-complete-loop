@@ -24,8 +24,19 @@ argument-hint: <요구사항 (자연어)>
 | REVIEW_MODE | `codex` | `solo` | `teams` |
 | PHASE_3_SKILL | `skills/code-review/SKILL.md` | `skills/code-review-solo/SKILL.md` | `skills/team-code-review/SKILL.md` |
 | PHASE_3_STEPS | Step 3-1 ~ 3-2 | Step 3-1 ~ 3-2 | Step 3-0 ~ 3-7 |
+| INIT_TEMPLATE | `full-auto` | `full-auto` | `full-auto` |
+| MAX_ITERATIONS | (기본값) | (기본값) | (기본값) |
+| EXTRA_INIT | (없음) | (없음) | (없음) |
 
 `--mode` 미지정 시 codex 모드를 사용합니다.
+
+`INIT_TEMPLATE`/`MAX_ITERATIONS`/`EXTRA_INIT`은 `templates/ralph-loop-setup.md`가 요구하는 공통 파라미터입니다
+(§1 init·§2 init-ralph). init은 `--template full-auto`를 명시하고 파일명은 `--progress-file {PROGRESS_FILE}`로
+결정합니다 — teams 모드는 같은 템플릿을 `.claude-full-auto-teams-progress.json`으로 생성합니다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template {INIT_TEMPLATE} "<프로젝트명>" "<요구사항>" --progress-file {PROGRESS_FILE}
+```
 
 ## 인수
 
@@ -93,7 +104,7 @@ Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
    - docs/ 미존재 또는 빈 폴더 → "기획 문서가 없습니다. Phase 0부터 시작합니다." 경고 후 N=0으로 폴백
 4. init 후 Phase 스킵 실행:
    ```
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init "<프로젝트명>" "<요구사항>" --progress-file {PROGRESS_FILE}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init --template {INIT_TEMPLATE} "<프로젝트명>" "<요구사항>" --progress-file {PROGRESS_FILE}
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh skip-phases <N> --progress-file {PROGRESS_FILE}
    ```
 5. Phase N의 스킬을 Read하여 해당 Phase부터 시작

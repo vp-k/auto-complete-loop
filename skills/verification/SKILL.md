@@ -461,8 +461,18 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-dimension e2eCoverage p
 5. progress 파일의 dod 체크리스트 최종 업데이트
    - `dod.code_review_pass`는 **모델이 직접 세팅하지 않는다** — 아래 서브커맨드의 PASS 결과로만 세팅:
      ```bash
-     bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --progress-file {PROGRESS_FILE}
+     bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh code-review-findings --round-kind <fix|verify|rerecord> --progress-file {PROGRESS_FILE}
      ```
+     **`--round-kind` 판정 (생략 금지)** — 생략하면 기본값 `verify`로 떨어져 수정 라운드가 상한(5)에 계수되지 않는다.
+     이 스텝은 Step 4-6.8이 이미 지문 정합을 맞춰 둔 뒤의 **확인 호출**이므로 통상 `verify`다:
+
+     | 이 시점의 상태 | 넘길 값 |
+     |---------------|--------|
+     | Step 4-6.8에서 소스 변경 없음을 확인했거나 델타 리뷰를 이미 마감했다 (이후 수정 0건) | `verify` |
+     | 이 호출이 Step 4-6.8 델타 리뷰 라운드의 마감을 겸한다 (그 라운드의 수정 0건) | `rerecord` |
+     | 이 호출이 마감하는 라운드에서 소스 수정이 1건이라도 있었다 (델타 리뷰에서 C/H를 고쳤다) | `fix` |
+
+     `verify`/`rerecord`로 신고해도 마지막 마감 이후 지문이 바뀌었으면 게이트가 `fix`로 계상한다(`declaredKind`에 신고값 보존).
      open CRITICAL/HIGH finding이 1건 이상이면 FAIL → 해당 finding 수정 후 Step 4-6.8로 복귀(커밋 → 델타 리뷰) 후 재실행. **stale FAIL**이면 Step 4-6.8 수행 누락이다 — 4-6.8로 돌아가 커밋+델타 리뷰를 수행한다. 결과는 verification.json의 `codeReviewFindings`에 기록된다.
 
 **커밋 가드 (지문 보호)**: 잔여 변경은 Step 4-6.8에서 이미 전부 커밋했으므로, 이 시점에 새 커밋이 필요한 상태 자체가 이상 신호다 — 커밋은 HEAD를 바꿔 지문을 다시 stale로 만든다:
@@ -479,10 +489,11 @@ DoD 전체 checked 확인 후, Phase 전이는 오케스트레이터가 수행.
 **규모 게이팅 (선행 판정)**: progress의 `.phases.phase_0.outputs.projectSize`를 조회한다.
 - `Large`가 **아니면**(Small / Medium / 미설정) **이 스텝을 스킵**하고 증거를 기록한 뒤 Step 4-8로 진행:
   ```bash
-  jq_inplace {PROGRESS_FILE} --arg v "SKIPPED_<SIZE>" '
+  jq --arg v "SKIPPED_<SIZE>" '
     .phases.phase_4.outputs.verificationAudit = {"verdict": $v, "reason": "fresh-context audit is Large-only; no gate consumes this result and script-recorded fail-closed keys are already write-guarded"}
-  '
+  ' {PROGRESS_FILE} > {PROGRESS_FILE}.tmp && mv {PROGRESS_FILE}.tmp {PROGRESS_FILE}
   ```
+  (`jq_inplace`는 `scripts/lib/utils.sh`의 내부 함수라 셸에서 직접 호출할 수 없다 — progress 파일은 위 `jq … > tmp && mv` 패턴으로 쓴다.)
   (`<SIZE>`는 실제 값으로 치환 — `SKIPPED_Small` / `SKIPPED_Medium`, projectSize 미설정이면 `SKIPPED_Unknown`)
 - `Large`이면 아래 감사를 수행하고, 결과를 같은 키에 `{"verdict": "<Release Ready 판정>", ...}`로 기록한다.
 

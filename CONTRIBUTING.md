@@ -43,6 +43,21 @@ tools:
 Bash 계열 가드는 단일 디스패처 `hooks/bash-guards.sh`에 검사를 추가하는 방식으로 확장합니다
 (PreToolUse:Bash 훅이 여러 개면 실행 순서/입력 소비가 얽힙니다).
 
+## 결정 기록
+
+이 플러그인을 고치는 작업 자체에도 같은 규칙이 적용됩니다 — **이유 없는 결정은 기록할 수 없고,
+기록할 수 없는 결정은 내리지 않습니다.** 새 게이트/훅 검사/기본값을 정했다면:
+
+```bash
+bash scripts/shared-gate.sh record-decision \
+  --what "<무엇을 정했나>" --why "<왜 이 선택인가>" \
+  --alternatives "<검토하고 버린 것>" --reversible yes|no --scope <국면> --source <원 채널>
+```
+
+규칙의 단일 출처는 `rules/shared-rules.md`의 "결정 기록 (단일 출처)"입니다.
+새 결정 지점을 문서에 배선할 때는 그 절을 복제하지 말고 **호출 지시 + 참조**만 남기세요
+(같은 규칙이 두 곳에 있으면 한쪽만 갱신되어 갈라집니다).
+
 ## 테스트
 
 ```bash

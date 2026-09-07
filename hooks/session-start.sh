@@ -79,7 +79,30 @@ if command -v jq &>/dev/null && [[ -f "$ACL_EVENTS_FILE" ]]; then
   fi
 fi
 
-# 두 메모리 섹션 병합 — 다운스트림 주입 지점은 LESSONS_SECTION만 참조하므로 여기에 합친다
+# 결정 로그 요약 (관측 전용 1줄) — 이 세션이 "왜 그렇게 되어 있는지"를 모른 채 재결정하는 것을 막는다.
+ACL_DECISIONS_FILE=".claude/acl-decisions.jsonl"
+DECISIONS_SECTION=""
+if command -v jq &>/dev/null && [[ -f "$ACL_DECISIONS_FILE" ]]; then
+  DECISIONS_LINE=$(jq -rn '
+    [inputs] as $d
+    | if ($d | length) == 0 then empty
+      else ($d[-1]) as $last
+        | "최근 결정 \($d | length)건, 마지막: \($last.id) \($last.what) — \($last.why)"
+      end
+  ' "$ACL_DECISIONS_FILE" 2>/dev/null || true)
+  if [[ -n "$DECISIONS_LINE" ]]; then
+    DECISIONS_SECTION=$(printf '## 결정 기록 (acl-decisions)\n- %s\n- 전체 조회: bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list' "$DECISIONS_LINE")
+  fi
+fi
+
+# 세 메모리 섹션 병합 — 다운스트림 주입 지점은 LESSONS_SECTION만 참조하므로 여기에 합친다
+if [[ -n "$DECISIONS_SECTION" ]]; then
+  if [[ -n "$LESSONS_SECTION" ]]; then
+    LESSONS_SECTION=$(printf '%s\n\n%s' "$LESSONS_SECTION" "$DECISIONS_SECTION")
+  else
+    LESSONS_SECTION="$DECISIONS_SECTION"
+  fi
+fi
 if [[ -n "$CROSSRUN_SECTION" ]]; then
   if [[ -n "$LESSONS_SECTION" ]]; then
     LESSONS_SECTION=$(printf '%s\n\n%s' "$LESSONS_SECTION" "$CROSSRUN_SECTION")

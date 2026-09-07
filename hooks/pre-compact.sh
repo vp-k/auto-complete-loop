@@ -58,4 +58,17 @@ echo "Current Approach: ${CURRENT_APPROACH}"
 if [ "$WARNINGS" != "없음" ] && [ "$WARNINGS" != "null" ] && [ -n "$WARNINGS" ]; then
   echo "Warnings: ${WARNINGS}"
 fi
-echo "=== 컴팩션 후 progress 파일을 먼저 읽어 컨텍스트를 복구하세요 ==="
+
+# 최근 결정 5건 (.claude/acl-decisions.jsonl — record-decision이 유일한 기록 경로).
+# "왜 그렇게 했는가"는 컨텍스트 압축에서 가장 먼저 사라지면서 가장 비싸게 되돌려지므로
+# 요약 지시문에 명시적으로 심는다.
+DECISIONS_LOG=".claude/acl-decisions.jsonl"
+if [ -f "$DECISIONS_LOG" ]; then
+  RECENT_DECISIONS=$(jq -rn '[inputs] | .[-5:] | .[] | "  - \(.id) [\(.scope)] \(.what) — \(.why)"' "$DECISIONS_LOG" 2>/dev/null || true)
+  if [ -n "$RECENT_DECISIONS" ]; then
+    echo "Recent Decisions (최근 5건, 이 목록은 요약에 반드시 보존할 것):"
+    echo "$RECENT_DECISIONS"
+  fi
+fi
+
+echo "=== 컴팩션 후 progress 파일과 .claude/acl-decisions.jsonl을 먼저 읽어 컨텍스트를 복구하세요 ==="

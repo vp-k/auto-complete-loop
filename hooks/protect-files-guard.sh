@@ -70,6 +70,14 @@ if [[ "$FILENAME" == "acceptance-unlock.json" ]]; then
   exit 0
 fi
 
+# acl-decisions.jsonl: 결정 로그 (stop-hook fail-closed 증거) → 직접 수정 하드 차단
+# (record-decision 이 --why 를 검사하고 append 한다. 손으로 한 줄 쓰면 "이유 없는 결정"이
+#  검사를 통과하므로 verification.json 과 같은 급으로 보호한다. Bash 경유는 bash-guards.sh 검사 6)
+if [[ "$FILENAME" == "acl-decisions.jsonl" ]]; then
+  echo '{"decision": "block", "reason": "acl-decisions.jsonl은 결정 로그 — 직접 수정 금지. 기록은 shared-gate.sh record-decision --what <결정> --why <이유> 로만 하고(이유 없으면 거부), 조회는 record-decision --list 로 한다."}'
+  exit 0
+fi
+
 # ralph-loop.local.md: stop-hook 전용 루프 상태 파일 → 모델 수정 하드 차단
 # (실전 검증 실측: 모델이 파일을 재작성/삭제해 최종 락을 우회 — 삭제는 사용자의 탈출구)
 if [[ "$FILENAME" == "ralph-loop.local.md" ]]; then

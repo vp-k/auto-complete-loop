@@ -113,6 +113,18 @@ cmd_status() {
   next_steps=$(jq -r '.handoff.nextSteps // ""' "$PROGRESS_FILE")
   [[ -n "$next_steps" ]] && echo "Next Steps: $next_steps"
 
+  # 최근 결정 3건 (.claude/acl-decisions.jsonl — record-decision이 유일한 기록 경로)
+  if [[ -f "${DECISIONS_FILE:-.claude/acl-decisions.jsonl}" ]]; then
+    local recent_decisions
+    recent_decisions=$(_decision_list "" 3 2>/dev/null || true)
+    if [[ -n "$recent_decisions" ]]; then
+      echo "Recent Decisions (last 3):"
+      echo "$recent_decisions" | while IFS= read -r line; do
+        echo "  $line"
+      done
+    fi
+  fi
+
   echo "========================"
 }
 
@@ -331,6 +343,12 @@ cmd_handoff_update() {
   # --iteration 숫자 검증
   if [[ -n "$iteration" ]] && ! [[ "$iteration" =~ ^[0-9]+$ ]]; then
     die "handoff-update: --iteration must be a non-negative integer, got '$iteration'"
+  fi
+  # --iteration 생략 시 Ralph frontmatter 의 현재 iteration (stop-hook 이 검사하는 값과 같은 출처).
+  # 루프 밖(frontmatter 없음)에서는 lastIteration 을 건드리지 않는다.
+  if [[ -z "$iteration" ]]; then
+    iteration=$(ralph_current_iteration)
+    [[ -n "$iteration" ]] && echo "handoff-update: --iteration 생략 → ralph-loop frontmatter의 iteration=$iteration 사용"
   fi
 
   # 모든 필드를 단일 jq 호출로 배치 업데이트 (원자성 보장)

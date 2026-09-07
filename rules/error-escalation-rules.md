@@ -34,6 +34,30 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error --file <f> --type <t> --msg <m> --level <L0-L5> --reset-count
 ```
 
+**L1(다른 방법)·L3(다른 접근법)로 전환할 때는 결정을 기록한다 (필수)**.
+`record-error`는 "무엇이 실패했나"를 세고, 결정 로그는 "그래서 무엇으로 바꿨고 왜인가"를 남긴다.
+이것이 없으면 다음 세션이 이미 버린 방법을 다시 시도한다 — 에스컬레이션에서 가장 비싼 낭비다.
+
+```bash
+# L1: 같은 설계, 다른 구현으로 전환
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "파일 업로드를 multer에서 busboy 직접 처리로 교체" \
+  --why "multer가 스트리밍 중 임시파일을 남겨 컨테이너 디스크가 차는 문제를 L0 3회로 해결하지 못했다" \
+  --alternatives "multer 유지 + 임시파일 정리 훅(실패 경로에서 누락)" --reversible yes \
+  --scope escalation --source inline
+
+# L3: 설계/아키텍처 수준 전환
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "실시간 갱신을 WebSocket에서 SSE로 전환" \
+  --why "프록시가 업그레이드 핸드셰이크를 끊어 L1 예산 3회로도 안정화되지 않았고 단방향이면 충분하다" \
+  --alternatives "WebSocket + 프록시 설정 변경(운영 권한 없음)" --reversible no \
+  --scope escalation --source inline
+```
+
+L2 라운드테이블·L3 합의에서 나온 결론도 같은 방식으로 남긴다 — 합의 자체가 결정이다.
+
 `--level`은 에스컬레이션 레벨 `L0`~`L5`를 받는다 (L5 = 사용자 개입 단계).
 
 record-error exit code:
@@ -108,6 +132,16 @@ L3 예산 3회 소진 자체가 "현재 문서가 한 번에 구현하기에 너
    ```
 3. 프로젝트 루트에 `SCOPE_REDUCTIONS.md` 생성/업데이트
 4. 코드에 `// SCOPE_REDUCED: <ticket>` 주석 추가
+5. **결정 기록 (필수)** — 범위 축소는 되돌리기 비싼 제품 결정이고, `scopeReductions`의 `reason`은
+   "몇 회 실패"만 담는 경우가 많다. 왜 그 최소 버전이 받아들일 만한지는 로그에 남긴다:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+     --progress-file {PROGRESS_FILE} \
+     --what "실시간 알림을 30초 폴링으로 축소 (POST_RELEASE_001)" \
+     --why "WebSocket 연결이 4회 실패했고 알림은 핵심 경로가 아니라 지연 허용 범위가 30초 이상이다" \
+     --alternatives "WebSocket 유지(안정화 시도 소진)" --reversible yes \
+     --scope escalation --source scope-reduction
+   ```
 
 **범위 축소 불가 항목** (핵심 경로):
 - 인증/인가

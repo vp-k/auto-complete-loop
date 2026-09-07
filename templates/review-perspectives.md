@@ -136,6 +136,32 @@ finding 없으면 "NO_FINDINGS".
 - Low: 라운드 1~2에서 합리적이면 수용, 과도하면 구체적 사유와 함께 스킵. 라운드 3+에서는 수정하지 않고 `deferred`로 기록
 - `deferred` 항목은 findingHistory에 남겨 백로그화한다 — 완료를 차단하지 않되 기록은 소실되지 않는다
 
+## 결정 기록 (리뷰 처분)
+
+리뷰에서 **문제를 인정하고도 지금 고치지 않기로** 한 처분은 결정이다 — 기록하지 않으면
+"리뷰가 잡았는데 왜 안 고쳤는지"가 남지 않고, 다음 라운드·다음 세션이 같은 판단을 처음부터 다시 한다.
+규칙은 `rules/shared-rules.md`의 "결정 기록 (단일 출처)"를 따른다.
+
+- **MEDIUM/LOW deferred 처분**: 라운드마다 **1건**으로 묶어 기록한다 (항목마다 부르지 않는다).
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+    --progress-file {PROGRESS_FILE} \
+    --what "라운드 3 신규 MEDIUM 4건·LOW 2건을 deferred 백로그로 이관 (PERF-MEDIUM-005 등)" \
+    --why "전부 수정하면 소스가 다시 바뀌어 재기록 라운드가 연쇄되고, 어느 것도 사용자 가시 동작을 깨지 않는다" \
+    --reversible yes --scope review --source severity
+  ```
+- **CRITICAL/HIGH → MEDIUM/LOW 강등**: **항목마다 1건** 기록한다. 강등은 완주 차단 여부를 바꾸므로
+  묶으면 어느 근거가 어느 항목의 것인지 사라진다. `--what`에 finding ID를 반드시 넣는다.
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+    --progress-file {PROGRESS_FILE} \
+    --what "SEC-HIGH-002를 MEDIUM으로 강등" \
+    --why "해당 경로는 내부 관리자 네트워크에서만 도달 가능해 외부 노출 전제가 성립하지 않는다" \
+    --reversible yes --scope review --source severity
+  ```
+  `roundResults.severityAdjustments`의 사유와 `--why`는 **같은 문장**을 쓴다 (두 곳에 다른 근거가 남지 않게).
+- dismissed(false positive)는 결정이 아니라 판정이므로 `dismissedDetails`에만 남긴다.
+
 ## 수정 후 품질 게이트 재실행
 
 ```bash

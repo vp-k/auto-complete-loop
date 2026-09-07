@@ -137,4 +137,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
 
 1. **작성 중**: 섹션 완성 시점에 마커 1개를 기록하며 작성 (분류 판단 자체가 스펙 품질 점검)
 2. **blocker 처리**: 각 blocker를 `[NEEDS-CLARIFICATION: <질문>]` 태그로 전환 → 기존 batch-ask 플로우로 사용자 질의 → 답변 반영 후 마커를 `user-fact`로 교체
-3. **게이트**: `shared-gate.sh provenance-gate` — 마커 누락/중복/근거 없는 assumption/unsafe-assumption/blocker 잔존 시 HARD_FAIL (clarification-gate 직전에 실행)
+3. **assumption 처리**: Phase 0에서 채택한 assumption은 착수 전에 pm-planning **Step 0-0.6**이 한 번에 확인받는다
+   (확인된 항목은 `user-fact`로 승격되므로 Phase 1 문서에 assumption으로 남지 않는다).
+   Phase 1 문서를 쓰다가 **새로 생긴 assumption**은 그때 따로 묻지 않고 마커만 달아 두었다가,
+   Step 1-9의 clarification batch-ask에서 잔존 `[NEEDS-CLARIFICATION]` 태그와 **같은 질문에 합쳐** 확인한다.
+   질의 왕복을 늘리지 않는 것이 개입 최소 원칙이다. 확인 후 마커를 `user-fact`로 바꾸고
+   `record-decision --scope planning --source clarification`으로 결정을 남긴 뒤 **provenance-gate를 재실행**한다.
+4. **게이트**: `shared-gate.sh provenance-gate` — 마커 누락/중복/근거 없는 assumption/unsafe-assumption/blocker 잔존 시 HARD_FAIL (clarification-gate 직전에 실행)

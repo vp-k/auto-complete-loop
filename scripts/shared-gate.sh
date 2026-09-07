@@ -18,6 +18,7 @@
 #   gates/test.sh     — E2E, 구현 깊이, 테스트 품질
 #   gates/design.sh   — 디자인 폴리시(WCAG), 페이지 렌더링
 #   gates/acceptance.sh — 인수 테스트 선작성+동결(freeze) + 실행 게이트
+#   gates/decisions.sh  — 결정 기록 단일 출처(record-decision) + assumption 일괄 확인 기록
 #
 # 서브커맨드:
 #   init [--template <type>] [project] [requirement]  - progress JSON 초기화
@@ -58,7 +59,11 @@
 #   page-render-check [--port N] [--strict]             - 프론트엔드 페이지 렌더링 검증 (빈 페이지/console.error/404 탐지)
 #   functional-flow                                     - 프로젝트 유형별 smoke 스크립트 실행 (api/frontend/fullstack/library)
 #   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
-#   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신
+#   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신 (--iteration 생략 시 ralph frontmatter)
+#   record-decision --what <s> --why <s> [...]         - 결정 1건 기록 (why 필수, append-only 로그)
+#   record-decision --none --why <s>                   - 이번 iteration에 결정 없음 기록
+#   record-decision --list [--iteration N] [--last N]  - 결정 로그 조회
+#   assumption-review --status <s> --count <N>         - assumption 일괄 확인 결과 기록
 
 set -euo pipefail
 
@@ -149,6 +154,8 @@ main() {
     add-dod-key)       cmd_add_dod_key "$@" ;;
     recover)           cmd_recover "$@" ;;
     handoff-update)    cmd_handoff_update "$@" ;;
+    record-decision)   cmd_record_decision "$@" ;;
+    assumption-review) cmd_assumption_review "$@" ;;
     help|--help|-h)
       echo "Usage: shared-gate.sh <subcommand> [--progress-file <path>] [args]"
       echo ""
@@ -231,8 +238,22 @@ main() {
       echo "                                               Only sanctioned write path for soft dimensions — direct edits to .claude-verification.json are blocked by the guard."
       echo "  add-dod-key <key>                          - Add DoD key dynamically (idempotent)"
       echo "  recover                                     - Show recovery info (handoff + next steps)"
-      echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>]"
+      echo "  handoff-update --next-steps <s> [--phase <p>] [--completed <c>] [--warnings <w>] [--iteration <n>]"
       echo "                                             - Update handoff fields atomically"
+      echo "                                               --iteration omitted → ralph-loop frontmatter iteration (what stop-hook checks)"
+      echo "  record-decision --what '<what>' --why '<why>' [--alternatives '<alt>']..."
+      echo "                  [--reversible yes|no] [--scope interview|planning|implementation|review|escalation|other]"
+      echo "                  [--source adr|provenance|clarification|severity|scope-reduction|inline]"
+      echo "                  [--phase <p>] [--iteration <n>]"
+      echo "                                             - Append one decision record to .claude/acl-decisions.jsonl"
+      echo "                                               --why is REQUIRED (>=10 chars after whitespace strip) — a decision"
+      echo "                                               without a reason is a wrong decision; the script refuses it (exit 1)."
+      echo "                                               Also mirrors 'D-NNNN: what - why' into handoff.keyDecisions (append)."
+      echo "  record-decision --none --why '<why>'       - Record that this iteration had no decision (keyDecisions untouched)"
+      echo "  record-decision --list [--iteration N] [--last N] - Query the decision log"
+      echo "  assumption-review --status confirmed|none|escalated --count <N> [--note '<s>']"
+      echo "                                             - Record the pre-start assumption bulk review into progress.assumptionReview"
+      echo "                                               (stop-hook requires this key in full-auto / plan-docs-full)"
       echo ""
       echo "Global options:"
       echo "  --progress-file <path>  Specify progress file (auto-detected if omitted)"

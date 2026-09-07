@@ -198,6 +198,64 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
 4. `handoff.warnings`로 주의사항 인지
 5. `handoff.currentApproach`로 진행 구조 맥락 복구
 
+**handoff 갱신은 stop-hook이 검사한다** — 완주 선언 시 `handoff.lastIteration`이 방금 끝난 iteration과 다르면 차단된다.
+`bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update --next-steps "..."`로 갱신한다
+(`--iteration`을 생략하면 Ralph frontmatter의 현재 iteration — stop-hook이 보는 값 — 이 자동으로 들어간다).
+
+## 결정 기록 (단일 출처)
+
+**이유 없는 결정은 잘못된 결정이다.** 어떤 결정을 어떤 이유로 내렸는지가 남지 않으면
+다음 iteration·다음 세션·다음 사람이 같은 것을 다시 결정하고, 되돌리는 비용은 그때 발생한다.
+
+### 원칙
+
+1. **모든 결정에는 이유가 있어야 한다.** 사유 없이 내린 결정은 기록할 수 없고(스크립트가 거부),
+   기록할 수 없는 결정은 내려서는 안 된다.
+2. 기록 항목은 4가지다 — **무엇을(what) / 왜(why) / 무엇과 비교했나(alternatives) / 되돌릴 수 있나(reversible)**.
+   되돌리기 비싼 결정(다른 US가 의존하게 되는 구조·공용 유틸·상태 관리 방식)은 `--reversible no`로 남긴다.
+3. **기록 위치는 한 곳이다** — `.claude/acl-decisions.jsonl` (append-only, `record-decision`만 쓴다 —
+   Edit/Write·Bash 경유 직접 쓰기는 훅이 차단한다. 이유 검사를 우회한 줄은 기록이 아니다).
+   ADR·provenance 마커·`docs/CLARIFICATIONS.md`·`severityAdjustments`는 각자의 목적(구조 설명·출처 표시·질문 추적·심각도 근거)
+   그대로 유지하되, **결정이 발생한 사실 자체는 반드시 이 로그에도 미러링**한다(`--source`로 원 채널 표시).
+4. **iteration당 최소 1건.** 결정이 없었다면 없었다는 사실을 남긴다(`--none --why "<왜 없었는지>"`).
+
+### 사용법
+
+```bash
+# 결정 1건 기록 (why 필수 — 공백 제외 10자 미만이면 exit 1)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --what "인증을 JWT + refresh token으로 확정" \
+  --why "세션 스토어 없이 수평 확장해야 하고 만료·갱신 규약이 SPEC AC-F-003에 이미 명시되어 있다" \
+  --alternatives "서버 세션 쿠키(수평 확장 시 스토어 필요)" \
+  --reversible no --scope planning --source adr
+
+# 이번 iteration에 결정이 없었음
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --none \
+  --why "문서 오탈자 수정만 수행했고 설계·구현 선택지가 발생하지 않았다"
+
+# 조회
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --last 5
+```
+
+| 옵션 | 값 | 의미 |
+|------|-----|------|
+| `--what` | 문자열 (필수) | 결정 내용 |
+| `--why` | 문자열 (필수, 공백 제외 10자 이상) | 결정 이유. 없으면 기록 자체가 거부된다 |
+| `--alternatives` | 문자열 (반복 가능) | 검토한 대안과 탈락 사유 |
+| `--reversible` | `yes`(기본) \| `no` | 되돌리기 비용 |
+| `--scope` | `interview` \| `planning` \| `implementation` \| `review` \| `escalation` \| `other` | 결정이 난 국면 |
+| `--source` | `adr` \| `provenance` \| `clarification` \| `severity` \| `scope-reduction` \| `inline` | 원 채널 |
+| `--phase` / `--iteration` | 문자열 / 정수 | 생략 시 ralph-loop·progress에서 자동 |
+
+기록되는 것: `.claude/acl-decisions.jsonl` 한 줄(JSON) + `decision.recorded` 이벤트 +
+`handoff.keyDecisions`에 `"D-NNNN: <what> — <why>"` **append**(`--none`은 append하지 않음).
+
+### 강제
+
+stop-hook이 완주 선언 시 **이번 iteration의 결정 기록이 0건이면 차단**한다
+(progress에 `decisionLog.enabled`가 있는 워크플로우 — `init`으로 만든 모든 템플릿이 해당).
+어떤 지점에서 record-decision을 호출해야 하는지는 각 스킬/커맨드 문서에 지점별로 명시되어 있다.
+
 ## 외부 AI 자체 탐색 (codex 호출 시)
 - codex에게 **파일 경로**를 전달하여 직접 읽도록 함
 - Claude가 문서 내용을 요약/가공하여 프롬프트에 embed하지 않음 (요약 편향 방지)

@@ -177,3 +177,17 @@ jq_inplace() {
     die "jq update failed for $file"
   fi
 }
+
+# ─── ralph_current_iteration: Ralph 루프 frontmatter의 현재 iteration ───
+# stop-hook 이 완주 검사 기준으로 삼는 값과 같은 출처(.claude/ralph-loop.local.md `iteration:`).
+# record-decision / handoff-update 가 --iteration 을 생략했을 때 이 값을 쓴다 — 모델이 N 을
+# 손으로 세다가 틀리면 완주가 차단되므로, 기본값은 추정이 아니라 훅과 같은 파일에서 읽는다.
+# 파일이 없거나 정수가 아니면 빈 문자열.
+ralph_current_iteration() {
+  local it=""
+  if [[ -f ".claude/ralph-loop.local.md" ]]; then
+    it=$(grep -m1 '^iteration:' ".claude/ralph-loop.local.md" 2>/dev/null | sed 's/^iteration:[[:space:]]*//' | tr -d '\r' || true)
+  fi
+  [[ "$it" =~ ^[0-9]+$ ]] || it=""
+  printf '%s' "$it"
+}

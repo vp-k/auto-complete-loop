@@ -424,6 +424,13 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-error \
 
 같은 설계, 다른 구현으로 시도:
 - 라이브러리 교체, 패턴 변경, API 변경
+- **전환 시 결정 기록 (필수)** — 무엇으로 바꿨고 왜인지가 없으면 다음 세션이 버린 방법을 다시 시도한다:
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+    --progress-file .claude-progress.json \
+    --what "<바꾼 구현>" --why "<이전 방법이 왜 못 쓰게 됐는지 + 새 방법이 왜 되는지>" \
+    --alternatives "<버린 방법과 사유>" --reversible yes --scope escalation --source inline
+  ```
 - 3회 소진 시 → L2로 에스컬레이트
 
 **L2: codex 분석 + 라운드테이블 (1회)**
@@ -454,7 +461,14 @@ codex exec --skip-git-repo-check '## 근본 원인 분석 요청
 1. **롤백**: 현재 문서/티켓에서 변경한 파일만 대상으로 `git restore --source={lastCommitSha} -- <변경된 파일 목록>` (전체 `.` 롤백 금지 — 다른 작업의 변경을 보호)
 2. codex 분석 결과 기반으로 다시 구현
 3. `phase` → `implementing` (처음부터 다시 구현)
-4. 3회 소진 시 → L4로 에스컬레이트
+4. **접근법 전환 결정 기록 (필수)** — 아키텍처 수준 전환은 되돌리기 비싸므로 `--reversible no`:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+     --progress-file .claude-progress.json \
+     --what "<전환한 접근법>" --why "<codex/라운드테이블 분석이 지목한 근본 원인>" \
+     --alternatives "<버린 접근법과 사유>" --reversible no --scope escalation --source inline
+   ```
+5. 3회 소진 시 → L4로 에스컬레이트
 
 **L3.5: TOO_BIG 문서 분할 (record-error exit 4 수신 시, 문서당 1회)**
 
@@ -471,8 +485,15 @@ L3 예산 소진 시 record-error가 자동 판정 (in_progress 문서 1개 + �
 1. 기능을 최소 동작 버전으로 구현
 2. `scopeReductions` 배열에 기록
 3. `SCOPE_REDUCTIONS.md` 생성/업데이트
-4. **핵심 경로(인증, CRUD 기본, 빌드)는 범위 축소 불가**
-5. 범위 축소 후에도 실패 시 → L5로 에스컬레이트
+4. **결정 기록 (필수)** — `--scope escalation --source scope-reduction`:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+     --progress-file .claude-progress.json \
+     --what "<축소한 기능과 티켓 번호>" --why "<왜 이 최소 버전이 받아들일 만한지>" \
+     --reversible yes --scope escalation --source scope-reduction
+   ```
+5. **핵심 경로(인증, CRUD 기본, 빌드)는 범위 축소 불가**
+6. 범위 축소 후에도 실패 시 → L5로 에스컬레이트
 
 **L5: 사용자 개입 요청**
 

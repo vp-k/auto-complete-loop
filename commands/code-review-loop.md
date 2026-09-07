@@ -278,6 +278,11 @@ confirmed **CRITICAL** 및 **HIGH** finding을 **Edit 도구**로 자동 수정:
 - **B (Acknowledge)**: MEDIUM/LOW는 status를 `deferred`로 설정, 사유 기록. **CRITICAL/HIGH는 status를 `dismissed`로 설정하고 사유에 "user acknowledged: <사용자 사유>"를 기록** — 게이트(`code-review-findings`)가 deferred C/H를 open으로 계수하므로, 사용자가 명시 보류한 C/H는 dismissed 경로로만 완주 가능
 - **C (False positive)**: `.claude-review-suppressions.json`에 해당 패턴 등록 (파일 + 카테고리 + 키워드). 30일 후 자동 만료.
 
+**리뷰 처분 결정 기록 (필수)**: MEDIUM/LOW를 `deferred`로 넘기거나 CRITICAL/HIGH를 강등할 때는
+`record-decision --scope review --source severity`로 사유를 남긴다 (deferred는 라운드당 1건, 강등은 항목당 1건).
+호출 형식과 근거 작성 규칙은 `templates/review-perspectives.md`의 "결정 기록 (리뷰 처분)" 절이 단일 출처다.
+`--progress-file`은 standalone 실행이므로 `.claude-review-loop-progress.json`을 쓴다.
+
 **적용 범위**: standalone `/code-review-loop --interactive`에만 적용. `/full-auto` Phase 3의 코드 리뷰는 기존 자동 모드를 유지합니다.
 
 ---

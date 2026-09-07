@@ -63,7 +63,7 @@ Phase 1: Planning ───── {PHASE_1_SKILL}로 기획 문서 완성
     ↓ [Pre-mortem 가드: blocking Tiger 미해결 시 Phase 2 진입 금지]
 Phase 2: Implementation ── Claude 직접 구현 + TDD
     ↓ [일관성 검사 #2: doc↔code]
-Phase 3: Code Review ──── {PHASE_3_SKILL}로 리뷰 + Claude 수정
+Phase 3: Code Review ──── {PHASE_3_SKILL}로 리뷰 + Claude 수정 (MEDIUM/LOW deferred·severity 강등은 record-decision 필수)
     ↓ [리뷰 승격: review-escalation-check — L2+/범위축소/재동결 트리거 시 dual/roundtable 추가 라운드 의무]
     ↓ [일관성 검사 #3: code quality]
 Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
@@ -108,6 +108,21 @@ Phase 4: Verification ─── 최종 검증 + 폴리싱 + Launch Readiness
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh provenance-gate --progress-file {PROGRESS_FILE}
    ```
    `reviewEscalation`은 Phase 3 진입 시 `review-escalation-check`가 기록한다 (phase-transition-rules.md). `--start-phase 4`로 Phase 3까지 건너뛴 경우에는 위 명령과 함께 `review-escalation-check --progress-file {PROGRESS_FILE}`도 즉시 실행한다 (트리거 없으면 skip 기록).
+8. **assumption 확인 기록 (N >= 1일 때)**: Phase 0을 건너뛰면 pm-planning Step 0-0.6(assumption 일괄 확인)이
+   실행되지 않아 `assumptionReview` 키가 비고, stop-hook이 완주를 차단한다. 건너뛴 사실 그대로 기록한다:
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh assumption-review --progress-file {PROGRESS_FILE} \
+     --status escalated --count 0 --note "--start-phase N: Phase 0 건너뜀, 잔존 assumption은 provenance-gate가 차단"
+   ```
+   `confirmed`로 위조하지 않는다 — 사용자에게 보여준 적이 없는 것을 확인받았다고 기록하는 것이 세탁이다.
+
+## 완주 시 기록 요구 (stop-hook fail-closed)
+
+promise 발행 시 스톱훅이 게이트 키와 별개로 다음 **기록 3종**을 직접 검사한다. 어느 하나라도 없으면 차단된다:
+
+1. **handoff 갱신** + 2. **결정 기록** — 모든 Ralph 워크플로우 공통 조건 (`templates/ralph-loop-setup.md` §5 완료 조건 4·5).
+   각 지점에서 언제 무엇을 기록하는지는 `rules/shared-rules.md`의 "결정 기록 (단일 출처)" 참조.
+3. **assumptionReview** — `confirmed` | `none` | `escalated` 중 하나 (pm-planning Step 0-0.6) — full-auto·plan-docs-full 전용
 
 ## 공통 규칙 로드
 

@@ -450,6 +450,45 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         fi
       done
 
+      # ─── 결정 기록 · handoff 갱신 fail-closed (v4.20.0) ───
+      # "이유 없는 결정은 잘못된 결정이다" — 매 iteration은 (1) handoff를 자기 iteration으로
+      # 갱신하고 (2) 결정 로그에 최소 1건(결정 또는 --none)을 남겨야 완주할 수 있다.
+      # 하위호환: progress에 decisionLog.enabled가 있을 때만 강제 (v4.20.0 이전 파일은 경고 1줄).
+      _DECISION_LOG_ENABLED="false"
+      for _pf in "${VERIFIED_PROGRESS_FILES[@]:-}"; do
+        [[ -z "$_pf" ]] || [[ ! -f "$_pf" ]] && continue
+        _dl_flag=$(jq -r '.decisionLog.enabled // false' "$_pf" 2>/dev/null || echo "false")
+        [[ "$_dl_flag" == "true" ]] && _DECISION_LOG_ENABLED="true"
+      done
+
+      _CUR_ITER="${ITERATION:-0}"
+      [[ "$_CUR_ITER" =~ ^[0-9]+$ ]] || _CUR_ITER=0
+
+      if [[ "$_DECISION_LOG_ENABLED" != "true" ]]; then
+        echo "Auto Complete Loop: NOTE - progress에 decisionLog.enabled가 없어 결정 기록 검사를 건너뜁니다 (v4.20.0 이전 스키마). 'shared-gate.sh init'으로 새로 만든 progress에는 자동 포함됩니다."
+      else
+        # (a) handoff 갱신 확인 — 방금 끝난 iteration이 handoff에 반영되어 있어야 한다
+        for _pf in "${VERIFIED_PROGRESS_FILES[@]:-}"; do
+          [[ -z "$_pf" ]] || [[ ! -f "$_pf" ]] && continue
+          _last_it=$(jq -r '.handoff.lastIteration // "null"' "$_pf" 2>/dev/null || echo "null")
+          if [[ "$_last_it" != "$_CUR_ITER" ]]; then
+            VERIFICATION_PASSED="false"
+            FAILURE_REASONS="${FAILURE_REASONS}${_pf}: handoff.lastIteration=${_last_it} (이번 iteration=${_CUR_ITER}) — 이번 iteration의 handoff를 갱신하지 않았다. 'shared-gate.sh handoff-update --progress-file ${_pf} --iteration ${_CUR_ITER} --next-steps \"<다음 단계>\"'를 실행하라. "
+          fi
+        done
+
+        # (b) 결정 기록 확인 — 이번 iteration에 kind=decision 또는 kind=none이 최소 1건
+        _dec_for_iter=0
+        if [[ -f ".claude/acl-decisions.jsonl" ]]; then
+          _dec_for_iter=$(jq -s --argjson it "$_CUR_ITER"             '[.[] | select(.iteration == $it and (.kind == "decision" or .kind == "none"))] | length'             .claude/acl-decisions.jsonl 2>/dev/null || echo 0)
+        fi
+        [[ "$_dec_for_iter" =~ ^[0-9]+$ ]] || _dec_for_iter=0
+        if [[ "$_dec_for_iter" -eq 0 ]]; then
+          VERIFICATION_PASSED="false"
+          FAILURE_REASONS="${FAILURE_REASONS}iteration ${_CUR_ITER}의 결정 기록 없음(.claude/acl-decisions.jsonl) — 이번 iteration에서 내린 결정을 'shared-gate.sh record-decision --what \"<결정>\" --why \"<이유>\"'로 남기거나, 정말 결정이 없었다면 'shared-gate.sh record-decision --none --why \"<왜 결정이 없었는지>\"'를 실행하라. "
+        fi
+      fi
+
       # ─── 워크플로우 스코프 게이트 검증 (fail-closed: 키 부재 = 게이트 미실행 = 미검증) ───
       # progress 파일명으로 워크플로우를 판별해 해당 워크플로우가 요구하는
       # verification.json 게이트 결과 키를 검사한다. standalone 워크플로우(review 등)에는
@@ -479,6 +518,22 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         FAILURE_REASONS="${FAILURE_REASONS}.claude-verification.json: ${_key}=${_res}${_detail} — need ${_allowed// /|}; run '${_remedy}'. "
       }
 
+      # assumption 일괄 확인(pm-planning Step 0-0.6) 결과 요구.
+      # 키 부재 = 단계 통째 스킵 → 차단. decisionLog.enabled가 없는 구버전 progress는 면제.
+      _require_assumption_review() {
+        [[ "$_DECISION_LOG_ENABLED" == "true" ]] || return 0
+        local _ar _ok="false"
+        for _pf in "${VERIFIED_PROGRESS_FILES[@]:-}"; do
+          [[ -z "$_pf" ]] || [[ ! -f "$_pf" ]] && continue
+          _ar=$(jq -r '.assumptionReview.status // "missing"' "$_pf" 2>/dev/null || echo "missing")
+          case "$_ar" in confirmed|none|escalated) _ok="true" ;; esac
+        done
+        if [[ "$_ok" != "true" ]]; then
+          VERIFICATION_PASSED="false"
+          FAILURE_REASONS="${FAILURE_REASONS}assumptionReview 미기록 — 모델이 채택한 safe assumption을 착수 전에 사용자에게 일괄 확인받는 단계(pm-planning Step 0-0.6)를 건너뛰었다. 확인 후 'shared-gate.sh assumption-review --status confirmed|none|escalated --count <N>'을 실행하라. "
+        fi
+      }
+
       # (WF_FULL_AUTO / WF_PLAN_DOCS_FULL은 위 워크플로우 판별에서 계산됨)
 
       # unlock 토큰 잔존 차단 (full-auto · plan-docs-full 공통): acceptance-unlock 으로 동결을 풀고
@@ -498,6 +553,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         # 도달→[NEEDS-CLARIFICATION] 이관, clarificationGate가 최종 차단)만 허용. 키 부재=인터뷰
         # 통째 스킵 → 차단(G1 봉쇄). 자기신고 고득점은 specCompleteness가 파일 기반으로 backstop.
         _require_vgate "ambiguityScore"     "pass escalated" "shared-gate.sh ambiguity-score --goal <g> --sc <s> --constraints <c> --context <x> --round 1"
+        _require_assumption_review
         _require_vgate "specCompleteness"   "pass"      "shared-gate.sh spec-completeness"
         # provenance: skip 허용 (--start-phase로 Phase 1을 건너뛴 pre-4.7 문서 하위호환)
         _require_vgate "provenanceGate"     "pass skip" "shared-gate.sh provenance-gate"
@@ -519,6 +575,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
         # plan-docs-full: 기획 게이트 모두 pass (provenance 포함 — 신규 기획은 마커 필수)
         # 순수 기획 워크플로우 → 착수 전 명확화는 항상 수행되어야 함 (pass|escalated 강제)
         _require_vgate "ambiguityScore"    "pass escalated" "shared-gate.sh ambiguity-score --goal <g> --sc <s> --constraints <c> --context <x> --round 1"
+        _require_assumption_review
         _require_vgate "specCompleteness"  "pass" "shared-gate.sh spec-completeness"
         _require_vgate "provenanceGate"    "pass" "shared-gate.sh provenance-gate"
         _require_vgate "clarificationGate" "pass" "shared-gate.sh clarification-gate"
@@ -731,6 +788,36 @@ NEXT_ITERATION=$((ITERATION + 1))
 
 # 프롬프트 텍스트 추출 (두 번째 --- 이후)
 PROMPT_TEXT=$(awk '/^---$/{i++; next} i>=2' "$RALPH_STATE_FILE")
+
+# ─── iteration 종료 리마인더 (v4.20.0, 비차단) ───
+# 방금 끝난 iteration의 handoff 갱신·결정 기록이 비어 있으면 다음 프롬프트에 안내를 덧붙인다.
+# 완주 시점에는 위 검증 블록이 fail-closed로 차단하므로, 여기서는 조기 안내만 한다
+# (여기서 차단하면 루프가 진행되지 않아 무한 block이 된다).
+_reminder_pf=""
+if [[ -n "${PROGRESS_FILE_FROM_FRONTMATTER:-}" ]] && [[ -f "$PROGRESS_FILE_FROM_FRONTMATTER" ]]; then
+  _reminder_pf="$PROGRESS_FILE_FROM_FRONTMATTER"
+fi
+if [[ -n "$_reminder_pf" ]]; then
+  _rm_enabled=$(jq -r '.decisionLog.enabled // false' "$_reminder_pf" 2>/dev/null || echo "false")
+  if [[ "$_rm_enabled" == "true" ]]; then
+    _rm_notes=""
+    _rm_last=$(jq -r '.handoff.lastIteration // "null"' "$_reminder_pf" 2>/dev/null || echo "null")
+    if [[ "$_rm_last" != "$ITERATION" ]]; then
+      _rm_notes="${_rm_notes}"$'\n'"- handoff 미갱신: bash \${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update --progress-file ${_reminder_pf} --iteration ${ITERATION} --next-steps \"<다음 단계>\""
+    fi
+    _rm_dec=0
+    if [[ -f ".claude/acl-decisions.jsonl" ]]; then
+      _rm_dec=$(jq -s --argjson it "$ITERATION" '[.[] | select(.iteration == $it and (.kind == "decision" or .kind == "none"))] | length' .claude/acl-decisions.jsonl 2>/dev/null || echo 0)
+    fi
+    [[ "$_rm_dec" =~ ^[0-9]+$ ]] || _rm_dec=0
+    if [[ "$_rm_dec" -eq 0 ]]; then
+      _rm_notes="${_rm_notes}"$'\n'"- iteration ${ITERATION} 결정 미기록: bash \${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --what \"<결정>\" --why \"<이유>\" (결정이 없었다면 --none --why \"<이유>\")"
+    fi
+    if [[ -n "$_rm_notes" ]]; then
+      PROMPT_TEXT="${PROMPT_TEXT}"$'\n\n'"⚠️ 직전 iteration(${ITERATION}) 마감 누락 — 완주 검증에서 차단되는 항목이다. 지금 처리하라:${_rm_notes}"
+    fi
+  fi
+fi
 
 # iteration 업데이트
 # fail-open 방지 (M1): set -euo pipefail 하에서 mktemp/sed/mv 중 하나라도 실패하면

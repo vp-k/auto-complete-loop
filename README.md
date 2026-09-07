@@ -1,8 +1,8 @@
 # Auto Complete Loop
 
-**v4.19.0**
+**v4.20.0**
 
-AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, and stuck-pattern detection (oscillation / diminishing returns).
+AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
 ## Installation
 
@@ -237,9 +237,54 @@ Memory is not storage — every lesson is written as a **condition for the next 
 - **How it comes back**: `session-start` hook injects the most recent LESSON entries into the next session's context, so the next run starts already knowing what broke and what to do about it
 - **No loops**: identical "next-run conditions" are deduplicated before append
 
+### Decision Log (v4.20.0 — 이유 없는 결정은 잘못된 결정이다)
+
+A decision without a recorded reason gets re-decided by the next iteration, the next session, or the
+next person — and the cost of reversing it lands there. v4.20.0 funnels every decision into one
+append-only log so that never happens silently.
+
+- **One source**: `.claude/acl-decisions.jsonl`, written only by `shared-gate.sh record-decision` —
+  direct Edit/Write and Bash writes to the file are blocked by the same guards that protect
+  `verification.json`, so the reason check cannot be bypassed by appending a line by hand.
+  ADRs, provenance markers, `docs/CLARIFICATIONS.md` and `severityAdjustments` keep their own jobs
+  (explain structure / mark origin / track questions / justify severity) and **mirror** into the log
+  via `--source adr|provenance|clarification|severity|scope-reduction|inline`.
+- **Reason required, deterministically**: `--why` must be ≥ 10 characters after stripping whitespace
+  (counted in Unicode codepoints via jq, so the rule doesn't shift with locale). Below that, the
+  record is refused — "필요해서" is not a reason. What the model supplies is `what` / `why` /
+  `alternatives` / `reversible`; the script decides whether it counts.
+- **Wired at the points where decisions actually happen**: assumption adoption and ADR creation
+  (pm-planning), architecture agreements and `[NEEDS-CLARIFICATION]` resolutions (doc-planning),
+  tech-stack details, data strategy and expensive-to-reverse implementation details (implementation),
+  L1/L3 approach switches and L4 scope reduction (escalation), MEDIUM/LOW deferral and severity
+  downgrades (review).
+- **Enforced**: at promise time the stop-hook blocks completion unless (1) `handoff.lastIteration`
+  matches the iteration just finished (`handoff-update` fills it from the Ralph frontmatter when
+  `--iteration` is omitted, so the model never has to count), (2) the log has at least one entry for that iteration
+  (`record-decision --none --why "..."` records that there were none), and (3) `assumptionReview.status`
+  is set. Progress files without `decisionLog.enabled` (pre-4.20.0) get one NOTE line instead.
+  On the continue path the hook only appends a reminder to the next prompt — blocking there would
+  stall the loop instead of advancing it.
+- **Comes back**: `pre-compact` injects the last 5 decisions into the compaction summary (the "why"
+  is the first thing context compression drops and the most expensive to reconstruct);
+  `session-start` adds one observational line; `status` shows the 3 most recent.
+
+### Pre-Start Assumption Review (v4.20.0)
+
+The Step 0-0 interview minimizes interruption by deciding safe assumptions itself. v4.20.0 keeps that
+but adds one checkpoint before work starts: pm-planning **Step 0-0.6** shows every adopted assumption
+in a single table (item / adopted value / rationale / reversibility) and takes **one** AskUserQuestion —
+approve all, or edit individual items. Approved items are promoted from `assumption` to `user-fact`
+and each is recorded in the decision log. Zero assumptions means no question is asked at all
+(`--status none`); a non-interactive run records `escalated` and lets the downstream provenance and
+clarification gates do the blocking. `assumption-review` writes the result and the stop-hook requires
+it in full-auto and plan-docs-full — a missing key means the step was skipped entirely.
+Assumptions that appear later, while writing Phase 1 docs, are folded into the existing Step 1-9
+clarification batch-ask rather than becoming a second round-trip.
+
 ### Quality Gates
 
-The 48 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
+The 51 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
 
 | Gate | Type | Catches |
 |------|------|---------|

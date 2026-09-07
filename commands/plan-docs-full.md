@@ -108,7 +108,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 4. 기존 Phase 1 게이트 통과:
    - `clarification-gate` exit 0 (`[NEEDS-CLARIFICATION]` 잔존 0건)
    - `placeholder-check` exit 0
-5. 위 조건을 **직전에 확인**한 결과여야 함
+5. **기록 3종** (stop-hook이 fail-closed로 검사 — 게이트 스크립트가 아니라 progress/로그를 직접 본다):
+   - handoff 갱신 + 이번 iteration 결정 기록 1건 이상 — 공통 조건 (`templates/ralph-loop-setup.md` §5 완료 조건 4·5)
+   - `assumptionReview.status`가 `confirmed` | `none` | `escalated` (pm-planning Step 0-0.6 — `assumption-review` 서브커맨드, 이 워크플로우 전용)
+6. 위 조건을 **직전에 확인**한 결과여야 함
 
 ### Iteration 단위 작업 규칙
 
@@ -303,6 +306,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh status --progress-file {PROGRE
 
 - `pm-planning` / `doc-planning` 스킬 내부 로직을 이 파일에 복사하지 않는다 (단일 소스 원칙)
 - 7종 게이트 중 하나라도 실패한 채로 promise를 발행하지 않는다
+- 결정을 내리고 기록하지 않는다 (`record-decision`이 유일한 기록 경로 — `rules/shared-rules.md` "결정 기록")
 - provenance blocker를 assumption으로 바꿔치기해 게이트를 우회하지 않는다 (unsafe 도메인은 user-fact/blocker만)
 - 동결 이후 tests/acceptance/**를 수정하지 않는다 (protect-files-guard 훅 차단. 스펙 변경 시에만 사용자 승인 → `acceptance-unlock --approved-by-user --reason "<사유>"` → 수정 → `acceptance-freeze --approved-by-user` 재동결로 토큰을 닫는다)
 - `definition-conflict`의 매치된 라인 각각이 `nonGoalsAudit`에 기록되지 않은 채로 진행하지 않는다 (임의 판단 회피)

@@ -63,10 +63,22 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh init-ralph "{PROMISE_TAG}" "{P
 1. `{PROGRESS_FILE}`의 모든 steps/documents status가 `completed`
 2. `{PROGRESS_FILE}`의 `dod` 체크리스트가 모두 checked (dod 필드가 있는 경우)
 3. 명령 문서의 **"추가 완료 조건"**이 모두 충족 (있는 경우 — 예: `.claude-verification.json` 검증 항목 통과)
-4. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+4. **handoff 갱신** — `handoff.lastIteration`이 방금 끝난 iteration과 일치
+   (`bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update --progress-file {PROGRESS_FILE} --next-steps "..."` —
+   `--iteration`을 생략하면 Ralph frontmatter의 현재 iteration이 자동으로 들어간다)
+5. **결정 기록** — `.claude/acl-decisions.jsonl`에 이번 iteration의 항목이 **1건 이상**.
+   결정이 없었던 iteration이면 `record-decision --none --why "<왜 없었는지>"`로 없었다는 사실을 남긴다
+   (규칙: `rules/shared-rules.md` "결정 기록 (단일 출처)")
+6. 위 조건을 **직전에 확인**한 결과여야 함 (이전 iteration 결과 재사용 금지)
+
+> 4·5는 stop-hook이 promise 발행 시 progress/로그를 직접 읽어 fail-closed로 검사한다
+> (`init`으로 만든 모든 progress 템플릿 — `decisionLog.enabled` — 에 공통). 게이트 스크립트가 아니라
+> 기록 자체를 보므로, 마지막 iteration에서 둘 다 빠뜨리면 완주가 한 번 차단되고 다음 iteration으로 넘어간다.
 
 ### Iteration 규칙 (공통)
 
 - 한 iteration은 명령 문서의 **"Iteration 단위"**에 정의된 범위만 처리
-- 처리 완료 후 진행 상태(`handoff` 필드 포함)를 `{PROGRESS_FILE}`에 저장하고 세션을 자연스럽게 종료
+- 처리 완료 후 `handoff-update`로 진행 상태를 `{PROGRESS_FILE}`에 저장하고, 이번 iteration의 결정을
+  `record-decision`으로 남긴 뒤(없었으면 `--none --why`) 세션을 자연스럽게 종료
+  (promise가 아닌 iteration에서 빠뜨리면 stop-hook이 다음 프롬프트에 리마인더를 붙인다 — 차단은 완주 시점에만)
 - Stop Hook이 완료 조건 미달을 감지하면 자동으로 다음 iteration 시작

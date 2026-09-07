@@ -139,6 +139,24 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
 **필수 옵션**: `--next-steps` (최소 이것만 있어도 동작)
 **선택 옵션**: `--phase`, `--completed`, `--iteration`, `--decision` (복수 가능), `--warnings`, `--approach`
 
+> `handoff-update --decision`은 `keyDecisions`를 **치환**한다(요약 갱신용). 결정을 **기록**하는 경로는
+> `record-decision`이며 이쪽이 단일 출처다 — 이유 검사·append-only 로그·keyDecisions append를 함께 수행한다.
+> 규칙은 shared-rules.md "결정 기록 (단일 출처)" 참조.
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "JWT + refresh token 방식 확정" \
+  --why "세션 스토어 없이 수평 확장해야 하고 만료·갱신 규약이 SPEC에 이미 명시되어 있다" \
+  --alternatives "서버 세션 쿠키" --reversible no --scope planning --source adr
+```
+
+**Iteration 종료 체크리스트:**
+1. `handoff-update --next-steps "..."` 실행 (stop-hook이 `handoff.lastIteration`을 검사 — `--iteration` 생략 시 frontmatter 값 자동)
+2. **결정 기록 확인** — 이번 iteration의 결정을 `record-decision`으로 남겼는가?
+   없었다면 `record-decision --none --why "<왜 없었는지>"` (stop-hook이 iteration당 최소 1건을 요구)
+3. `record-decision --list --iteration N`으로 기록 확인
+
 ## 컨텍스트 관리 (Prompt Too Long 방지)
 
 > 상세 컴팩션 원칙/시점/복구 절차는 shared-rules.md 참조. 아래는 오케스트레이터 추가 트리거:
@@ -159,7 +177,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update \
 > 공통 강제 규칙(1~7)은 shared-rules.md 참조
 
 8. **자체 탐색**: codex 호출 규약은 shared-rules.md "외부 AI 자체 탐색 (codex 호출 시)" 참조
-9. **handoff 필수**: 매 iteration 종료 시 handoff 필드 업데이트
+9. **handoff + 결정 기록 필수**: 매 iteration 종료 시 handoff 필드 업데이트(`--iteration N` 포함) + 이번 iteration의 결정을 `record-decision`으로 기록(결정이 없으면 `--none --why`). 둘 다 stop-hook이 완주 시점에 fail-closed로 검사한다.
 10. **스크립트 우선**: 구조적/기계적 검사는 `shared-gate.sh`로 먼저 실행
 
 ## 포기 방지 규칙 (강제)

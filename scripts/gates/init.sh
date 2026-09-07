@@ -105,6 +105,9 @@ cmd_init() {
     "live_testing": { "checked": false, "evidence": null },
     "launch_ready": { "checked": false, "evidence": null }
   },
+  "decisionLog": {
+    "enabled": true
+  },
   "handoff": {
     "lastIteration": null,
     "currentPhase": "phase_0",
@@ -135,6 +138,9 @@ ENDJSON
     "api_contract": { "checked": false, "evidence": null },
     "error_scenarios": { "checked": false, "evidence": null },
     "no_definition_conflict": { "checked": false, "evidence": null }
+  },
+  "decisionLog": {
+    "enabled": true
   },
   "handoff": {
     "lastIteration": null,
@@ -173,6 +179,9 @@ ENDJSON
   },
   "documentSummaries": {},
   "lastVerifiedAt": null,
+  "decisionLog": {
+    "enabled": true
+  },
   "handoff": {
     "lastIteration": null,
     "completedInThisIteration": "",
@@ -200,6 +209,9 @@ ENDJSON
     "all_rounds_complete": { "checked": false, "evidence": null },
     "build_pass": { "checked": false, "evidence": null },
     "no_critical_high": { "checked": false, "evidence": null }
+  },
+  "decisionLog": {
+    "enabled": true
   },
   "handoff": {
     "lastIteration": null,
@@ -239,6 +251,9 @@ ENDJSON
     "security_review": { "checked": false, "evidence": null },
     "docs_complete": { "checked": false, "evidence": null },
     "final_verification": { "checked": false, "evidence": null }
+  },
+  "decisionLog": {
+    "enabled": true
   },
   "handoff": {
     "lastIteration": null,
@@ -282,6 +297,9 @@ ENDJSON
     "e2e_pass": { "checked": false, "evidence": null },
     "build_pass": { "checked": false, "evidence": null }
   },
+  "decisionLog": {
+    "enabled": true
+  },
   "handoff": {
     "lastIteration": null,
     "completedInThisIteration": "",
@@ -310,6 +328,9 @@ ENDJSON
     "doc_code_check": { "checked": false, "evidence": null },
     "no_definition_conflict": { "checked": false, "evidence": null },
     "semantic_review": { "checked": false, "evidence": null }
+  },
+  "decisionLog": {
+    "enabled": true
   },
   "handoff": {
     "lastIteration": null,

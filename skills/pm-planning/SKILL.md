@@ -75,6 +75,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mappe
    - **repo-fact**(기존 코드로 확인 가능): `Explore`/`general-purpose` 서브에이전트를 포크해 레포에서 자동 확인 — **사용자에게 묻지 않는다** (auto-research).
      - 가드: 한 애매점에 서브에이전트가 3회 연속 "확인됨"을 주장하면 환각 의심 → 사용자 확인으로 라우팅.
    - **safe assumption**(국소·가역·비파괴 기본값): 기본값을 정하고 나중에 SPEC에 `assumption` provenance로 기록.
+     채택한 항목은 **Step 0-0.6의 일괄 확인 대상**이므로 (항목·채택값·근거·가역성)을 그때까지 목록으로 보관한다.
    - **user-fact / blocker**(사용자만 답할 수 있음): 큐에 적재 → 큐가 비지 않으면 **한 번의 AskUserQuestion으로 batch 질의** (N번 왕복 금지).
    - 답변/확인 반영 → `--round`를 1 올려 1로 돌아가 재채점.
 4. **ESCALATED** (exit 0): max-rounds(기본 3) 도달 → 잔여 애매점을 문서에 `[NEEDS-CLARIFICATION: ...]`로 남기고 Step 0-1로 진행. (문서 완료 직전 batch-ask + `clarification-gate`/`provenance-gate`가 최종 fail-closed 차단)
@@ -84,6 +85,52 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh add-dod-key stakeholders_mappe
 - **Medium/Large**: 애매하면 CONTINUE 루프. 단 max-rounds로 무한 인터뷰 차단.
 
 정량 게이트라 **명확한 요구사항엔 자동으로 적게, 애매한 요구사항엔만 더** 작동한다 — 이것이 "명확하게 하고 시작해 시간을 아낀다"의 구현이다. (AskUserQuestion 가용성은 기존 batch-ask 플로우와 동일 — 비대화형 실행에선 ESCALATED 경로로 잔여를 뒤 게이트에 넘긴다.)
+
+---
+
+### Step 0-0.6: assumption 일괄 확인 (착수 전 1회)
+
+**목적**: 모델이 혼자 정한 기본값(safe assumption)을 착수 전에 **한 번에** 사용자에게 보여주고 승인/수정받는다.
+개입 최소 원칙은 "묻지 않는다"가 아니라 **"왕복을 늘리지 않는다"** — 질문은 여기 한 번으로 끝난다.
+Step 0-0.5 루프가 PASS 또는 ESCALATED로 끝난 직후 **반드시** 수행한다.
+
+**1. 표 작성** — Step 0-0.5에서 채택한 모든 safe assumption을 모은다.
+
+| # | 항목 | 채택값 | 근거 | 가역성 |
+|---|------|--------|------|--------|
+| 1 | 세션 유지 방식 | JWT (15분) + refresh | 수평 확장 요구가 있고 세션 스토어 도입 계획 없음 | 되돌리기 비쌈 |
+| 2 | 목록 페이지 크기 | 20건 | 일반적 기본값, 화면 하나만 영향 | 가역 |
+
+**2. AskUserQuestion 1회** — 표 전체를 보여주고 다음 중 하나를 받는다:
+- **전체 승인**: 표 그대로 진행
+- **개별 수정**: Other로 "N번은 X로" 형태의 수정 지시를 받는다 (여러 항목 동시 수정 가능)
+
+**3. 반영**
+- 승인된 항목 → SPEC 작성 시 `<!-- provenance: user-fact -->`로 **승격**한다 (더 이상 assumption이 아니다).
+- 수정된 항목 → 사용자 답변으로 값을 교체하고 역시 `user-fact`로 기록한다.
+- 각 항목마다 결정을 기록한다:
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+    --what "세션 유지 방식을 JWT(15분) + refresh token으로 확정" \
+    --why "수평 확장 요구가 있고 세션 스토어 도입 계획이 없어 사용자 확인에서 그대로 승인됨" \
+    --alternatives "서버 세션 쿠키" --reversible no \
+    --scope interview --source provenance
+  ```
+
+**4. 결과 기록 (필수)**
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh assumption-review \
+  --progress-file {PROGRESS_FILE} --status confirmed --count 2
+```
+
+| 상황 | status | 처리 |
+|------|--------|------|
+| assumption이 1건 이상, 사용자 확인 완료 | `confirmed` | 승인/수정 결과를 반영 후 진행 |
+| assumption이 0건 | `none` | **묻지 않는다.** `--count 0`으로 기록만 하고 진행 |
+| 비대화형 실행 (AskUserQuestion 불가) | `escalated` | assumption 마커를 그대로 둔 채 진행 — Phase 1의 provenance-gate·clarification-gate가 최종 차단한다 |
+
+**stop-hook이 `assumptionReview.status`를 fail-closed로 요구한다** (full-auto·plan-docs-full).
+키가 없으면 = 이 단계를 통째로 건너뛴 것으로 간주하고 완주를 차단한다.
 
 ---
 
@@ -174,6 +221,19 @@ Won't 항목은 Non-Goals로 이동.
 **건수 하한은 없다.** 기존 스택을 그대로 쓰거나 대안 검토 없이 자명하게 결정된 프로젝트라면 ADR을
 생략해도 된다 (검사하는 게이트도 없다) — 근거 없는 ADR을 채워 넣는 것이 문서 우선순위 1위 자리를
 차지하는 편이 더 해롭다. Phase 1 토론에서 새 아키텍처 합의가 나오면 그때 추가한다.
+
+**ADR을 작성했다면 결정 로그에도 미러링한다 (필수)** — ADR 파일은 "구조를 설명"하고, 결정 로그는
+"언제 무엇을 왜 정했는지"를 iteration 단위로 추적한다. 둘 다 필요하다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --what "docs/adr/001-persistence.md: 영속화를 PostgreSQL + Prisma로 결정" \
+  --why "관계형 제약이 도메인에 강하게 존재하고 마이그레이션 도구가 팀 표준에 이미 있다" \
+  --alternatives "MongoDB(스키마 유연성은 불필요)" --reversible no \
+  --scope planning --source adr
+```
+
+`--what`에는 **ADR 경로를 포함**해 로그에서 원문으로 바로 이동할 수 있게 한다.
 
 ---
 

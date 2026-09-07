@@ -208,6 +208,19 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 - 사용자가 결정 (수용/거부/수정) 후 진행
 - 상한을 이유로 Critical을 미해결로 넘기지 않는다
 
+**토론에서 새 아키텍처 결정이 나오면 ADR + 결정 로그 둘 다 남긴다 (필수)**:
+토론 라운드에서 프레임워크·영속화·인증·통신 방식 등 **되돌리기 비싼 구조 결정**이 새로 합의되면,
+`docs/adr/NNN-<slug>.md`를 추가하고(형식은 pm-planning "6.5 ADR 기록") 같은 결정을 로그에도 기록한다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "docs/adr/003-api-style.md: 외부 API를 REST로 확정(GraphQL 기각)" \
+  --why "클라이언트가 하나이고 캐싱·CDN 전제가 REST에 맞으며 스키마 서버 운영 비용을 감당할 계획이 없다" \
+  --alternatives "GraphQL(오버페치 해소 이점보다 운영 비용이 큼)" --reversible no \
+  --scope planning --source adr
+```
+
 #### 기획 수준 원칙 / 문서 품질 체크리스트 / 검토 기준 / 피드백 우선순위
 
 > 공통 기획 규칙은 아래 파일을 **Step 1-2 진입 시 1회만** Read하여 적용합니다.
@@ -483,6 +496,26 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh clarification-gate docs/
 
 - PASS → Phase 2 전이 가능
 - HARD_FAIL → 잔존 태그를 사용자에게 AskUserQuestion으로 질의하여 모두 해소. 해소 전 Phase 2 진입 금지.
+
+**batch-ask 통합 (필수)**: 이 시점의 질의는 **한 번의 AskUserQuestion**으로 다음 두 종류를 함께 묻는다.
+질문을 두 번 나누면 사용자 왕복이 두 배가 되고, 답이 서로를 바꿀 수 있는 항목이 따로 결정된다.
+
+1. 잔존 `[NEEDS-CLARIFICATION: ...]` 태그 (기존)
+2. **Phase 1 문서 작성 중 새로 추가된 `assumption` 마커** — Step 0-0.6의 착수 전 일괄 확인 이후에
+   생긴 것들. 항목·채택값·근거·가역성 표로 제시하고 전체 승인 또는 개별 수정(Other)을 받는다.
+
+답변 반영:
+- 태그 → 답변 내용으로 본문 교체 + 마커를 `user-fact`로 변경
+- assumption → 승인이면 마커를 `user-fact`로 승격, 수정이면 값을 교체하고 `user-fact`로 기록
+- **각 해소 항목마다 결정을 기록한다**:
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+    --progress-file {PROGRESS_FILE} \
+    --what "SPEC 첨부파일 최대 크기를 10MB로 확정" \
+    --why "사용자가 batch-ask에서 '사내 메일 첨부 상한과 동일하게'라고 답해 근거가 확정됐다" \
+    --reversible yes --scope planning --source clarification
+  ```
+- 반영 후 **`provenance-gate`를 재실행**하고(마커가 바뀌었으므로) 이어서 clarification-gate를 재실행한다.
 
 ### Step 1-10: Phase 1 완료
 

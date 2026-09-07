@@ -176,6 +176,9 @@ finding 없으면 "NO_FINDINGS".
    - 팀원간 severity 의견 불일치 → **높은 쪽 채택** (과소평가 방지)
    - live-tester가 발견한 런타임 버그 → 최소 HIGH
    - 리드가 CRITICAL/HIGH를 MEDIUM/LOW로 **강등**할 때는 구체적 사유를 `roundResults.severityAdjustments`에 기록 필수 (사유 없으면 보고 severity 유지). 강등된 finding은 그 라운드의 수렴 판정에서 원 severity로 취급.
+   - **강등·deferred 처분은 결정 로그에도 남긴다 (필수)** — 강등은 항목당 1건, deferred는 라운드당 1건.
+     호출 형식은 `templates/review-perspectives.md`의 "결정 기록 (리뷰 처분)" 절을 따른다
+     (`record-decision ... --scope review --source severity`).
 4. **수정**:
    - Critical/High: 즉시 수정 (라운드 무관, 스킵 금지)
    - Medium: **라운드 1~2에서만** 즉시 수정. 라운드 3+에서는 수정하지 않고 `deferred`로 기록 (사유 필수)

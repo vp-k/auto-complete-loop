@@ -60,6 +60,16 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
 구현 중 SPEC/설계 문서에 없는 **동작 결정**(새 엔드포인트, 스키마 필드, UX 흐름, 외부 서비스 연동 등)이 필요해지면 **임의로 구현하지 않는다**. 반드시 다음 중 하나로 처리:
 
 - **(a) 자유 구현 허용 범위**: 사소하고 스펙과 모순 없는 구현 세부(변수명, 내부 구조, private 헬퍼 분리 등)는 자유롭게 결정. 단, **"동작 계약"에 영향을 주는 것(API 응답 형태, 저장 스키마, 사용자 가시 동작, 외부 연동)은 전부 (b) 또는 (c)로** 처리한다.
+  자유 구현이라도 **되돌리기 비싼 것은 기록한다** — 판정 기준은 하나다: **다른 US가 이것에 의존하게 되는가?**
+  (공용 유틸·상태 관리 방식·에러 처리 규약·디렉토리 경계·공유 타입 정의 등) 예 → 기록, 아니오 → 기록 불필요.
+  ```bash
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+    --progress-file {PROGRESS_FILE} \
+    --what "서버 상태를 TanStack Query로, 클라이언트 상태를 Zustand로 분리" \
+    --why "US-B-004 이후 모든 화면이 이 규약 위에 작성되므로 나중에 바꾸면 전 화면을 고쳐야 한다" \
+    --alternatives "Redux Toolkit 단일화(보일러플레이트 과다)" --reversible no \
+    --scope implementation --source inline
+  ```
 - **(b) 보류 + 태깅**: `docs/CLARIFICATIONS.md`(없으면 생성)에 항목을 **append**하고, 해당 US 구현을 보류한 뒤 다른 태스크를 진행한다. 형식:
   ```markdown
   ## US-B-003
@@ -68,6 +78,17 @@ progress 파일의 `phases.phase_0.outputs.projectScope`를 읽어 레이어별 
   ```
   **SPEC.md·overview.md·docs/specs/·docs/plans/에 쓰지 않는다** — 구현 Phase에서 이 파일들은 protect-files-guard가 차단하고(동결된 SPEC 해시 보호), 태그를 넣으려다 훅에 막혀 질문이 통째로 사라지는 것이 실제 실패 모드였다. `docs/CLARIFICATIONS.md`는 보호 대상이 아니므로 차단 없이 기록된다. clarification-gate는 Phase 1→2 전이에서 한 번 실행되고 Phase 2 이후에는 자동 실행되지 않으므로, Phase 4 Step 4-6.6이 이 게이트를 **재실행**해 `docs/` 아래 `*.md`의 잔존 태그를 다시 잡는다(재기록 → stop-hook fail-closed). 그래서 Phase 2에 남긴 질문도 완주를 차단한다 — 조용히 묻히지 않는다.
 - **(c) 즉시 질의**: 즉답이 필요하면 AskUserQuestion으로 사용자에게 질문한다. 결정되면 **스펙 문서에 먼저 반영한 후** 구현한다 (스펙이 항상 코드보다 먼저 갱신된다). SPEC.md는 동결 후 protect-files-guard가 차단하므로 반영은 Step 2-1.10의 unlock 절차(`acceptance-unlock --approved-by-user` → 수정 → `acceptance-freeze --approved-by-user`)로만 한다. 이 사용자 답변이 그 절차의 승인이다. (b)로 보류했던 항목을 해소할 때는 `docs/CLARIFICATIONS.md`의 해당 태그를 결정 내용으로 **교체**한다.
+
+**(b)·(c)가 해소되면 결정 로그에도 기록한다 (필수)** — `docs/CLARIFICATIONS.md`는 "무엇을 물었나"를 추적하고,
+결정 로그는 "무엇으로 확정했고 왜인가"를 iteration 단위로 남긴다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "리프레시 토큰 만료 후에는 재로그인으로 보내고 자동 갱신하지 않기로 확정 (US-B-003)" \
+  --why "사용자가 만료를 보안 경계로 쓰겠다고 답했고 SPEC AC-B-003-2를 그에 맞춰 갱신했다" \
+  --reversible no --scope implementation --source clarification
+```
 
 **디자인 값도 동작 계약이다 (hasFrontend=true)**: 색상·간격·모서리·폰트·그림자·상태 표현(빈/로딩/에러/disabled/focus)은
 사용자에게 보이는 결정이므로 위 (a)의 "자유 구현 세부"가 **아니다**. `docs/DESIGN.md`에 있는 값만 사용하고,
@@ -120,6 +141,21 @@ Claude가 직접 최적의 구조 설계:
 3. 설정 파일 구성
 4. 프로젝트 스캐폴딩 생성
 
+**기술 스택 세부 결정은 결정 로그에 남긴다 (필수)** — 여기서 고른 라이브러리·버전은 이후 모든 US가
+그 위에 얹히므로 사실상 되돌릴 수 없다. SPEC이 "무엇을"만 정하고 "무엇으로"는 이 단계가 정하기 때문에,
+기록하지 않으면 왜 그 라이브러리인지 아무 곳에도 남지 않는다. 항목별로 1건씩:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "ORM을 Prisma 5.x로, 마이그레이션을 prisma migrate로 고정" \
+  --why "SPEC의 관계형 제약이 강하고 타입 생성이 TS 계약 검증과 직결되며 팀 표준에 이미 존재한다" \
+  --alternatives "Drizzle(마이그레이션 성숙도 부족)" --reversible no \
+  --scope implementation --source inline
+```
+
+아래 `context.architecture`는 **요약 스냅샷**이고, 결정 로그는 **이유가 붙은 이력**이다. 둘 다 남긴다.
+
 progress 파일에 아키텍처 맥락 저장 (크래시 복구용):
 ```json
 "context": {
@@ -159,6 +195,21 @@ Read ${CLAUDE_PLUGIN_ROOT}/skills/e2e-setup/SKILL.md
 2. 데이터 전략 결정 (real-server vs mock-server)
 3. 플랫폼별 환경 검증 (에뮬레이터, 브라우저 등)
    - 환경 미충족 시: 스킬의 폴백 전략 적용
+
+**데이터 전략은 결정 로그에 남긴다 (필수)** — real-server/mock-server 선택은 이후 작성될 모든 E2E
+시나리오의 형태를 결정하고, 폴백으로 강등된 경우 "왜 진짜 서버를 못 썼는지"가 남지 않으면
+나중에 그 시나리오들의 신뢰도를 판단할 수 없다:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --progress-file {PROGRESS_FILE} \
+  --what "E2E 데이터 전략을 mock-server(MSW)로 결정" \
+  --why "결제 게이트웨이 샌드박스 자격증명이 없어 real-server로는 US-B-007 시나리오를 완주할 수 없다" \
+  --alternatives "real-server(외부 의존으로 비결정적)" --reversible yes \
+  --scope implementation --source inline
+```
+
+`fallbackReason`에 폴백 사유를 적었다면 같은 사유를 `--why`에 그대로 쓴다.
 
 #### SPEC.md에서 E2E 시나리오 도출
 

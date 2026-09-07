@@ -6,6 +6,7 @@
 #   3) verification-write-guard : .claude-verification.json Bash 경유 쓰기 차단
 #   4) ralph-write-guard : .claude/ralph-loop.local.md Bash 경유 수정/삭제 차단
 #   5) unlock-token-guard : .claude/acceptance-unlock.json Bash 경유 생성/수정 차단
+#   6) decision-log-guard : .claude/acl-decisions.jsonl Bash 경유 쓰기/삭제 차단
 # 첫 block에서 즉시 종료.
 #
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
@@ -281,12 +282,23 @@ check_unlock_token_write() {
   _check_file_write 'acceptance-unlock.json' 'acceptance-unlock\.json' "$UNLOCK_BLOCK_MSG"
 }
 
+# ─── 검사 6: 결정 로그 보호 (이유 없는 결정 세탁 방지) ───
+# stop-hook 은 완주 시 이번 iteration 의 결정 기록이 로그에 있는지를 fail-closed 로 본다.
+# record-decision 은 --why 가 없으면 거부하지만, echo/jq 리다이렉트로 한 줄을 손수 붙이면 그 검사가
+# 비어 버린다. 쓰기는 record-decision 만, 조회는 record-decision --list(또는 cat/jq 읽기)로 한다.
+DECISION_BLOCK_MSG='acl-decisions.jsonl은 결정 로그 — 직접 쓰기/수정/삭제 금지. 기록은 shared-gate.sh record-decision --what "<결정>" --why "<이유>" 로만 한다(이유 없으면 거부). 읽기(cat/jq 조회, record-decision --list)는 허용.'
+
+check_decision_log_write() {
+  _check_file_write 'acl-decisions.jsonl' 'acl-decisions\.jsonl' "$DECISION_BLOCK_MSG"
+}
+
 # ─── 순차 실행 (기존 hooks.json 등록 순서와 동일) ───
 check_no_verify
 check_commit_msg
 check_verification_write
 check_ralph_write
 check_unlock_token_write
+check_decision_log_write
 
 # 전 검사 통과 → 무출력 (권한 판정 유보)
 exit 0

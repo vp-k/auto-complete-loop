@@ -113,3 +113,30 @@ run_guard() {
 @test "unlock-token: shared-gate.sh acceptance-unlock 호출은 통과 (파일명 미지명)" {
   [ "$(run_guard 'bash scripts/shared-gate.sh acceptance-unlock --approved-by-user --reason "AC-B-001 오탈자"')" = "PASS" ]
 }
+
+# ─── 검사 6: 결정 로그 보호 (이유 없는 결정 세탁 방지) ───
+
+@test "decision-log: echo >> 로 로그에 한 줄 붙이기 차단" {
+  [ "$(run_guard 'echo "{\"iteration\":3,\"kind\":\"none\"}" >> .claude/acl-decisions.jsonl')" = "BLOCK" ]
+}
+
+@test "decision-log: jq -c 리다이렉트로 로그 생성 차단" {
+  [ "$(run_guard "jq -cn '{iteration:3,kind:\"decision\"}' > .claude/acl-decisions.jsonl")" = "BLOCK" ]
+}
+
+@test "decision-log: sed -i 로 iteration 값 고치기 차단" {
+  [ "$(run_guard "sed -i 's/\"iteration\":2/\"iteration\":3/' .claude/acl-decisions.jsonl")" = "BLOCK" ]
+}
+
+@test "decision-log: rm 으로 로그 삭제 차단 (append-only)" {
+  [ "$(run_guard 'rm -f .claude/acl-decisions.jsonl')" = "BLOCK" ]
+}
+
+@test "decision-log: cat / jq 읽기는 통과" {
+  [ "$(run_guard 'cat .claude/acl-decisions.jsonl')" = "PASS" ]
+  [ "$(run_guard "jq -s 'length' .claude/acl-decisions.jsonl")" = "PASS" ]
+}
+
+@test "decision-log: shared-gate.sh record-decision 호출은 통과 (파일명 미지명)" {
+  [ "$(run_guard 'bash scripts/shared-gate.sh record-decision --what "JWT 확정" --why "세션 스토어 없이 수평 확장해야 한다"')" = "PASS" ]
+}

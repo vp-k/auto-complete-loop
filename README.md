@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.22.0**
+**v4.23.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -322,6 +322,17 @@ Two extraction bugs are fixed alongside: the completion **LESSON** now reads sco
 `phases.phase_2.scopeReductions` (objects, rendered as `feature → reduced (reason) [ticket]`) and
 warnings as a string or array — previously both silently produced empty lines — and `session-start`
 picks the run id from the **most recently updated** progress file instead of the first glob match.
+
+### Portable Report-Writing Rules (v4.23.0)
+
+Reports that pack a dozen changes into one sentence are unreadable, and a rule that lives only in
+one machine's `~/.claude/CLAUDE.md` does not travel. `rules/report-writing-rules.md` is the single
+source for the report format (conclusion first, a change table, a numbers table, what is left) and
+seven hard rules (one idea per sentence, expand a term on first use, no `file:line` or option names
+in prose, numbers go in tables, no clauses chained by dashes or arrows). The `session-start` hook
+injects the file verbatim on every session start — fresh, resume, clear, and compact — on any
+machine where the plugin is enabled, so the same format applies to progress reports, handoff
+summaries, and commit-message bodies without per-machine setup. Edit the rules only in that file.
 
 ### Quality Gates
 

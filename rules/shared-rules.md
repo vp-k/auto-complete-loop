@@ -44,6 +44,7 @@ DoD의 단일 출처는 **progress 파일의 `dod` 체크리스트**입니다 (`
 | 프로젝트 규모 판정(Small/Medium/Large)과 규모별 활성화 항목 | 규모를 판정(pm-planning Step 0-1)하거나 규모 분기를 적용(doc-planning·phase-transition)하기 직전 → `Read ${CLAUDE_PLUGIN_ROOT}/rules/project-size-rules.md` |
 | Phase 전이 조건·DoD evidence | full-auto 오케스트레이터가 시작 시 Read (`full-auto.md` "규칙 로드") |
 | 오케스트레이터 전용 규칙(복구 감지, handoff-update, 컴팩션 트리거) | full-auto 오케스트레이터가 시작 시 Read (`full-auto.md` "규칙 로드"; plan-docs-full은 읽지 않는다) |
+| 보고 작성 규칙(결론 먼저, 한 문장 한 뜻, 용어 풀이, 표 칸 한 줄, 숫자는 표) — 보고·설명·handoff 요약·커밋 메시지 본문에 적용 | 세션 시작 시 `hooks/session-start.sh`가 `rules/report-writing-rules.md` 본문을 자동 주입한다. 별도 Read 불필요. 규칙 변경은 그 파일에서만 |
 
 ## 의존성 관리 (패키지 설치)
 

@@ -53,6 +53,35 @@ if [[ -f "$LEARNINGS_FILE" ]] && grep -q '^## LESSON |' "$LEARNINGS_FILE" 2>/dev
   fi
 fi
 
+# ─── 보고 작성 규칙 주입 (rules/report-writing-rules.md 단일 출처) ───
+# 사용자 CLAUDE.md는 PC마다 다르므로, 플러그인이 설치된 모든 환경에서 같은 보고 양식이
+# 적용되도록 세션 시작마다 규칙 파일 본문을 그대로 주입한다. 파일이 없으면 주입하지 않는다.
+REPORT_RULES_FILE="${PLUGIN_ROOT}/rules/report-writing-rules.md"
+REPORT_RULES_SECTION=""
+if [[ -f "$REPORT_RULES_FILE" ]]; then
+  REPORT_RULES_SECTION=$(printf '[Report Rules] 아래 보고 작성 규칙을 모든 보고·설명·커밋 메시지에 적용한다 (단일 출처: rules/report-writing-rules.md).\n\n%s' \
+    "$(cat "$REPORT_RULES_FILE")")
+fi
+
+# SessionStart 컨텍스트 단일 출력 함수 — 본문에 보고 규칙을 항상 덧붙인다.
+# jq가 없으면 JSON을 안전하게 만들 수 없으므로 출력하지 않는다 (훅은 exit 0 유지).
+emit_session_context() {
+  local _body="${1:-}" _ctx=""
+  if [[ -n "$_body" ]] && [[ -n "$REPORT_RULES_SECTION" ]]; then
+    _ctx=$(printf '%s\n\n%s' "$_body" "$REPORT_RULES_SECTION")
+  else
+    _ctx="${_body}${REPORT_RULES_SECTION}"
+  fi
+  [[ -n "$_ctx" ]] || return 0
+  command -v jq &>/dev/null || return 0
+  jq -n --arg ctx "$_ctx" '{
+    "hookSpecificOutput": {
+      "hookEventName": "SessionStart",
+      "additionalContext": $ctx
+    }
+  }'
+}
+
 # ─── 교차 실행 반복 감지 (acl-events.jsonl 소비) ───
 # acl-learnings/LESSON과 달리 events는 성공 시에도 유지(append-only)되므로,
 # stop-hook의 stuck-pattern(성공 시 failure-history가 초기화되어 교차 실행을 놓침)이
@@ -184,14 +213,8 @@ if [[ -z "$PROGRESS_FILE" ]]; then
       CTX_MSG="$LESSONS_SECTION"
     fi
   fi
-  if [[ -n "$CTX_MSG" ]]; then
-    jq -n --arg ctx "$CTX_MSG" '{
-      "hookSpecificOutput": {
-        "hookEventName": "SessionStart",
-        "additionalContext": $ctx
-      }
-    }'
-  fi
+  # 문서 힌트·LESSON이 없어도 보고 규칙은 항상 주입된다.
+  emit_session_context "$CTX_MSG"
   exit 0
 fi
 
@@ -225,15 +248,8 @@ if [[ ! -f "$PROGRESS_FILE" ]]; then
   if [[ "$HAS_ACTIVE" -eq 0 ]]; then
     rm -f ".claude-verification.json"
   fi
-  # 복구할 진행 건은 없지만 LESSON이 있으면 실행 조건으로 주입
-  if [[ -n "$LESSONS_SECTION" ]]; then
-    jq -n --arg ctx "$LESSONS_SECTION" '{
-      "hookSpecificOutput": {
-        "hookEventName": "SessionStart",
-        "additionalContext": $ctx
-      }
-    }'
-  fi
+  # 복구할 진행 건은 없지만 LESSON이 있으면 실행 조건으로 주입 (+ 보고 규칙)
+  emit_session_context "$LESSONS_SECTION"
   exit 0
 fi
 
@@ -246,6 +262,7 @@ fi
 rm -f "$RECOVER_STDERR"
 
 if [[ -z "$RECOVER_OUTPUT" ]]; then
+  emit_session_context ""
   exit 0
 fi
 
@@ -273,10 +290,5 @@ if [[ -n "$LESSONS_SECTION" ]]; then
   FULL_CONTEXT=$(printf '%s\n\n%s' "$FULL_CONTEXT" "$LESSONS_SECTION")
 fi
 
-# jq로 안전하게 JSON 생성 (모든 특수문자 자동 이스케이프)
-jq -n --arg ctx "$FULL_CONTEXT" '{
-  "hookSpecificOutput": {
-    "hookEventName": "SessionStart",
-    "additionalContext": $ctx
-  }
-}'
+# jq로 안전하게 JSON 생성 (모든 특수문자 자동 이스케이프) + 보고 규칙 덧붙임
+emit_session_context "$FULL_CONTEXT"

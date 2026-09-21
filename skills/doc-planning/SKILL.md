@@ -177,7 +177,7 @@ progress 파일의 `phases.phase_1.documents`에 문서 목록 등록:
 
 7. **문서 완료 처리**
    - progress 업데이트: 해당 문서 `status` -> `completed`, `round` 삭제
-   - `/compact` 실행 (다음 문서 시작 전 컨텍스트 정리)
+   - stop-hook 컨텍스트 사용률 리마인더를 받았다면 handoff/결정 기록을 마감하고 사용자에게 `/compact`를 권고 (모델은 `/compact`를 직접 실행할 수 없다. 트리거 기준은 orchestration-rules "컨텍스트 관리" 참조)
 
 8. 다음 문서로 자동 진행 (목록 끝까지 반복)
 

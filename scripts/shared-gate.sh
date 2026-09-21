@@ -19,6 +19,7 @@
 #   gates/design.sh   — 디자인 폴리시(WCAG), 페이지 렌더링
 #   gates/acceptance.sh — 인수 테스트 선작성+동결(freeze) + 실행 게이트
 #   gates/decisions.sh  — 결정 기록 단일 출처(record-decision) + assumption 일괄 확인 기록
+#   gates/context.sh    — 컨텍스트 창 브리지 설정(statusline-setup): stop-hook 사용률 계측의 분모 공급
 #
 # 서브커맨드:
 #   init [--template <type>] [project] [requirement]  - progress JSON 초기화
@@ -65,6 +66,7 @@
 #   record-decision --list [--iteration N] [--last N] [--all] - 결정 로그 조회 (기본: 이번 run만)
 #   assumption-review --status <s> --count <N>         - assumption 일괄 확인 결과 기록
 #                                                        (confirmed는 --count를 scope=interview 결정 기록 수와 대조)
+#   statusline-setup [--apply|--remove] [--settings <path>] - statusLine 브리지 등록 (컨텍스트 창 크기를 세션 파일로 기록 → stop-hook 사용률 계측)
 
 set -euo pipefail
 
@@ -157,6 +159,7 @@ main() {
     handoff-update)    cmd_handoff_update "$@" ;;
     record-decision)   cmd_record_decision "$@" ;;
     assumption-review) cmd_assumption_review "$@" ;;
+    statusline-setup)  cmd_statusline_setup "$@" ;;
     help|--help|-h)
       echo "Usage: shared-gate.sh <subcommand> [--progress-file <path>] [args]"
       echo ""
@@ -256,6 +259,11 @@ main() {
       echo "                                            - confirmed cross-checks --count against scope=interview decisions"
       echo "                                             - Record the pre-start assumption bulk review into progress.assumptionReview"
       echo "                                               (stop-hook requires this key in full-auto / plan-docs-full)"
+      echo "  statusline-setup [--apply|--remove] [--settings <path>]"
+      echo "                                             - Register hooks/statusline-bridge.sh as the Claude Code statusLine"
+      echo "                                               (prints the snippet; --apply merges it, preserving any existing command in chain.json)"
+      echo "                                               The bridge records context_window_size per session; stop-hook uses it as the"
+      echo "                                               denominator for the context-usage reminder (ACL_COMPACT_THRESHOLD_PCT, default 60)."
       echo ""
       echo "Global options:"
       echo "  --progress-file <path>  Specify progress file (auto-detected if omitted)"

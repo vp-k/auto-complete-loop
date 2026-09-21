@@ -12,6 +12,8 @@
 #    c. dod 체크리스트가 모두 checked 확인 (비어있지 않아야 함)
 #    d. 모든 조건 충족 시에만 종료, 아니면 루프 계속
 # 5. 조건 미충족 시 iteration 증가 후 루프 계속
+# 6. 컨텍스트 사용률 계측 (v4.24.0): 트랜스크립트 usage / 창 크기(statusline 브리지 > ACL_CONTEXT_WINDOW > 200K)
+#    임계(ACL_COMPACT_THRESHOLD_PCT, 기본 60) 이상이면 다음 프롬프트에 마감 리마인더를 덧붙인다 (비차단)
 
 set -euo pipefail
 
@@ -235,6 +237,53 @@ if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -f "$TRANSCRIPT_PATH" ]]; then
       end
     ' 2>/dev/null || true)
   fi
+fi
+
+# ─── 컨텍스트 사용률 계측 (v4.24.0, 관측 + 비차단 리마인더) ───
+# 분자: 트랜스크립트 마지막 assistant 메시지의 usage (input + cache_read + cache_creation
+#       = 그 요청 시점의 컨텍스트 점유량). 훅 입력에는 이 값이 없어 트랜스크립트에서 직접 읽는다.
+# 분모(창 크기) 우선순위: statusline 브리지 파일(실측) > ACL_CONTEXT_WINDOW(수동) > 200000(안전 기본값).
+#   훅은 창 크기를 알 길이 없다(Stop 입력에 model/context 필드 없음). statusLine 명령만 받으므로
+#   hooks/statusline-bridge.sh 가 세션별 파일로 옮겨 놓는다. 브리지가 없으면 200K 로 보수적으로 계산해
+#   1M 세션에서는 일찍 울린다 — 거짓 침묵보다 이른 경고가 낫다 (fail-safe).
+# 임계: ACL_COMPACT_THRESHOLD_PCT (1..100, 기본 60). 임계 이상이면 다음 프롬프트에 마감 리마인더를 덧붙인다.
+#   모델은 /compact 를 직접 실행할 수 없다. 리마인더의 목적은 자동 컴팩션 전에 handoff·결정 기록을
+#   끝내고 큰 단계를 새로 시작하지 않게 하는 것이다.
+CONTEXT_USED_TOKENS=0
+CONTEXT_WINDOW=200000
+CONTEXT_WINDOW_SOURCE="default"
+CONTEXT_PCT=0
+CONTEXT_THRESHOLD="${ACL_COMPACT_THRESHOLD_PCT:-60}"
+if ! [[ "$CONTEXT_THRESHOLD" =~ ^[0-9]+$ ]] || [[ "$CONTEXT_THRESHOLD" -lt 1 ]] || [[ "$CONTEXT_THRESHOLD" -gt 100 ]]; then
+  CONTEXT_THRESHOLD=60
+fi
+if [[ -n "${LAST_ASSISTANT_LINE:-}" ]]; then
+  CONTEXT_USED_TOKENS=$(printf '%s' "$LAST_ASSISTANT_LINE" | jq -r '
+    (.message.usage // {})
+    | ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))
+    | if type == "number" then floor else 0 end
+  ' 2>/dev/null || echo 0)
+  [[ "$CONTEXT_USED_TOKENS" =~ ^[0-9]+$ ]] || CONTEXT_USED_TOKENS=0
+fi
+if [[ "$CONTEXT_USED_TOKENS" -gt 0 ]]; then
+  _ctx_session=$(printf '%s' "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
+  _ctx_dir="${ACL_CONTEXT_DIR:-${CLAUDE_CONFIG_DIR:-${HOME:-.}/.claude}/acl-context}"
+  _ctx_bridge=""
+  if [[ -n "$_ctx_session" ]] && [[ "$_ctx_session" =~ ^[A-Za-z0-9_-]+$ ]] && [[ -f "$_ctx_dir/${_ctx_session}.json" ]]; then
+    _ctx_bridge=$(jq -r '.context_window_size // empty' "$_ctx_dir/${_ctx_session}.json" 2>/dev/null || true)
+  fi
+  if [[ "$_ctx_bridge" =~ ^[0-9]+$ ]] && [[ "$_ctx_bridge" -gt 0 ]]; then
+    CONTEXT_WINDOW="$_ctx_bridge"
+    CONTEXT_WINDOW_SOURCE="bridge"
+  elif [[ "${ACL_CONTEXT_WINDOW:-}" =~ ^[0-9]+$ ]] && [[ "${ACL_CONTEXT_WINDOW}" -gt 0 ]]; then
+    CONTEXT_WINDOW="$ACL_CONTEXT_WINDOW"
+    CONTEXT_WINDOW_SOURCE="env"
+  fi
+  CONTEXT_PCT=$(( CONTEXT_USED_TOKENS * 100 / CONTEXT_WINDOW ))
+  log_event "context.usage" "$(jq -cn \
+    --argjson it "$ITERATION" --argjson used "$CONTEXT_USED_TOKENS" --argjson win "$CONTEXT_WINDOW" \
+    --arg src "$CONTEXT_WINDOW_SOURCE" --argjson pct "$CONTEXT_PCT" --argjson th "$CONTEXT_THRESHOLD" \
+    '{iteration: $it, usedTokens: $used, window: $win, windowSource: $src, pct: $pct, threshold: $th, reminder: ($pct >= $th)}' 2>/dev/null || echo '{}')" || true
 fi
 
 # 완료 Promise 검사
@@ -868,6 +917,20 @@ if [[ -n "$_reminder_pf" ]]; then
       PROMPT_TEXT="${PROMPT_TEXT}"$'\n\n'"⚠️ 직전 iteration(${ITERATION}) 마감 누락 — 완주 검증에서 차단되는 항목이다. 지금 처리하라:${_rm_notes}"
     fi
   fi
+fi
+
+# ─── 컨텍스트 사용률 리마인더 (v4.24.0, 비차단) ───
+# 계측 블록(위)이 임계 이상으로 판정하면 다음 프롬프트에 마감 안내를 덧붙인다.
+# 차단하지 않는다: 여기서 block 하면 루프가 진행되지 않는다. 컴팩션 자체는 Claude Code 가 자동 수행한다.
+if [[ "$CONTEXT_USED_TOKENS" -gt 0 ]] && [[ "$CONTEXT_PCT" -ge "$CONTEXT_THRESHOLD" ]]; then
+  _ctx_note="📉 컨텍스트 사용률 ${CONTEXT_PCT}% (임계 ${CONTEXT_THRESHOLD}%, 사용 ${CONTEXT_USED_TOKENS} / 창 ${CONTEXT_WINDOW}, 창 출처: ${CONTEXT_WINDOW_SOURCE}). 자동 컴팩션이 임박했다. 모델은 /compact 를 직접 실행할 수 없으므로 컴팩션 전에 마감을 끝내라:"
+  _ctx_note="${_ctx_note}"$'\n'"- 지금 진행 중인 논리 단위(문서 1개·US 1개·게이트 1회)만 마무리하고, 새 대규모 단계를 시작하지 말 것"
+  _ctx_note="${_ctx_note}"$'\n'"- handoff-update --next-steps \"<다음 단계>\" 와 record-decision 을 지금 실행할 것 (PreCompact 훅은 progress 파일을 읽어 요약을 만든다)"
+  _ctx_note="${_ctx_note}"$'\n'"- 응답 끝에 사용자에게 /compact 실행을 권고하는 한 줄을 남길 것"
+  if [[ "$CONTEXT_WINDOW_SOURCE" == "default" ]]; then
+    _ctx_note="${_ctx_note}"$'\n'"- (창 크기 미측정 — 200K 로 가정했다. 1M 모델이면 statusline 브리지를 켜라: bash \${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh statusline-setup --apply)"
+  fi
+  PROMPT_TEXT="${PROMPT_TEXT}"$'\n\n'"${_ctx_note}"
 fi
 
 # iteration 업데이트

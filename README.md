@@ -334,9 +334,52 @@ injects the file verbatim on every session start — fresh, resume, clear, and c
 machine where the plugin is enabled, so the same format applies to progress reports, handoff
 summaries, and commit-message bodies without per-machine setup. Edit the rules only in that file.
 
+### Context-Usage Reminder + Statusline Bridge (v4.24.0)
+
+The old compaction trigger was a turn count ("12 turns in one phase → `/compact`"), which the
+model had to count by hand and which said nothing about how full the window actually was. The
+stop-hook now measures it: every iteration it reads the last assistant message's `usage`
+(input + cache_read + cache_creation ≈ current context occupancy) from the transcript, divides it
+by the window size, and logs a `context.usage` event (`usedTokens`, `window`, `windowSource`,
+`pct`, `threshold`, `reminder`). At or above the threshold (`ACL_COMPACT_THRESHOLD_PCT`,
+default 60) it appends a **non-blocking** reminder to the next prompt: finish the current logical
+unit, run `handoff-update` + `record-decision` now, do not start a large step, and tell the user to
+run `/compact`. The model cannot invoke `/compact` itself — compaction happens by user command or
+by Claude Code's auto-compaction — so the reminder's job is to make sure the handoff is fresh
+before the summary is taken.
+
+Hooks never receive the window size (200K vs 1M): only the `statusLine` command's JSON carries
+`context_window.context_window_size`. `hooks/statusline-bridge.sh` closes that gap — registered
+as the status line, it writes `~/.claude/acl-context/<session_id>.json` on every refresh and then
+either chains to your previous status-line command (preserved in `chain.json`, same JSON on stdin)
+or prints a minimal `[model] ctx 13% / 1000K` line. Denominator precedence in the stop-hook:
+bridge file → `ACL_CONTEXT_WINDOW` → 200000. Without the bridge a 1M session is scored against
+200K and reminds early — a deliberate fail-safe, and the reminder itself tells you how to fix it.
+
+```bash
+# print the settings.json snippet
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh statusline-setup
+# install + merge (backs up settings.json, preserves an existing statusLine command)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh statusline-setup --apply
+# undo (restores the previous command)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh statusline-setup --remove
+```
+
+`--apply` does not point `settings.json` at the plugin directory: marketplace installs live under
+`plugins/cache/<marketplace>/<plugin>/<version>/`, and the path changes on every update. It installs
+a small launcher into `~/.claude/acl-context/bin/` (`run-hook.cmd` + `statusline-launch.sh` + a
+bridge copy) that picks the highest cached plugin version at each call and falls back to the copy,
+so the status line survives plugin updates and even removal. Takes effect on the next session.
+Re-running `--apply` replaces the copies via temp + rename (never in place, the status line may be
+running them); `--remove` deletes only the files it installed and refuses to touch a `bin/` that has
+no `source.json`. On Windows the preserved command is also written as `chain.cmd` and the bridge
+runs it through `cmd.exe` (the shell Claude Code uses for status lines), so backslash paths and cmd
+built-ins survive; when the chained command fails, the fallback line ends with `(chain failed)`
+instead of hiding the misconfiguration.
+
 ### Quality Gates
 
-The 51 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
+The 52 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
 
 | Gate | Type | Catches |
 |------|------|---------|

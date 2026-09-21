@@ -166,8 +166,10 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
 
 | 조건 | 트리거 |
 |------|--------|
-| 단일 Phase 내 작업 12턴 이상 | `/compact` |
-| 문서 완료 후 | 다음 문서 시작 전 `/compact` |
+| stop-hook 리마인더 "컨텍스트 사용률 N% ≥ 임계" 수신 | 현재 논리 단위 마무리 → `handoff-update` + `record-decision` → 응답 끝에 사용자 `/compact` 권고 (모델은 `/compact`를 직접 실행할 수 없다. 컴팩션은 Claude Code가 자동 수행하며, 리마인더의 목적은 그 전에 마감을 끝내는 것) |
+| 문서 완료 후 | 직전 iteration에 사용률 리마인더가 있었으면 다음 문서 시작 전 `/compact` 권고. 리마인더가 없었으면 그대로 진행 (턴 수 기준 컴팩션은 v4.24.0에서 폐지) |
+
+**사용률 계측 (v4.24.0)**: stop-hook이 매 iteration 트랜스크립트의 `usage`(input + cache_read + cache_creation)를 창 크기로 나눠 사용률을 계산하고 `.claude/acl-events.jsonl`에 `context.usage` 이벤트로 남긴다. 창 크기는 statusline 브리지 실측값 > `ACL_CONTEXT_WINDOW` > 200000(기본) 순으로 정한다. 임계는 `ACL_COMPACT_THRESHOLD_PCT`(기본 60). 브리지가 없으면 1M 세션도 200K로 계산되어 일찍 울린다 — 이는 의도된 fail-safe이며, 리마인더 본문의 `statusline-setup --apply` 안내로 해소한다.
 
 ## 사용자 개입 시점 (최소화)
 

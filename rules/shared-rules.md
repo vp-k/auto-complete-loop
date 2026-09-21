@@ -150,17 +150,18 @@ Rejected: session-based auth (stateless 요구)
 
 ### 컴팩션 원칙
 - **구현 중 컴팩션 금지**: 코드 작성/수정 도중에는 `/compact` 실행하지 않음
-- **논리적 경계에서만 실행**: 아래 시점에서 수동 `/compact` 실행
+- **논리적 경계에서만 실행**: 아래 시점에서 `/compact`를 권고. 모델은 `/compact`를 직접 실행할 수 없다 — 컴팩션은 사용자 명령 또는 Claude Code 자동 컴팩션으로만 일어나므로, 모델이 할 일은 그 전에 handoff·결정 기록을 마감하고 큰 단계를 새로 시작하지 않는 것이다
+- **트리거는 사용률**: stop-hook이 컨텍스트 사용률(트랜스크립트 usage / 창 크기)이 임계(기본 60%) 이상이면 다음 프롬프트에 마감 리마인더를 덧붙인다 (턴 수 기준 없음, 상세는 orchestration-rules "컨텍스트 관리")
 - **PreCompact 훅이 컨텍스트 요약 출력**: compact 요약에 현재 상태가 포함됨 (파일 수정 없음, handoff는 수동 업데이트 필요)
 
-### `/compact` 실행 시점 (논리적 경계)
+### `/compact` 권고 시점 (논리적 경계)
 | 시점 | 설명 |
 |------|------|
 | Phase 전환 | Phase 0→1, 1→2 등 단계 전환 직전 |
 | 마일스톤 완료 | 주요 문서/기능 구현 완료 후 |
 | 작업 방향 전환 | 실패한 접근법 → 새 접근법 전환 시 |
 | 리서치 → 구현 전환 | 조사/탐색 → 코드 작성 전환 시 |
-| "prompt too long" 에러 | 즉시 `/compact` |
+| "prompt too long" 에러 | 즉시 사용자에게 `/compact` 요청 |
 
 ### 컴팩션 전 컨텍스트 출력 (PreCompact 훅)
 PreCompact 훅이 progress 파일의 현재 상태를 stdout에 출력 → compact 요약에 포함됨.

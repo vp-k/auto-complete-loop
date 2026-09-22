@@ -20,7 +20,17 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" bash-guards.sh",
-            "description": "통합 Bash 가드(단일 디스패처, 검사 6종): 1) --no-verify/commit -n 차단 2) [auto] 커밋 US-ID 검증 3) .claude-verification.json 쓰기 차단 4) ralph-loop.local.md 수정/삭제 차단 5) acceptance-unlock.json 생성/수정 차단 6) acl-decisions.jsonl 쓰기/삭제 차단"
+            "description": "통합 Bash 가드(단일 디스패처, 검사 7종): 1) --no-verify/commit -n 차단 2) [auto] 커밋 US-ID 검증 3) .claude-verification.json 쓰기 차단 4) ralph-loop.local.md 수정/삭제 차단 5) acceptance-unlock.json 생성/수정 차단 6) acl-decisions.jsonl 쓰기/삭제 차단 7) 긴 파일 통째 cat·상한 없는 테스트 실행 관측(비차단, context.read.large/context.run.uncapped 이벤트)"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" read-guard.sh",
+            "description": "긴 파일 통째 읽기 관측(비차단): 임계(기본 300줄) 초과 파일을 limit 없이 Read 하면 context.read.large 이벤트 기록 + 대안 안내"
           }
         ]
       },

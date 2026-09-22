@@ -178,6 +178,20 @@ PreCompact 훅이 progress 파일의 현재 상태를 stdout에 출력 → compa
 - 이전 작업의 전체 코드/토론을 누적하지 않음
 - 현재 작업에만 집중, 필요시 다른 파일은 다시 읽기
 
+### 긴 파일 읽기 규칙 (컨텍스트 채움 방지)
+compact 를 부르는 주범은 "긴 파일을 통째로 읽고, compact 뒤에 같은 파일을 또 읽는" 순환이다. 게이트 스크립트 출력은 이미 상한이 있으므로 남는 원인은 모델이 직접 하는 Read/cat 과 직접 테스트 실행이다.
+
+| 대상 | 통째 읽기 대신 | 명령 |
+|------|----------------|------|
+| progress / verification JSON | 요약만 본다 | `shared-gate.sh status` |
+| 결정 로그 | 최근 것만 본다 | `shared-gate.sh record-decision --list --last 5` |
+| SPEC·설계 문서 (긴 .md) | 제목 좌표 → 해당 섹션만 | `shared-gate.sh doc-section --list`, `doc-section <US-ID\|제목>` 또는 Read `offset`/`limit` |
+| 테스트 실행 | 전체 로그는 파일에, 컨텍스트에는 실패 줄·tail 만 | `shared-gate.sh run-capped -- <명령>` (게이트 경유 `quality-gate`/`acceptance-gate` 는 이미 상한 있음) |
+| 테스트 로그·긴 텍스트 | 실패 줄만 | `grep -n -E 'FAIL\|Error' <파일> \| head -40` |
+
+- 임계(`ACL_LARGE_READ_LINES`, 기본 300줄)를 넘는 파일을 `limit` 없이 Read 하거나 필터 없이 `cat` 하면 훅이 `context.read.large` 이벤트를 기록하고 대안을 안내한다(안내 문구가 모델에 보이는지는 Claude Code 버전에 따라 다르다. 이벤트 기록이 확실한 채널이다). 상한 없는 테스트 실행은 `context.run.uncapped` 로 기록된다. **차단하지 않는다** — 관측이 목적이며 session-start 가 누적치(3회 이상)를 다음 세션 경고로 주입한다.
+- 같은 파일을 compact 후 다시 통째로 읽지 않는다. 처음 읽을 때 필요한 좌표(줄 번호·섹션 제목)를 handoff 에 남기고 그 구간만 다시 읽는다.
+
 ## Handoff 업데이트 (Iteration 종료 전 필수)
 
 progress 파일의 `handoff` 필드를 반드시 업데이트합니다:

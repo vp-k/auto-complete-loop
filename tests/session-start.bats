@@ -61,3 +61,56 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" != *"교차 실행 반복 경고"* ]]
 }
+
+# ─── v4.25.0: 컨텍스트 채움 관측 이벤트 집계 ───
+
+@test "cross-run: context.read.large >=3 surfaced with top files; run.uncapped >=3 surfaced" {
+  mkdir -p .claude
+  cat > .claude/acl-events.jsonl <<'EOF'
+{"ts":"t1","event":"context.read.large","tool":"Read","file":"/p/docs/SPEC.md","lines":900,"bytes":1,"offset":0,"threshold":300,"iteration":1}
+{"ts":"t2","event":"context.read.large","tool":"Read","file":"/p/docs/SPEC.md","lines":900,"bytes":1,"offset":0,"threshold":300,"iteration":2}
+{"ts":"t3","event":"context.read.large","tool":"Bash","file":"test.log","lines":500,"bytes":1,"offset":0,"threshold":300,"iteration":2}
+{"ts":"t4","event":"context.run.uncapped","cmd":"npm test","iteration":1}
+{"ts":"t5","event":"context.run.uncapped","cmd":"npm test","iteration":2}
+{"ts":"t6","event":"context.run.uncapped","cmd":"pytest","iteration":3}
+EOF
+  run bash "$HOOK"
+  [ "$status" -eq 0 ]
+  ctx=$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')
+  [[ "$ctx" == *"교차 실행 반복 경고"* ]]
+  [[ "$ctx" == *"긴 파일 통째 읽기 ×3회"* ]]
+  [[ "$ctx" == *"SPEC.md×2"* ]]
+  [[ "$ctx" == *"상한 없는 테스트 실행 ×3회"* ]]
+  [[ "$ctx" == *"run-capped"* ]]
+}
+
+@test "cross-run: fewer than 3 context events → not surfaced" {
+  mkdir -p .claude
+  cat > .claude/acl-events.jsonl <<'EOF'
+{"ts":"t1","event":"context.read.large","tool":"Read","file":"a.md","lines":900,"bytes":1,"offset":0,"threshold":300,"iteration":1}
+{"ts":"t2","event":"context.read.large","tool":"Read","file":"a.md","lines":900,"bytes":1,"offset":0,"threshold":300,"iteration":2}
+{"ts":"t3","event":"context.run.uncapped","cmd":"npm test","iteration":1}
+EOF
+  run bash "$HOOK"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"긴 파일 통째 읽기"* ]]
+  [[ "$output" != *"상한 없는 테스트 실행"* ]]
+}
+
+@test "cross-run: a context event with non-string file does not kill the whole warning [review M2]" {
+  mkdir -p .claude
+  cat > .claude/acl-events.jsonl <<'EOF'
+{"ts":"t1","event":"error.recorded","type":"BUILD_FAIL","file":"a","level":"L0","count":1}
+{"ts":"t2","event":"error.recorded","type":"BUILD_FAIL","file":"a","level":"L1","count":2}
+{"ts":"t3","event":"error.recorded","type":"BUILD_FAIL","file":"a","level":"L1","count":3}
+{"ts":"t4","event":"context.read.large","file":42,"lines":900}
+{"ts":"t5","event":"context.read.large","file":null,"lines":900}
+{"ts":"t6","event":"context.read.large","file":"C:\\p\\docs\\SPEC.md","lines":900}
+EOF
+  run bash "$HOOK"
+  [ "$status" -eq 0 ]
+  ctx=$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext')
+  [[ "$ctx" == *"BUILD_FAIL"* ]]
+  [[ "$ctx" == *"긴 파일 통째 읽기 ×3회"* ]]
+  [[ "$ctx" == *"SPEC.md×1"* ]]
+}

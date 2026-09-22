@@ -97,9 +97,15 @@ if command -v jq &>/dev/null && [[ -f "$ACL_EVENTS_FILE" ]]; then
         | group_by(.) | map({t:.[0], n:length}) | map(select(.n>=3)) ) as $errs
     | ( [ $ev[] | select(.event=="gate.ambiguity.mismatch") ] | length ) as $mm
     | ( [ $ev[] | select(.event=="escalation.level" and ((.to=="L4") or (.to=="L5"))) ] | length ) as $esc
+    | ( [ $ev[] | select(.event=="context.read.large") ] ) as $reads
+    | ( $reads | length ) as $rl
+    | ( $reads | map(.file | if type=="string" then (gsub("\\\\"; "/") | split("/") | last) else "?" end) | group_by(.) | map({f:.[0], n:length}) | sort_by(-.n) | .[0:3] | map("\(.f)×\(.n)") | join(", ") ) as $rtop
+    | ( [ $ev[] | select(.event=="context.run.uncapped") ] | length ) as $ru
     | ( [ $errs[] | "반복 오류 [\(.t)] ×\(.n)회 — 근본 원인 미제거 신호" ]
         + (if $mm>0 then ["명확성 세탁(ambiguity mismatch) ×\($mm)회 — 인터뷰 신고가 문서에 미반영"] else [] end)
         + (if $esc>0 then ["심층 에스컬레이션(L4/L5) ×\($esc)회 — 과거 접근이 반복 실패"] else [] end)
+        + (if $rl>=3 then ["긴 파일 통째 읽기 ×\($rl)회 (\($rtop)) — 컨텍스트를 채워 compact 를 부른 원인. 문서는 shared-gate.sh doc-section <US-ID|제목>, 상태 JSON 은 status, 로그는 grep 으로 실패 줄만 읽는다"] else [] end)
+        + (if $ru>=3 then ["상한 없는 테스트 실행 ×\($ru)회 — 출력 전체가 컨텍스트에 실렸다. shared-gate.sh run-capped -- <명령> 으로 실행한다"] else [] end)
       ) | .[]
   ' "$ACL_EVENTS_FILE" 2>/dev/null || true)
   if [[ -n "$CROSSRUN_LINES" ]]; then

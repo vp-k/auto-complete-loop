@@ -20,6 +20,7 @@
 #   gates/acceptance.sh — 인수 테스트 선작성+동결(freeze) + 실행 게이트
 #   gates/decisions.sh  — 결정 기록 단일 출처(record-decision) + assumption 일괄 확인 기록
 #   gates/context.sh    — 컨텍스트 창 브리지 설정(statusline-setup): stop-hook 사용률 계측의 분모 공급
+#   gates/readers.sh    — 컨텍스트 절약 읽기(doc-section: 문서 섹션 추출, run-capped: 출력 상한 실행)
 #
 # 서브커맨드:
 #   init [--template <type>] [project] [requirement]  - progress JSON 초기화
@@ -67,6 +68,8 @@
 #   assumption-review --status <s> --count <N>         - assumption 일괄 확인 결과 기록
 #                                                        (confirmed는 --count를 scope=interview 결정 기록 수와 대조)
 #   statusline-setup [--apply|--remove] [--settings <path>] - statusLine 브리지 등록 (컨텍스트 창 크기를 세션 파일로 기록 → stop-hook 사용률 계측)
+#   doc-section [--file <path>] [--list] [--max-lines N] <query> - 문서에서 제목/US-ID 섹션만 추출 (긴 SPEC 통째 읽기 대체)
+#   run-capped [--tail N] [--name s] -- <cmd>          - 명령 실행 후 전체 로그는 파일에, 컨텍스트엔 종료코드·실패 줄·tail만
 
 set -euo pipefail
 
@@ -160,6 +163,8 @@ main() {
     record-decision)   cmd_record_decision "$@" ;;
     assumption-review) cmd_assumption_review "$@" ;;
     statusline-setup)  cmd_statusline_setup "$@" ;;
+    doc-section)       cmd_doc_section "$@" ;;
+    run-capped)        cmd_run_capped "$@" ;;
     help|--help|-h)
       echo "Usage: shared-gate.sh <subcommand> [--progress-file <path>] [args]"
       echo ""
@@ -264,6 +269,17 @@ main() {
       echo "                                               (prints the snippet; --apply merges it, preserving any existing command in chain.json)"
       echo "                                               The bridge records context_window_size per session; stop-hook uses it as the"
       echo "                                               denominator for the context-usage reminder (ACL_COMPACT_THRESHOLD_PCT, default 60)."
+      echo "  doc-section [--file <path>] [--list] [--max-lines N] [--context N] <query>"
+      echo "                                             - Print only the section(s) of a Markdown doc whose heading matches <query>"
+      echo "                                               (case-insensitive substring, e.g. a US-ID). Falls back to grep -C when no"
+      echo "                                               heading matches. Default file = SPEC (SPEC.md|docs/SPEC.md|docs/api-spec.md|spec.md)."
+      echo "                                               --list prints the heading map (line: heading). Output is capped at --max-lines (200)."
+      echo "                                               Exit 0 match / 1 no match / 2 file missing. Replaces reading a long SPEC whole."
+      echo "  run-capped [--tail N] [--name <slug>] [--log-dir D] [--fail-lines N] [--keep N] -- <command...>"
+      echo "                                             - Run a command with the full output written to .claude/acl-logs/<ts>-<slug>.log;"
+      echo "                                               the context only receives exit code, failure-pattern lines (--fail-lines, 40)"
+      echo "                                               and the last --tail (30) lines. Returns the command's exit code."
+      echo "                                               Use for direct test runs outside the gates (quality-gate/acceptance-gate cap themselves)."
       echo ""
       echo "Global options:"
       echo "  --progress-file <path>  Specify progress file (auto-detected if omitted)"

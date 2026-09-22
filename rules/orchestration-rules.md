@@ -86,6 +86,16 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh implementation-depth --progres
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh test-quality --progress-file {PROGRESS_FILE}
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh functional-flow --progress-file {PROGRESS_FILE}
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh page-render-check --progress-file {PROGRESS_FILE}
+
+# 컨텍스트 절약 읽기 (shared-rules "긴 파일 읽기 규칙")
+# SPEC/설계 문서의 제목 좌표만 → 필요한 US 섹션만 (긴 문서 통째 Read 금지)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-section --list
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-section US-B-001
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-section --file docs/DESIGN.md "색상"
+# 게이트 밖에서 테스트를 직접 돌릴 때: 전체 로그는 .claude/acl-logs/, 컨텍스트에는 종료코드·실패 줄·tail 만
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh run-capped --name us-b-001 -- bash tests/acceptance/us-b-001-login.sh
+# 인자 1개면 셸 문자열(bash -c), 2개 이상이면 인용·글롭을 보존해 그대로 실행한다
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh run-capped -- 'npm test 2>&1'
 ```
 
 ## 구현 품질 게이트 실행 시점

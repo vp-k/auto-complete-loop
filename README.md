@@ -377,9 +377,37 @@ runs it through `cmd.exe` (the shell Claude Code uses for status lines), so back
 built-ins survive; when the chained command fails, the fallback line ends with `(chain failed)`
 instead of hiding the misconfiguration.
 
+### Context-Fill Observation + Scoped Readers (v4.25.0)
+
+The usage meter above says *how full* the context is; it does not say *what filled it*. In practice the
+filler is the model itself: reading an in-progress SPEC or a test log whole, then reading it again after
+`/compact`. v4.25.0 adds two things — measurement first, then a cheaper default path — and deliberately
+**does not block**: blocking a read saves no tokens (the file gets read in two halves) and only adds turns.
+
+- **Observation hooks (non-blocking, ACL projects only)**: a `PreToolUse:Read` hook (`read-guard.sh`) and
+  check 7 of the Bash dispatcher record `context.read.large` when a file over `ACL_LARGE_READ_LINES`
+  (default 300) lines is read without `limit` / `cat`-ed without a pipe filter, and `context.run.uncapped`
+  when a test runner (`npm test`, `pytest`, `go test`, `bats`, …) runs outside the gates with no cap. Each
+  event carries file, lines, bytes and iteration; the hook also returns an `additionalContext` hint naming
+  the cheaper path (whether Claude Code surfaces PreToolUse `additionalContext` is version-dependent — the
+  event log is the reliable channel). `session-start.sh` aggregates 3+ occurrences into the cross-run
+  warning. Both hooks exit silently unless a Ralph-loop or progress file exists, so other projects get no
+  `.claude/acl-events.jsonl`.
+- **`doc-section`**: prints only the section(s) of a Markdown document whose heading matches a query
+  (US-ID, title substring; falls back to `grep -C`), with line-number prefixes, capped at `--max-lines`;
+  `--list` prints the heading map. Default file is the SPEC. The implementation skill now uses it for
+  per-document context reload and AC mapping instead of reading SPEC whole.
+- **`run-capped -- <cmd>`**: runs a command with the full output written to `.claude/acl-logs/` (self
+  `.gitignore`d, retention `--keep 20`); the context receives only the exit code, failure-pattern lines and
+  the last `--tail` lines. Returns the command's exit code. A single argument is run as a shell string
+  (`bash -c`); two or more are executed as-is with quoting and globs preserved. Used for single-US acceptance runs.
+
+Steps 3 and 4 of the original plan (delegating bulk reads to subagents; blocking `cat` of state JSON that
+`status` already covers) are deferred until the event data from real runs shows they are needed.
+
 ### Quality Gates
 
-The 52 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
+The 54 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
 
 | Gate | Type | Catches |
 |------|------|---------|

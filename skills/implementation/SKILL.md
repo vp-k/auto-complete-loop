@@ -258,7 +258,7 @@ git add -A && git commit -m "[auto] E2E 프레임워크 + 인프라 설정"
 
 각 문서 구현 시작 전, Phase 3 리뷰 기준을 **이미 존재하는 계약에서 매핑**한다. v4.2.0부터 SPEC AC가 동결 인수 테스트(`tests/acceptance/`)로 존재하므로, 별도 AI 호출로 기준을 새로 도출하는 것은 중복이다 — codex를 호출하지 않는다:
 
-1. SPEC.md에서 이 문서가 커버하는 US(US-F-*/US-B-*)의 AC(AC-F-*/AC-B-*) 문장을 추출
+1. SPEC.md에서 이 문서가 커버하는 US(US-F-*/US-B-*)의 AC(AC-F-*/AC-B-*) 문장을 추출 — SPEC 을 통째로 읽지 않고 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-section <US-ID>` 로 해당 US 섹션만 뽑는다 (제목 매치가 없으면 본문 grep 으로 폴백, `--list` 로 제목 좌표 확인)
    - 매핑되는 US가 없는 횡단 문서(logging-standard, error-policy 등)는 **빈 배열 `[]`이 정상**이다 — AC를 억지로 만들어내지 않는다 (Phase 3 리뷰는 해당 문서의 규칙 준수 자체를 검토)
 2. `tests/acceptance/`에서 해당 US의 동결 테스트 파일명을 확인
 3. AC 문장(+ 동결 테스트 파일 참조)을 아래 형태로 progress 파일에 저장 — Phase 3 리뷰 프롬프트와 doc-split의 AC 분배(Step 2-3.5)가 이 필드를 소비한다:
@@ -320,7 +320,7 @@ L4 범위 축소 전에 문서를 분할해 재시도한다:
    - progress: 해당 문서를 `in_progress`로 변경
 
    **컨텍스트 재로드 (각 문서 시작 시)**:
-   - SPEC.md (또는 docs/api-spec.md)에서 해당 문서의 API 엔드포인트 + 데이터 모델 섹션을 다시 읽는다
+   - SPEC.md (또는 docs/api-spec.md)에서 해당 문서의 API 엔드포인트 + 데이터 모델 섹션을 다시 읽는다 — **섹션만**: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh doc-section <US-ID|섹션 제목>` (통째 Read 는 `context.read.large` 로 기록된다. shared-rules "긴 파일 읽기 규칙")
    - 이전 문서에서 확립된 패턴 (인증 방식, 응답 래퍼 구조, 에러 형식)을 확인한다
    - progress.phases.phase_2.context.reusablePatterns를 참조한다
 
@@ -397,7 +397,7 @@ L4 범위 축소 전에 문서를 분할해 재시도한다:
    - 문서당 리뷰 사이클 상한: 2회 (초기 1 + C/H 수정 확인 1)
 
 5. **문서 완료 처리**
-   - **US 인수 테스트 green 확인**: 해당 문서에서 구현한 US의 인수 테스트 **파일만** 실행한다 — `bash tests/acceptance/us-<id>-*.sh`. 전체 `bash tests/acceptance/run.sh`는 **Step 2-7과 Phase 4의 acceptance-gate에서만** 돌린다: 아직 구현하지 않은 다른 US가 red인 것은 이 시점에 정상이므로, 여기서 전체 러너를 돌리면 남의 red를 떠안고 원인을 오판하게 된다. 개별 파일이 단독 실행되지 않으면 그것은 인수 테스트 작성 결함이므로 동결 해제 절차(Step 2-1.10) 대상이지, 전체 러너로 우회할 사유가 아니다. red면 구현을 수정한다 (테스트 수정 금지 — Step 2-1.10).
+   - **US 인수 테스트 green 확인**: 해당 문서에서 구현한 US의 인수 테스트 **파일만** 실행한다 — `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh run-capped --name us-<id> -- bash tests/acceptance/us-<id>-<slug>.sh` (파일 하나를 지명한다 — 글롭이 두 파일로 펼쳐지면 둘째가 첫 스크립트의 인자로 넘어간다. 전체 로그는 `.claude/acl-logs/` 에, 컨텍스트에는 종료코드·실패 줄·tail 만). 전체 `bash tests/acceptance/run.sh`는 **Step 2-7과 Phase 4의 acceptance-gate에서만** 돌린다: 아직 구현하지 않은 다른 US가 red인 것은 이 시점에 정상이므로, 여기서 전체 러너를 돌리면 남의 red를 떠안고 원인을 오판하게 된다. 개별 파일이 단독 실행되지 않으면 그것은 인수 테스트 작성 결함이므로 동결 해제 절차(Step 2-1.10) 대상이지, 전체 러너로 우회할 사유가 아니다. red면 구현을 수정한다 (테스트 수정 금지 — Step 2-1.10).
    - progress: 해당 문서 `completed`
    - `documentSummaries`에 핵심 결정 요약
    - 자동 커밋: `git add -A && git commit -m "[auto] {문서명} 구현 완료 [US-X-###]"`

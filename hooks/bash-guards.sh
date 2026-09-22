@@ -7,10 +7,13 @@
 #   4) ralph-write-guard : .claude/ralph-loop.local.md Bash 경유 수정/삭제 차단
 #   5) unlock-token-guard : .claude/acceptance-unlock.json Bash 경유 생성/수정 차단
 #   6) decision-log-guard : .claude/acl-decisions.jsonl Bash 경유 쓰기/삭제 차단
-# 첫 block에서 즉시 종료.
+#   7) context-read-observe : 긴 파일 통째 cat / 상한 없는 테스트 실행 관측 (비차단, 이벤트 기록 + 안내)
+# 첫 block에서 즉시 종료. 검사 7은 차단하지 않으며 마지막에 실행된다.
 #
 # 입력: stdin JSON { "tool_input": { "command": "..." } }
 # 출력: 차단 시 {"decision": "block", "reason": "..."}
+#       관측만 있을 때 {"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"..."}}
+#         (permissionDecision 없음 — 권한 판정에 관여하지 않는다)
 #       통과 시 아무 출력 없이 exit 0 (권한 판정에 관여하지 않음 — approve 출력 금지)
 
 set -euo pipefail
@@ -292,6 +295,116 @@ check_decision_log_write() {
   _check_file_write 'acl-decisions.jsonl' 'acl-decisions\.jsonl' "$DECISION_BLOCK_MSG"
 }
 
+
+# ─── 검사 7: 컨텍스트 채움 관측 (비차단) ───
+# 목적: "긴 파일을 통째로 cat / 테스트를 상한 없이 실행 → 출력이 컨텍스트를 채움 → compact 반복"의
+#   원인을 사실로 남긴다. v4.24.0 사용률 계측은 총량만 알고 무엇이 채웠는지는 모른다.
+# 차단하지 않는다: 차단은 토큰을 줄이지 못하고(잘라서 두 번 읽는다) 대안 탐색 턴만 더한다.
+#   대신 이벤트(context.read.large / context.run.uncapped)를 기록하고 대안을 한 줄 안내한다.
+#   안내는 Claude Code 버전에 따라 모델에 보이지 않을 수 있다 — 이벤트가 확실한 채널이며
+#   session-start 가 누적치를 다음 세션 경고로 주입한다.
+# 범위: ACL 실행 중인 프로젝트(ralph-loop 파일 또는 progress 파일 존재)에서만. 다른 프로젝트에
+#   .claude/acl-events.jsonl 을 만들지 않는다.
+# 판정:
+#   (a) cat/type/less/more 의 파일 인자가 임계(ACL_LARGE_READ_LINES, 기본 300줄)를 넘는데
+#       파이프 필터(head/tail/grep/sed/awk/jq/wc/cut/sort/uniq/rg)가 명령 어디에도 없으면 → read.large
+#   (b) 테스트 러너 명령(npm test 류/pytest/go test/cargo test/flutter test/bats/...)이
+#       shared-gate.sh 경유가 아니고, run-capped 도 아니고, 파이프 필터도 리다이렉트도 없으면 → run.uncapped
+#       (게이트 스크립트는 내부에서 tail 로 상한을 걸므로 제외)
+
+CONTEXT_OBS_NOTES=""
+
+_ctx_acl_active() {
+  [[ -f ".claude/ralph-loop.local.md" ]] && return 0
+  local _p
+  for _p in .claude-*progress*.json; do
+    [[ -f "$_p" ]] && return 0
+  done
+  return 1
+}
+
+_ctx_log_event() {
+  # scripts/lib/utils.sh 의 log_event 를 단일 출처로 재사용 (크기 캡 포함)
+  local _dir _root
+  _dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+  _root="$(cd "${_dir}/.." && pwd)"
+  if [[ -f "${_root}/scripts/lib/utils.sh" ]]; then
+    # shellcheck source=../scripts/lib/utils.sh
+    . "${_root}/scripts/lib/utils.sh"
+    log_event "$1" "$2" || true
+  fi
+}
+
+_ctx_iteration() {
+  local it=0
+  if [[ -f ".claude/ralph-loop.local.md" ]]; then
+    it=$(sed -n 's/^iteration:[[:space:]]*\([0-9]\+\).*/\1/p' ".claude/ralph-loop.local.md" 2>/dev/null | head -1 || true)
+  fi
+  [[ "$it" =~ ^[0-9]+$ ]] || it=0
+  printf '%s' "$it"
+}
+
+CTX_FILTER_RE='\|[[:space:]]*(head|tail|grep|egrep|fgrep|rg|sed|awk|gawk|jq|wc|cut|sort|uniq|less|more|tee)([[:space:]]|$)'
+CTX_TEST_RE='(^|[[:space:]|;&(`])((npm|pnpm|yarn|bun)[[:space:]]+(run[[:space:]]+)?test(:[A-Za-z0-9_-]+)?|npx[[:space:]]+(jest|vitest|mocha|playwright[[:space:]]+test|cypress[[:space:]]+run)|(python[0-9.]*[[:space:]]+-m[[:space:]]+)?pytest|go[[:space:]]+test|cargo[[:space:]]+test|flutter[[:space:]]+test|dart[[:space:]]+test|bats|mvn[[:space:]]+test|gradle[[:space:]]+test|dotnet[[:space:]]+test|rspec|phpunit|bundle[[:space:]]+exec[[:space:]]+rspec)([[:space:]]|$)'
+
+check_context_read_observe() {
+  _ctx_acl_active || return 0
+
+  local threshold="${ACL_LARGE_READ_LINES:-300}"
+  if ! [[ "$threshold" =~ ^[0-9]+$ ]] || [[ "$threshold" -lt 1 ]]; then threshold=300; fi
+  # 인용 문자열 안의 러너/필터 이름(커밋 메시지 "npm test 실패 수정" 등)에 반응하지 않도록 인용부를 벗겨 판정
+  local cmd_bare
+  cmd_bare=$(strip_quotes "$COMMAND")
+  local has_filter="false"
+  printf '%s' "$cmd_bare" | grep -qE "$CTX_FILTER_RE" && has_filter="true"
+  local it
+  it=$(_ctx_iteration)
+
+  # (a) 긴 파일 통째 cat
+  if [[ "$has_filter" == "false" ]] && printf '%s' "$cmd_bare" | grep -qE '(^|[[:space:]|;&(`])(cat|type|less|more)([[:space:]]|$)'; then
+    local segs _seg _tok lines bytes reported=""
+    segs=$(printf '%s\n' "$cmd_bare" | tr ';|&' '\n')
+    while IFS= read -r _seg; do
+      printf '%s' "$_seg" | grep -qE '(^|[[:space:](`])(cat|type|less|more)([[:space:]]|$)' || continue
+      # 리다이렉트/heredoc 가 있는 세그먼트는 쓰기다 (cat > file <<EOF) — 읽기로 세지 않는다
+      printf '%s' "$_seg" | grep -qE '<<|>' && continue
+      for _tok in $_seg; do
+        case "$_tok" in cat|type|less|more|-*|'<'|'>'|'>>') continue ;; esac
+        _tok="${_tok//\\//}"
+        [[ -f "$_tok" ]] || continue
+        lines=$(wc -l < "$_tok" 2>/dev/null | tr -d ' ' || echo 0)
+        [[ "$lines" =~ ^[0-9]+$ ]] || continue
+        [[ "$lines" -gt "$threshold" ]] || continue
+        bytes=$(wc -c < "$_tok" 2>/dev/null | tr -d ' ' || echo 0)
+        [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+        _ctx_log_event "context.read.large" "$(jq -cn --arg tool "Bash" --arg f "$_tok" --argjson l "$lines" --argjson b "$bytes" --argjson th "$threshold" --argjson it "$it" \
+          '{tool:$tool, file:$f, lines:$l, bytes:$b, offset:0, threshold:$th, iteration:$it}' 2>/dev/null || echo '{}')"
+        reported="${reported}${reported:+, }$(basename "$_tok")(${lines}줄)"
+      done
+    done <<< "$segs"
+    if [[ -n "$reported" ]]; then
+      CONTEXT_OBS_NOTES="${CONTEXT_OBS_NOTES}[read-guard] ${reported} 을(를) 통째로 출력한다(임계 ${threshold}줄) — 컨텍스트를 채워 compact 를 부른다. 문서는 shared-gate.sh doc-section --file <파일> <US-ID|제목>, 로그는 grep -n 으로 실패 줄만, 상태 JSON 은 shared-gate.sh status 로 본다. "
+    fi
+  fi
+
+  # (b) 상한 없는 테스트 실행
+  if printf '%s' "$cmd_bare" | grep -qE "$CTX_TEST_RE"; then
+    if ! printf '%s' "$cmd_bare" | grep -qE '(shared-gate\.sh|run-capped)' \
+       && [[ "$has_filter" == "false" ]] \
+       && ! printf '%s' "$cmd_bare" | grep -qE '>[>|]?[[:space:]]*[^[:space:]&]'; then
+      local cmd_show="$COMMAND"
+      [[ ${#cmd_show} -gt 200 ]] && cmd_show="${cmd_show:0:200}…"
+      _ctx_log_event "context.run.uncapped" "$(jq -cn --arg c "$cmd_show" --argjson it "$it" '{cmd:$c, iteration:$it}' 2>/dev/null || echo '{}')"
+      CONTEXT_OBS_NOTES="${CONTEXT_OBS_NOTES}[run-guard] 테스트 출력이 상한 없이 컨텍스트에 실린다. shared-gate.sh run-capped -- <명령> 으로 바꾸면 전체 로그는 파일에, 컨텍스트에는 종료코드·실패 줄·tail 만 남는다 (게이트 경유 quality-gate/acceptance-gate 는 이미 상한 있음). "
+    fi
+  fi
+
+  if [[ -n "$CONTEXT_OBS_NOTES" ]]; then
+    jq -cn --arg n "$CONTEXT_OBS_NOTES" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}'
+  fi
+  return 0
+}
+
 # ─── 순차 실행 (기존 hooks.json 등록 순서와 동일) ───
 check_no_verify
 check_commit_msg
@@ -299,6 +412,8 @@ check_verification_write
 check_ralph_write
 check_unlock_token_write
 check_decision_log_write
+# 검사 7은 차단 검사 전부를 통과한 뒤에만 실행 (차단이 우선, 관측은 비차단)
+check_context_read_observe
 
-# 전 검사 통과 → 무출력 (권한 판정 유보)
+# 전 검사 통과 → 무출력 (권한 판정 유보; 검사 7 안내가 있으면 위에서 additionalContext 만 출력)
 exit 0

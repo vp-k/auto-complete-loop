@@ -4,6 +4,8 @@
 `rules/` 아래에 있습니다 (`shared-rules.md`, `orchestration-rules.md`, `error-escalation-rules.md`,
 `project-size-rules.md`).
 
+릴리스에서 미룬 항목은 `TODO.md`가 단일 출처입니다. 보고의 "남은 것"에 적은 항목은 반드시 거기에 체크박스로 남깁니다.
+
 ## 에이전트 정의 형식 (YAML Frontmatter)
 
 `agents/` 디렉토리에 에이전트를 정의할 때 YAML frontmatter 형식을 사용합니다:

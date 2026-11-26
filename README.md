@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.23.0**
+**v4.26.0**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -278,6 +278,12 @@ append-only log so that never happens silently.
 - **Comes back**: `pre-compact` injects the last 5 decisions into the compaction summary (the "why"
   is the first thing context compression drops and the most expensive to reconstruct);
   `session-start` adds one observational line; `status` shows the 3 most recent.
+- **Reversals link back** (v4.26.0): `record-decision --supersedes D-NNNN` records a decision that
+  reverses an earlier one. The script rejects an unknown id, a `kind=none` record, and a decision that
+  is already superseded (the error names the decision that is current now). `--list`, the pre-compact
+  summary, and `handoff.keyDecisions` mark the old entry `[superseded by D-xxxx]`, so a compacted or
+  resumed session does not pick a dead decision back up. `assumption-review` stops counting superseded
+  interview decisions.
 - **Back-compat**: `handoff-update --decision` still works but only **appends** to
   `handoff.keyDecisions` (it never replaced the list silently again) and prints a NOTE that
   `record-decision` is the only channel that satisfies the completion check.
@@ -472,6 +478,8 @@ No override can bypass the 훅-강제 tier.
 **Review Ratchet (round 2+)**: five convergence rules keep repeated rounds from diverging — delta-only scope (diff since last reviewed hash + open findings), novelty justification for new findings on unchanged code, verdict monotonicity (no re-opening without new evidence), severity scoping (no inflation on re-report), and counter-review (dual's 2nd call audits the 1st call's scope inflation). Prompt-layer rules in review-perspectives.md; they never weaken the 0-finding recording obligation.
 
 **Upfront Ambiguity Gate** (v4.10.0, from ouroboros/gajae deep-interview): before writing any planning doc, Phase 0 scores requirement clarity across 4 weighted dimensions — Goal (.30) / SuccessCriteria (.25) / Constraints (.25) / Context (.20). The AI supplies the scores; `ambiguity-score` computes the weighted composite and decides deterministically — pass needs composite ≥ 0.8 **and** every dimension ≥ 0.6 (a floor that stops one clear dimension from masking a blank one). Below threshold, the interview loops on the weakest dimension. Intervention-minimizing order (user attention > model tokens): `repo-fact` gaps are auto-resolved by forked subagents (never asked), safe assumptions auto-filled, and only genuine `user-fact`/`blocker` items go to a single batch AskUserQuestion. A max-rounds cap (3) prevents infinite interviews — residual ambiguity converts to `[NEEDS-CLARIFICATION]` for the downstream fail-closed gates. Scoring is AI, arithmetic/verdict/recording is script; false high scores are caught later when `spec-completeness` re-checks the same 4 axes from the files.
+
+**Practices from pstack** (v4.26.0, from `backnotprop/pstack` v0.15.48): CRITICAL/HIGH review findings carry run evidence (command + output) and findings with one root cause are merged before fixing; before raising an error level, failed attempts are reverted file-by-file and the premise shared by the failed fixes is written down and tested (a wrong premise allows one same-level restart, observable via the `reset` field on `error.recorded`); `--supersedes` links reversed decisions; acceptance tests assert user-visible behavior, not internals; subagent prompts carry three kickoff rules (the brief is the whole bar, no questions to the user, evidence = command + exit code + output); handoff reading has explicit trust levels (decisions are followed, gate results are rerun); CONTRIBUTING has a ladder for adding new checks. Everything not adopted, with the reason, is in [`docs/benchmarks/pstack.md`](docs/benchmarks/pstack.md).
 
 **Event Log**: append-only `.claude/acl-events.jsonl` (gate results, errors, escalations, loop exits, splits, re-freezes — dot-notation event types, capped, archived on success). Observability only — no gate reads it, so it can't be gamed.
 

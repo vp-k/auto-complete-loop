@@ -236,6 +236,7 @@ codex exec --skip-git-repo-check '## 역할
 2. **판정**:
    - **Confirmed**: 실제 문제. severity 조정 가능.
    - **Dismissed**: false positive, 의도된 설계 → 구체적 기각 사유를 roundResults.dismissedDetails에 기록 (필수)
+3. **C/H 증거와 근본 원인 병합**: `templates/review-perspectives.md`의 "C/H 증거"와 "근본 원인 병합" 절을 따른다. 재현은 `.claude/repro/`에서 하고, "실행하지 못했다"는 기각 사유가 아니다.
 
 ### 라운드 간 Finding 매칭 (라운드 2+)
 

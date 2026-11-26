@@ -67,10 +67,19 @@ fi
 DECISIONS_LOG=".claude/acl-decisions.jsonl"
 CUR_RUN_ID=$(jq -r '.runId // empty' "$PROGRESS_FILE" 2>/dev/null || true)
 if [ -f "$DECISIONS_LOG" ]; then
-  RECENT_DECISIONS=$(jq -rn --arg run "${CUR_RUN_ID:-}" '[inputs] | map(select($run == "" or (.runId // "") == $run)) | .[-5:] | .[] | "  - \(.id) [\(.scope)] \(.what) — \(.why)"' "$DECISIONS_LOG" 2>/dev/null || true)
+  # 뒤집힘 표시(v4.26.0)는 최근 5건으로 자르기 전에 전체 로그에서 만든다.
+  # 옛 결정만 남고 뒤집은 결정이 잘려도 옛 결정에 표시가 붙어야 요약이 죽은 결정을 이어받지 않는다.
+  RECENT_DECISIONS=$(jq -rn --arg run "${CUR_RUN_ID:-}" '[inputs] as $all
+    | ($all | map(select(.supersedes != null) | {key: .supersedes, value: .id}) | from_entries) as $sup
+    | $all | map(select($run == "" or (.runId // "") == $run)) | .[-5:] | .[]
+    | "  - \(.id)\(if $sup[.id // ""] then " [superseded by \($sup[.id // ""])]" else "" end)\(if .supersedes then " (supersedes \(.supersedes))" else "" end) [\(.scope)] \(.what) — \(.why)"' "$DECISIONS_LOG" 2>/dev/null || true)
   if [ -n "$RECENT_DECISIONS" ]; then
     echo "Recent Decisions (최근 5건, 이 목록은 요약에 반드시 보존할 것):"
     echo "$RECENT_DECISIONS"
+    case "$RECENT_DECISIONS" in
+      *"[superseded by "*)
+        echo "  ※ [superseded by D-xxxx] 표시가 붙은 결정은 뒤집혔다. 표시를 지우지 말고 보존하되, 현재 결정으로 이어받지 말 것." ;;
+    esac
   fi
 fi
 

@@ -60,6 +60,15 @@ teardown() { teardown_temp_dir; }
   [[ "$output" == *"build"* ]]
 }
 
+@test "record-error: --reset-count 사용 여부가 error.recorded 이벤트에 남는다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-error --file "f.ts" --type "build" --msg "boom" --progress-file .claude-full-auto-progress.json
+  run_gate record-error --file "f.ts" --type "build" --msg "boom" --reset-count --progress-file .claude-full-auto-progress.json
+  # 같은 레벨 재시작 1회 규칙을 관측하려면 리셋한 기록과 아닌 기록이 구분돼야 한다
+  run jq -sc '[.[] | select(.event=="error.recorded") | .reset]' .claude/acl-events.jsonl
+  [ "$output" = "[false,true]" ]
+}
+
 @test "record-error: escalation transition emits escalation.level event" {
   run_gate init --template full-auto "test" "req"
   for i in 1 2; do

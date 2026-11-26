@@ -177,7 +177,8 @@ cmd_record_error() {
   log_event "error.recorded" "$(jq -cn \
     --arg type "$err_type" --arg file "$err_file" \
     --arg level "${err_level:-$current_escalation}" --argjson count "$current_count" \
-    '{type: $type, file: $file, level: $level, count: $count}' 2>/dev/null || echo '{}')" || true
+    --argjson reset "$([[ "$reset_count" == "true" ]] && echo true || echo false)" \
+    '{type: $type, file: $file, level: $level, count: $count, reset: $reset}' 2>/dev/null || echo '{}')" || true
 
   echo "Error recorded: $err_type in $err_file (count: $current_count, escalation: $current_escalation)"
   [[ -n "$err_level" ]] && echo "DIRECTION: $direction (error level: $err_level)"

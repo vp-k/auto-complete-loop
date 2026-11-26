@@ -63,6 +63,7 @@
 #   recover                                            - 복구/재개 정보 자동 출력 (handoff + next steps)
 #   handoff-update --next-steps <s> [--phase <p>] ...  - Handoff 필드 일괄 갱신 (--iteration 생략 시 ralph frontmatter)
 #   record-decision --what <s> --why <s> [...]         - 결정 1건 기록 (why 필수, append-only 로그)
+#   record-decision ... --supersedes D-NNNN            - 이전 결정을 뒤집는 결정 (옛 결정에 표시, 중복 뒤집기 거부)
 #   record-decision --none --why <s>                   - 이번 iteration에 결정 없음 기록
 #   record-decision --list [--iteration N] [--last N] [--all] - 결정 로그 조회 (기본: 이번 run만)
 #   assumption-review --status <s> --count <N>         - assumption 일괄 확인 결과 기록
@@ -253,11 +254,14 @@ main() {
       echo "  record-decision --what '<what>' --why '<why>' [--alternatives '<alt>']..."
       echo "                  [--reversible yes|no] [--scope interview|planning|implementation|review|escalation|other]"
       echo "                  [--source adr|provenance|clarification|severity|scope-reduction|inline]"
-      echo "                  [--phase <p>] [--iteration <n>]"
+      echo "                  [--phase <p>] [--iteration <n>] [--supersedes D-NNNN]"
       echo "                                             - Append one decision record to .claude/acl-decisions.jsonl"
       echo "                                               --why is REQUIRED (>=10 chars after whitespace strip) — a decision"
       echo "                                               without a reason is a wrong decision; the script refuses it (exit 1)."
       echo "                                               Also mirrors 'D-NNNN: what - why' into handoff.keyDecisions (append)."
+      echo "                                               --supersedes: this decision reverses D-NNNN. The target must exist,"
+      echo "                                               be kind=decision and not already be superseded (else exit 1 naming"
+      echo "                                               the current decision). --list and keyDecisions mark the old entry."
       echo "  record-decision --none --why '<why>'       - Record that this iteration had no decision (keyDecisions untouched)"
       echo "  record-decision --list [--iteration N] [--last N] [--all] - Query the decision log (default: current run only)"
       echo "  assumption-review --status confirmed|none|escalated --count <N> [--note '<s>']"

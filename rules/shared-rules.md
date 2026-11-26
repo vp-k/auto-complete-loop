@@ -214,6 +214,15 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
 4. `handoff.warnings`로 주의사항 인지
 5. `handoff.currentApproach`로 진행 구조 맥락 복구
 
+**읽은 것을 어디까지 믿나 (v4.26.0)** — 이전 iteration이 남긴 기록은 종류에 따라 다르게 다룬다.
+
+| 종류 | 다루는 법 | 이유 |
+|------|-----------|------|
+| 결정 (`keyDecisions`, 결정 로그) | **그대로 따른다.** 다시 따지지 않는다 | 이유와 함께 이미 기록됐다. 다시 고르면 같은 비교를 반복하고 결과만 흔들린다 |
+| 결정을 바꿔야 할 새 사실 | `--supersedes`로 새 결정을 기록하고 따른다 | 말없이 다른 길로 가면 옛 결정이 살아 있는 것처럼 남는다 |
+| 게이트 결과, "통과함", "고쳤음" 같은 자기신고 | **믿지 않는다.** 이번 iteration에서 다시 실행한다 | 그 뒤로 코드가 바뀌었을 수 있다. "이전 결과 재사용 금지"(Self-check 3번)와 같은 규칙이다 |
+| `warnings`, `nextSteps` | 출발점으로 쓴다. 맞는지는 첫 실행으로 확인한다 | 작성 시점의 판단이지 현재 상태의 증거가 아니다 |
+
 **handoff 갱신은 stop-hook이 검사한다** — 완주 선언 시 `handoff.lastIteration`이 방금 끝난 iteration과 다르면 차단된다.
 `bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh handoff-update --next-steps "..."`로 갱신한다
 (`--iteration`을 생략하면 Ralph frontmatter의 현재 iteration — stop-hook이 보는 값 — 이 자동으로 들어간다).
@@ -234,6 +243,9 @@ progress 파일의 `handoff` 필드를 반드시 업데이트합니다:
    ADR·provenance 마커·`docs/CLARIFICATIONS.md`·`severityAdjustments`는 각자의 목적(구조 설명·출처 표시·질문 추적·심각도 근거)
    그대로 유지하되, **결정이 발생한 사실 자체는 반드시 이 로그에도 미러링**한다(`--source`로 원 채널 표시).
 4. **iteration당 최소 1건.** 결정이 없었다면 없었다는 사실을 남긴다(`--none --why "<왜 없었는지>"`).
+5. **뒤집은 결정은 옛 결정에 잇는다 (v4.26.0).** 로그는 고쳐 쓰지 않는다. 대신 새 결정에 `--supersedes D-NNNN`을 붙인다.
+   `--why`에는 옛 결정의 전제 중 무엇이 틀렸는지를 쓴다. 이미 뒤집힌 결정을 다시 지정하면 거부되고, 최신 결정을 알려준다.
+   `--list`와 PreCompact 요약에 `[superseded by D-xxxx]` 표시가 붙어, 다음 iteration이 죽은 결정을 이어받지 않는다.
 
 ### 사용법
 
@@ -249,6 +261,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --none \
   --why "문서 오탈자 수정만 수행했고 설계·구현 선택지가 발생하지 않았다"
 
+# 이전 결정을 뒤집음 (옛 결정 D-0003에 표시가 붙는다)
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision \
+  --what "캐시를 Redis에서 인메모리 LRU로 변경" \
+  --why "D-0003은 다중 인스턴스 배포를 전제했으나 SPEC 확정본이 단일 인스턴스로 바뀌었다" \
+  --supersedes D-0003 --scope implementation
+
 # 조회 (기본은 이번 실행(runId)의 기록만 — 이전 실행까지 보려면 --all)
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --last 5
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --all
@@ -263,9 +281,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh record-decision --list --all
 | `--scope` | `interview` \| `planning` \| `implementation` \| `review` \| `escalation` \| `other` | 결정이 난 국면 |
 | `--source` | `adr` \| `provenance` \| `clarification` \| `severity` \| `scope-reduction` \| `inline` | 원 채널 |
 | `--phase` / `--iteration` | 문자열 / 정수 | 생략 시 ralph-loop·progress에서 자동 |
+| `--supersedes` | `D-NNNN` | 이 결정이 뒤집는 이전 결정. 로그에 있는 `kind=decision`이고 아직 뒤집히지 않은 것만 받는다. `--none`과 함께 쓸 수 없다 |
 
 기록되는 것: `.claude/acl-decisions.jsonl` 한 줄(JSON) + `decision.recorded` 이벤트 +
 `handoff.keyDecisions`에 `"D-NNNN: <what> — <why>"` **append**(`--none`은 append하지 않음).
+`--supersedes`를 주면 레코드에 `supersedes` 필드가 붙고, `keyDecisions`의 옛 항목 앞에 `[superseded by D-NNNN]`이 붙는다.
+`assumption-review`의 교차 검증 건수에서도 뒤집힌 interview 결정은 빠진다.
 각 줄에는 progress의 `runId`(init이 실행마다 발급)가 함께 박힌다 — **실행 식별자**다.
 
 > `handoff-update --decision`은 `handoff.keyDecisions`에 **append**만 하는 하위호환 옵션이며
@@ -320,3 +341,15 @@ stop-hook이 완주 선언 시 **이번 iteration의 결정 기록이 0건이면
 - **Haiku는 사용하지 않음**
 - 모델 미지정 시 부모 세션의 모델을 상속
 - Agent 도구의 `model` 파라미터로 지정: `"model": "sonnet"` 또는 `"model": "opus"`
+
+### 서브에이전트 착수 지시 (v4.26.0)
+
+서브에이전트는 이 세션의 규칙 파일을 읽지 않는다. 지시문에 적지 않은 규칙은 없는 규칙이다.
+그래서 서브에이전트에게 일을 맡길 때는 지시문에 아래 세 가지를 문장으로 넣는다.
+
+1. **기준은 지시문에 적힌 것이 전부다.** 무엇이 되면 끝인지 지시문에 쓴다. 서브에이전트는 거기에 게이트, 승인, 리뷰 라운드를 덧붙이지 않는다. 기준을 정하는 것은 오케스트레이터다.
+2. **사용자에게 묻지 않는다.** 되돌릴 수 있는 선택은 직접 하고 무엇을 왜 골랐는지 보고에 적는다. 배포, 데이터 삭제, 공유 브랜치 force-push, 외부 전송처럼 되돌릴 수 없는 것을 만나면 멈추고 오케스트레이터에게 보고한다.
+3. **증거는 명령과 그 출력이다.** "확인했다"나 "통과한다"는 증거가 아니다. 실행한 명령, 종료 코드, 핵심 출력 줄을 보고에 넣게 한다.
+
+사용자 질문은 오케스트레이터만 한다. 허용된 시점은 `rules/orchestration-rules.md`의 "사용자 개입 시점"이다.
+서브에이전트가 보고한 통과 주장도 자기신고다. 위 Handoff 절의 "읽은 것을 어디까지 믿나" 표대로 다룬다.

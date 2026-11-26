@@ -106,3 +106,19 @@ _seed_decisions() {
   ctx=$(printf '%s' "$output" | jq -r '.hookSpecificOutput.additionalContext // ""')
   [[ "$ctx" != *"최근 결정"* ]]
 }
+
+@test "pre-compact: 뒤집힌 결정에는 표시를 붙여 요약이 옛 결정을 이어받지 않게 한다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "캐시를 Redis로 결정" --why "세션 스토어 없이 수평 확장해야 한다는 전제에서 고른 선택"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "캐시를 인메모리 LRU로 변경" --why "단일 인스턴스 배포로 확정되어 외부 의존을 없앤다" \
+    --supersedes D-0001
+  run bash "$PRE_COMPACT"
+  [ "$status" -eq 0 ]
+  local summary="$output"
+  printf '%s\n' "$summary" | grep -qE '^  - D-0001 \[superseded by D-0002\] '
+  printf '%s\n' "$summary" | grep -qE '^  - D-0002 \(supersedes D-0001\) '
+  # 요약을 읽는 모델에게 표시의 뜻을 알려준다
+  [[ "$summary" == *"superseded by"*"이어받지 말 것"* ]]
+}

@@ -112,6 +112,7 @@ SPEC.md를 읽고 각 API 엔드포인트/페이지에 대해 검증:
 - 라인: {줄번호}
 - 설명: {문제 상세}
 - 권장: {수정안}
+- 증거: {CRITICAL/HIGH 필수 — run: 재현 명령 / 관찰 출력 / 기대 출력, static: 코드 경로 / 그 경로를 타는 입력 / 실행 못 한 이유. MEDIUM/LOW는 생략 가능}
 ```
 finding 없으면 "NO_FINDINGS".
 마지막 줄: `FINDING_COUNT: N`
@@ -121,6 +122,30 @@ finding 없으면 "NO_FINDINGS".
 각 finding에 대해 Read 도구로 해당 파일의 해당 라인을 직접 읽고 판정:
 - **Confirmed**: 실제 문제. severity 조정 가능 — 단 **CRITICAL/HIGH → MEDIUM/LOW 강등은 dismissal과 동급의 구체적 사유를 `roundResults.severityAdjustments`에 기록해야 한다** (사유 없으면 보고 severity 유지). 강등이 수렴 라운드 성립의 지렛대가 되지 않도록, **강등된 finding은 그 라운드의 수렴 판정에서 원 severity로 취급한다** (수렴은 다음 라운드부터 가능).
 - **Dismissed**: false positive, 의도된 설계 → 구체적 기각 사유를 roundResults.dismissedDetails에 기록 (필수)
+
+### C/H 증거 (v4.26.0)
+
+CRITICAL/HIGH는 완주를 막는다. 그래서 "그럴 것 같다"가 아니라 증거로 성립해야 한다.
+증거는 아래 둘 중 하나다. 리뷰어가 증거를 달지 않았으면 검증 단계에서 채운다.
+
+| 종류 | 적는 것 | 언제 쓰나 |
+|---|---|---|
+| `run` | 재현 명령, 관찰된 출력, 기대한 출력 | 기본. 테스트·스크립트·curl로 재현할 수 있을 때 |
+| `static` | 결함에 이르는 코드 경로, 그 경로를 타는 입력, 실행하지 못한 이유 | 재현에 외부 계정·운영 데이터·파괴적 동작이 필요할 때 |
+
+- 재현 스크립트와 그 출력은 `.claude/repro/`에 둔다. `.claude*` 경로는 소스 지문에서 빠지므로 라운드의 sourceHash가 바뀌지 않는다.
+- 재현이 다른 경로에 파일을 만들었다면 지운다. 그다음 `source-hash` 출력이 라운드 시작 값과 같은지 확인하고 기록한다.
+- **"실행하지 못했다"는 기각 사유가 아니다.** 기각은 코드가 결함이 아니라는 증거로만 한다. 재현이 어려운 보안 finding은 `static` 증거로 Confirmed 처리한다. 재현 불가를 기각으로 받으면 SEC finding이 fail-open된다.
+- 코드를 읽어도 그 경로가 성립하지 않을 때만 Dismissed로 판정한다. 성립하지 않는 지점을 `dismissedDetails`에 적는다.
+- findingHistory 항목에 `proof: "run"|"static"`을 남긴다. 선택 필드이고 게이트는 아직 검사하지 않는다. 하드 게이트 승격은 관측 데이터를 본 뒤 `TODO.md`에서 정한다.
+
+### 근본 원인 병합
+
+같은 근본 원인에서 나온 finding 여러 건은 하나로 합친다. 수정 하나가 여러 건을 닫는데 따로 세면 수정 라운드 계수와 수렴 판정이 부풀기 때문이다.
+
+- severity는 합쳐지는 것 중 **가장 높은 값**을 쓴다. 병합으로 severity가 내려가지 않는다.
+- 남기는 항목에 `mergedFrom: ["SEC-HIGH-002", ...]`을 기록한다. 합쳐진 id는 별도 항목으로 두지 않는다.
+- 원인이 같다는 판단은 코드 경로로 증명한다. 같은 파일이거나 같은 카테고리라는 것만으로는 합치지 않는다.
 
 ## 라운드 간 Finding 매칭 (라운드 2+)
 
@@ -172,7 +197,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/shared-gate.sh quality-gate --progress-file .
 
 progress 파일에 라운드 결과 기록. **각 confirmed finding은 findingHistory 배열
 (full-auto: `phases.phase_3.findingHistory` / standalone review: 최상위 `findingHistory`)에도
-개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"regressed"|"deferred"|"dismissed", ...}`) —
+개별 항목으로 기록**(`{id, file, line, severity, status: "open"|"fixed"|"regressed"|"deferred"|"dismissed", proof?: "run"|"static", mergedFrom?: [...], ...}`) —
 `code-review-findings` 게이트가 이 배열의 open CRITICAL/HIGH를 세어 완료를 차단한다
 (빈 배열 + roundResults 없음 = 리뷰 미수행으로 간주되어 fail).
 **finding 0건 리뷰도 반드시 `roundResults`에 해당 라운드 1항목(critical/high/medium/low 모두 0)을 기록한다** —

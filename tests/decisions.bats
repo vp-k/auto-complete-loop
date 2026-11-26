@@ -477,3 +477,109 @@ WHY_OK="세션 스토어 없이 수평 확장해야 하고 만료 규약이 SPEC
   run jq -r '.assumptionReview.count' .claude-full-auto-progress.json
   [ "$output" = "1" ]
 }
+
+# ─── (g) --supersedes: 뒤집힌 결정을 원래 결정에 잇는다 (v4.26.0, pstack show-me-your-work) ───
+# append-only 로그는 고쳐 쓰지 않는다. 대신 새 결정이 옛 결정을 가리키게 해서,
+# 다음 iteration이 이미 뒤집힌 결정을 살아 있는 결정으로 읽지 않게 한다.
+
+@test "record-decision --supersedes: 필드를 남기고 --list에 양방향 표시를 붙인다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "캐시를 Redis로 결정" --why "$WHY_OK"
+  run run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "캐시를 인메모리 LRU로 변경" --why "$WHY_OK" --supersedes D-0001
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"supersedes=D-0001"* ]]
+
+  run jq -r 'select(.id == "D-0002") | .supersedes' .claude/acl-decisions.jsonl
+  [ "$output" = "D-0001" ]
+  # supersedes 없는 레코드에는 키 자체가 없다 (기존 레코드 형상 유지)
+  run jq -r 'select(.id == "D-0001") | has("supersedes")' .claude/acl-decisions.jsonl
+  [ "$output" = "false" ]
+
+  run run_gate record-decision --list --progress-file .claude-full-auto-progress.json
+  [ "$status" -eq 0 ]
+  # 표시가 어느 줄에 붙었는지까지 본다: 옛 결정 줄에 superseded, 새 결정 줄에 supersedes
+  local listed="$output"
+  printf '%s\n' "$listed" | grep -qE '^D-0001 \[superseded by D-0002\] '
+  printf '%s\n' "$listed" | grep -qE '^D-0002 \(supersedes D-0001\) '
+  run grep -cE '^D-0002 \[superseded' <<<"$listed"
+  [ "$output" = "0" ]
+}
+
+@test "record-decision --supersedes: 로그에 없는 id면 거부하고 기록하지 않는다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "결정 1" --why "$WHY_OK"
+  run run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "결정 2" --why "$WHY_OK" --supersedes D-0009
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"D-0009"* ]]
+  run jq -s 'length' .claude/acl-decisions.jsonl
+  [ "$output" = "1" ]
+  # 거부 경로에서도 락 디렉토리를 남기지 않는다
+  [ ! -d .claude/acl-decisions.jsonl.lock.d ]
+}
+
+@test "record-decision --supersedes: 형식이 D-NNNN이 아니면 거부" {
+  run run_gate record-decision --what "결정" --why "$WHY_OK" --supersedes 3
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"D-NNNN"* ]]
+  [ ! -f .claude/acl-decisions.jsonl ]
+}
+
+@test "record-decision --supersedes: --none과 함께 쓸 수 없다" {
+  run_gate record-decision --what "결정 1" --why "$WHY_OK"
+  run run_gate record-decision --none --why "$WHY_OK" --supersedes D-0001
+  [ "$status" -ne 0 ]
+  # 미지 인자 거부(usage에도 --none이 있다)로 통과하지 않도록 전용 문구를 확인한다
+  [[ "$output" == *"--supersedes"*"--none"*"함께 쓸 수 없다"* ]]
+  run jq -s 'length' .claude/acl-decisions.jsonl
+  [ "$output" = "1" ]
+}
+
+@test "record-decision --supersedes: kind=none 레코드는 뒤집을 대상이 아니다" {
+  run_gate record-decision --none --why "$WHY_OK"
+  run run_gate record-decision --what "결정" --why "$WHY_OK" --supersedes D-0001
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"kind=none"* ]]
+}
+
+@test "record-decision --supersedes: 이미 뒤집힌 결정은 다시 뒤집지 않고 최신 결정을 가리키게 한다" {
+  run_gate record-decision --what "A안" --why "$WHY_OK"
+  run_gate record-decision --what "B안" --why "$WHY_OK" --supersedes D-0001
+  run run_gate record-decision --what "C안" --why "$WHY_OK" --supersedes D-0001
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"D-0002"* ]]
+  run jq -s 'length' .claude/acl-decisions.jsonl
+  [ "$output" = "2" ]
+  # 체인은 허용된다: 최신 결정(D-0002)을 뒤집는 것은 정상
+  run run_gate record-decision --what "C안" --why "$WHY_OK" --supersedes D-0002
+  [ "$status" -eq 0 ]
+}
+
+@test "record-decision --supersedes: handoff.keyDecisions의 옛 항목에 표시를 붙인다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "캐시를 Redis로 결정" --why "$WHY_OK"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --what "캐시를 인메모리 LRU로 변경" --why "$WHY_OK" --supersedes D-0001
+
+  run jq -r '.handoff.keyDecisions[0]' .claude-full-auto-progress.json
+  [[ "$output" == "[superseded by D-0002] D-0001:"* ]]
+  run jq -r '.handoff.keyDecisions[1]' .claude-full-auto-progress.json
+  [[ "$output" == "D-0002:"*"[supersedes D-0001]"* ]]
+}
+
+@test "assumption-review: 뒤집힌 interview 결정은 count에서 빠진다" {
+  run_gate init --template full-auto "test" "req"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "가정 1 채택값 A" --why "$WHY_OK"
+  run_gate record-decision --progress-file .claude-full-auto-progress.json \
+    --scope interview --source provenance --what "가정 1 사용자 수정값 B" --why "$WHY_OK" \
+    --supersedes D-0001
+  run run_gate assumption-review --progress-file .claude-full-auto-progress.json \
+    --status confirmed --count 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"교차 검증"* ]]
+}

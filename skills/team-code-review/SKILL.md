@@ -172,6 +172,7 @@ finding 없으면 "NO_FINDINGS".
 2. **중복 제거**: 동일 파일 + 라인 범위(±5줄) + 유사 문제 유형 → 하나로 통합
    - 여러 팀원이 동일 이슈 발견 → 더 높은 severity 채택, 설명 병합
    - live-tester + static reviewer 동시 발견 → 신뢰도 높음으로 표시
+   - 위치가 달라도 근본 원인이 같으면 합친다. 증거 요건과 `mergedFrom` 기록은 `templates/review-perspectives.md`의 "C/H 증거"·"근본 원인 병합" 절을 따른다
 3. **Severity 판정**:
    - 팀원간 severity 의견 불일치 → **높은 쪽 채택** (과소평가 방지)
    - live-tester가 발견한 런타임 버그 → 최소 HIGH

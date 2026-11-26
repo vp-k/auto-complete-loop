@@ -71,14 +71,44 @@ _decision_count() {
   echo "$n"
 }
 
+# --supersedes 대상 검증 (v4.26.0). 문제가 있으면 오류 문구를, 없으면 빈 문자열을 출력한다.
+# 락을 쥔 뒤에 호출한다: 검사와 append 사이에 다른 프로세스가 같은 결정을 먼저 뒤집는 경합을 막는다.
+# 로그를 파싱하지 못하면 대상을 확인할 수 없으므로 오류로 본다(fail-closed).
+_decision_supersede_error() {
+  local target="$1" msg
+  if [[ ! -f "$DECISIONS_FILE" ]]; then
+    printf '%s' "--supersedes $target: 결정 로그에 없는 id다. record-decision --list --all로 확인하라."
+    return 0
+  fi
+  # 같은 결정을 두 번 뒤집으면 어느 쪽이 유효한지 갈라지므로 막고, 체인의 현재 결정을 알려준다.
+  # 체인 추적은 깊이 상한을 둔다 (로그는 쓰기 가드로 보호되지만 손상된 로그에서 무한 재귀하지 않게).
+  if ! msg=$(jq -rn --arg t "$target" '
+      [inputs] as $all
+      | def succ($i): ($all | map(select(.supersedes == $i)) | .[0].id);
+        def latest($i; $d): succ($i) as $n | if $n == null or $d > 1000 then $i else latest($n; $d + 1) end;
+      ($all | map(select(.id == $t))) as $hit
+      | if ($hit | length) == 0 then
+          "--supersedes \($t): 결정 로그에 없는 id다. record-decision --list --all로 확인하라."
+        elif ($hit[0].kind // "decision") != "decision" then
+          "--supersedes \($t): kind=none 레코드는 결정이 아니므로 뒤집을 대상이 아니다."
+        elif succ($t) != null then
+          "--supersedes \($t): 이미 \(succ($t))가 뒤집은 결정이다. 지금 유효한 결정은 \(latest($t; 0))다. 그 id를 --supersedes로 지정하라."
+        else "" end' "$DECISIONS_FILE" 2>/dev/null); then
+    printf '%s' "--supersedes $target: 결정 로그($DECISIONS_FILE)를 읽지 못해 대상을 확인할 수 없다."
+    return 0
+  fi
+  printf '%s' "$msg"
+}
+
 # want_run: 현재 실행으로 좁힐 runId. 빈 문자열이면 전체(하위호환·--all).
+# 뒤집힘 표시는 필터 전에 전체 로그에서 만든다 — --last나 runId로 잘라도 옛 결정의 표시가 사라지지 않게.
 _decision_list() {
   local want_iter="${1:-}" want_last="${2:-}" want_run="${3:-}"
   if [[ ! -f "$DECISIONS_FILE" ]]; then
     echo "결정 기록 없음 ($DECISIONS_FILE)"
     return 0
   fi
-  local filter='[inputs]'
+  local filter='[inputs] as $all | ($all | map(select(.supersedes != null) | {key: .supersedes, value: .id}) | from_entries) as $sup | $all'
   if [[ -n "$want_run" ]]; then
     filter="$filter | map(select(.runId == $(jq -Rn --arg v "$want_run" '$v')))"
   fi
@@ -90,7 +120,7 @@ _decision_list() {
     [[ "$want_last" =~ ^[0-9]+$ ]] || die "--last must be a non-negative integer, got '$want_last'"
     filter="$filter | .[-${want_last}:]"
   fi
-  filter="$filter"' | .[] | "\(.id) [it=\(.iteration) \(.scope)/\(.source) rev=\(.reversible)] \(.what) — \(.why)"'
+  filter="$filter"' | .[] | "\(.id)\(if $sup[.id // ""] then " [superseded by \($sup[.id // ""])]" else "" end)\(if .supersedes then " (supersedes \(.supersedes))" else "" end) [it=\(.iteration) \(.scope)/\(.source) rev=\(.reversible)] \(.what) — \(.why)"'
   jq -rn "$filter" "$DECISIONS_FILE" 2>/dev/null || true
   return 0
 }
@@ -101,7 +131,7 @@ cmd_record_decision() {
   require_jq
 
   local what="" why="" reversible="yes" scope="other" src="inline"
-  local phase="" iteration="" kind="decision"
+  local phase="" iteration="" kind="decision" supersedes=""
   local alternatives=()
   local list_mode="false" list_iteration="" list_last="" list_all="false"
 
@@ -119,7 +149,8 @@ cmd_record_decision() {
       --source)       src="${2:?--source requires value}"; shift 2 ;;
       --phase)        phase="${2:?--phase requires value}"; shift 2 ;;
       --iteration)    iteration="${2:?--iteration requires value}"; list_iteration="$2"; shift 2 ;;
-      *) die "Unknown option: $1. Usage: record-decision --what <s> --why <s> [--alternatives <s>]... [--reversible yes|no] [--scope <s>] [--source <s>] [--phase <p>] [--iteration <n>] | --none --why <s> | --list [--iteration N] [--last N] [--all]" ;;
+      --supersedes)   supersedes="${2:?--supersedes requires value}"; shift 2 ;;
+      *) die "Unknown option: $1. Usage: record-decision --what <s> --why <s> [--alternatives <s>]... [--reversible yes|no] [--scope <s>] [--source <s>] [--phase <p>] [--iteration <n>] [--supersedes D-NNNN] | --none --why <s> | --list [--iteration N] [--last N] [--all]" ;;
     esac
   done
 
@@ -137,6 +168,11 @@ cmd_record_decision() {
     [[ -n "$what" ]] || die "record-decision requires --what (결정 내용). 결정이 없는 iteration이면 --none --why '<이유>'를 사용하라."
   else
     [[ -n "$what" ]] || what="(이번 iteration에 기록할 결정 없음)"
+  fi
+  # --supersedes: 형식은 여기서, 대상 존재·중복은 락을 쥔 뒤 로그로 확인한다.
+  if [[ -n "$supersedes" ]]; then
+    [[ "$kind" == "decision" ]] || die "--supersedes는 --none과 함께 쓸 수 없다. 결정을 뒤집었다면 그것도 결정이므로 --what으로 기록하라."
+    [[ "$supersedes" =~ ^D-[0-9]{4,}$ ]] || die "--supersedes must be a decision id (D-NNNN), got '$supersedes'"
   fi
 
   local why_stripped why_len
@@ -209,6 +245,16 @@ cmd_record_decision() {
     die "record-decision: lock busy for $DECISIONS_FILE (waited $((DECISION_LOCK_WAIT_TICKS / 10))s) — 기록하지 않았다. 다른 프로세스의 record-decision이 끝나기를 기다려 재시도하라. 멈춘 프로세스가 남긴 락이면 ${DECISION_LOCK_STALE_SEC}s 후 자동 회수된다."
   fi
 
+  if [[ -n "$supersedes" ]]; then
+    local sup_err
+    sup_err=$(_decision_supersede_error "$supersedes")
+    if [[ -n "$sup_err" ]]; then
+      rm -f "$lockmeta" 2>/dev/null || true
+      rmdir "$lockdir" 2>/dev/null || true
+      die "$sup_err 기록하지 않았다."
+    fi
+  fi
+
   local next_num id line
   next_num=$(_decision_count)
   next_num=$((next_num + 1))
@@ -226,8 +272,9 @@ cmd_record_decision() {
       --argjson iteration "$iteration" --arg kind "$kind" \
       --arg what "$what" --arg why "$why" --argjson alternatives "$alt_json" \
       --arg reversible "$reversible" --arg scope "$scope" --arg source "$src" \
-      --arg runId "$run_id" \
-      '{id:$id, ts:$ts, runId:$runId, phase:$phase, iteration:$iteration, kind:$kind, what:$what, why:$why, alternatives:$alternatives, reversible:$reversible, scope:$scope, source:$source}' 2>/dev/null); then
+      --arg runId "$run_id" --arg sup "$supersedes" \
+      '{id:$id, ts:$ts, runId:$runId, phase:$phase, iteration:$iteration, kind:$kind, what:$what, why:$why, alternatives:$alternatives, reversible:$reversible, scope:$scope, source:$source}
+       + (if $sup == "" then {} else {supersedes:$sup} end)' 2>/dev/null); then
     printf '%s\n' "$line" >> "$DECISIONS_FILE"
   else
     [[ "$locked" == "true" ]] && { rm -f "$lockmeta" 2>/dev/null; rmdir "$lockdir" 2>/dev/null; }
@@ -237,11 +284,20 @@ cmd_record_decision() {
 
   # ── 관측 이벤트 (베스트에포트) ──
   log_event "decision.recorded" "$(jq -cn --arg id "$id" --arg scope "$scope" --arg kind "$kind" \
-    --argjson iteration "$iteration" '{id:$id, scope:$scope, kind:$kind, iteration:$iteration}')" 2>/dev/null || true
+    --argjson iteration "$iteration" --arg sup "$supersedes" \
+    '{id:$id, scope:$scope, kind:$kind, iteration:$iteration} + (if $sup == "" then {} else {supersedes:$sup} end)')" 2>/dev/null || true
 
   # ── progress.handoff.keyDecisions 미러 (append, kind=none은 제외) ──
+  # 뒤집은 결정이면 옛 항목 앞에 표시를 붙인다. handoff만 읽는 다음 iteration이 죽은 결정을 따르지 않게.
   if [[ -n "${PROGRESS_FILE:-}" ]] && [[ -f "${PROGRESS_FILE:-}" ]]; then
-    if [[ "$kind" == "decision" ]]; then
+    if [[ "$kind" == "decision" ]] && [[ -n "$supersedes" ]]; then
+      jq_inplace "$PROGRESS_FILE" --arg entry "$id: $what — $why [supersedes $supersedes]" \
+        --arg t "$supersedes" --arg id "$id" \
+        '.handoff //= {}
+         | .handoff.keyDecisions = (((.handoff.keyDecisions // [])
+             | map(if (type == "string" and startswith($t + ": ")) then "[superseded by \($id)] " + . else . end))
+             + [$entry])'
+    elif [[ "$kind" == "decision" ]]; then
       jq_inplace "$PROGRESS_FILE" --arg entry "$id: $what — $why" \
         '.handoff //= {} | .handoff.keyDecisions = ((.handoff.keyDecisions // []) + [$entry])'
     fi
@@ -249,7 +305,7 @@ cmd_record_decision() {
     echo "WARNING: progress 파일이 없어 handoff.keyDecisions 미러를 건너뛴다 (결정 로그와 이벤트에는 기록됨)." >&2
   fi
 
-  echo "✅ 결정 기록: $id [scope=$scope source=$src reversible=$reversible iteration=$iteration]"
+  echo "✅ 결정 기록: $id [scope=$scope source=$src reversible=$reversible iteration=$iteration${supersedes:+ supersedes=$supersedes}]"
   echo "   what: $what"
   echo "   why : $why"
   return 0
@@ -295,9 +351,12 @@ cmd_assumption_review() {
     run_id=$(_decision_current_run_id)
     measured=0
     if [[ -f "$DECISIONS_FILE" ]]; then
+      # 뒤집힌 interview 결정은 빼고 센다 — 사용자가 고친 assumption은 새 결정 1건으로 남는다.
       measured=$(jq -s --arg run "$run_id" \
-        '[.[] | select(.scope == "interview" and .kind == "decision")
-              | select($run == "" or (.runId // "") == $run)] | length' \
+        '. as $all | ($all | map(.supersedes // empty)) as $gone
+         | [$all[] | select(.scope == "interview" and .kind == "decision")
+              | select($run == "" or (.runId // "") == $run)
+              | select(.id as $i | ($gone | index($i)) == null)] | length' \
         "$DECISIONS_FILE" 2>/dev/null || echo 0)
     fi
     [[ "$measured" =~ ^[0-9]+$ ]] || measured=0

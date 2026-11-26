@@ -125,6 +125,7 @@ pstack `correct`의 순서를 ACL의 층으로 옮겼다. 순서는 구조, 스�
 | 항목 | 넣지 않은 이유 |
 |------|----------------|
 | `automations/benny`, Bugbot 연동, 클라우드 에이전트 | Cursor 서버 기능에 묶여 있다. pstack의 Claude Code 하네스 문서도 건너뛰라고 한다 |
+| benny 하위 스킬 `setup-benny`, `triage-issue-reports`, `reproduce-and-fix-issues` | Slack 이슈 접수, 트래커 연동, 초안 PR 생성을 하는 benny 자동화 전용이다. 위 행과 같은 이유다 |
 | `make-bot-ui` | Grok Bot 웹훅과 Tailscale 연동 UI다. ACL 범위 밖이다 |
 | `poteto-help`, `poteto-mode` 진입점 | pstack 내부 길잡이와 라우터다. ACL은 `/full-auto` 등 자체 진입점이 있다 |
 | `setup-pstack` | 역할별 모델 설정이다. ACL은 `shared-rules.md` 모델 라우팅 가이드가 같은 일을 한다 |
@@ -137,6 +138,7 @@ pstack `correct`의 순서를 ACL의 층으로 옮겼다. 순서는 구조, 스�
 |------|----------------|
 | 플레이북 `opening-a-pr`, `shipping`, `babysit`, `autopilot-full`, `autopilot-stack` | ACL은 로컬 커밋에서 끝난다. 푸시와 PR은 외부로 나가는 행동이라 사용자 승인 대상이다 |
 | 플레이북 `worktree-cleanup` | 머지된 worktree와 iOS 시뮬레이터 정리다. 개발 환경 관리는 ACL 범위 밖이다 |
+| poteto-mode 보조 스크립트 `scripts/watch-pr`, `worktree-audit.sh`, `bootstrap.ts` | `babysit`와 `worktree-cleanup` 플레이북, poteto-mode 설치를 돕는 스크립트다. 플레이북을 넣지 않았으므로 스크립트도 넣지 않는다 |
 | `worker.md`의 PR 제목·본문 형식 | 같은 이유다. ACL의 출력 형식은 보고 작성 규칙이 맡는다 |
 
 ### 사람에게 설명하거나 글을 다듬는 도구

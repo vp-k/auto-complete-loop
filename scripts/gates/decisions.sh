@@ -14,8 +14,11 @@ DECISION_WHY_MIN_LEN=10
 # 락 디렉토리를 스테일로 간주하는 경과 시간(초). 이보다 오래된 락은 회수하고 재획득한다.
 DECISION_LOCK_STALE_SEC=30
 
-# 락 획득 대기 틱 수(1틱 = 0.1s). 50 틱 = 최대 5초 대기 후 fail-closed.
-DECISION_LOCK_WAIT_TICKS=50
+# 락 획득 대기 상한(초). 시작 시각 기준 경과 시간으로 재고, 넘으면 fail-closed.
+# 스테일 기준에서 파생해 두 값을 묶는다 — 대기 상한이 스테일 기준에 가까워지면 기다리는 쪽이
+# 방금 생긴 남의 락을 "오래된 락"으로 회수한다. v4.26.0까지는 0.1초 sleep 50회로 5초를 의도했지만
+# 매 회 외부 프로세스를 띄우는 비용이 빠져 있어, Idle·1코어에서 대기가 30초를 넘어 실제로 그렇게 됐다.
+DECISION_LOCK_WAIT_SEC=$(( DECISION_LOCK_STALE_SEC / 6 ))
 
 # 유니코드 문자 수 계산 (bash ${#var}는 로케일에 따라 바이트를 셀 수 있어 jq로 결정론화)
 _decision_charlen() {
@@ -209,8 +212,11 @@ cmd_record_decision() {
   # ── 원자적 append (id 채번 경합 방지: mkdir 스핀락) ──
   mkdir -p .claude 2>/dev/null || die "cannot create .claude directory"
   local lockdir="${DECISIONS_FILE}.lock.d" lockmeta="${DECISIONS_FILE}.lock.d/owner"
-  local locked="false" i _lk_pid _lk_ts _now
-  for ((i = 0; i < DECISION_LOCK_WAIT_TICKS; i++)); do
+  local locked="false" _lk_pid _lk_ts _now
+  # SECONDS 는 bash 내장 경과 초라 sleep·stat·date 가 느려져도 상한이 늘어나지 않는다.
+  # 상한 검사는 루프 맨 앞에 둔다 — 회수 경로의 continue 가 rmdir 실패로 sleep 없이 돌아도 끝난다.
+  local _lk_deadline=$(( SECONDS + DECISION_LOCK_WAIT_SEC ))
+  while (( SECONDS < _lk_deadline )); do
     if mkdir "$lockdir" 2>/dev/null; then
       locked="true"
       printf '%s %s\n' "$$" "$(date -u '+%s' 2>/dev/null || echo 0)" > "$lockmeta" 2>/dev/null || true
@@ -242,7 +248,7 @@ cmd_record_decision() {
   # fail-closed: 락을 못 잡으면 D-NNNN 채번이 경합하므로 기록하지 않고 종료한다.
   # (기존에는 경고만 남기고 무락 append 해서 동일 번호 중복이 가능했다)
   if [[ "$locked" != "true" ]]; then
-    die "record-decision: lock busy for $DECISIONS_FILE (waited $((DECISION_LOCK_WAIT_TICKS / 10))s) — 기록하지 않았다. 다른 프로세스의 record-decision이 끝나기를 기다려 재시도하라. 멈춘 프로세스가 남긴 락이면 ${DECISION_LOCK_STALE_SEC}s 후 자동 회수된다."
+    die "record-decision: lock busy for $DECISIONS_FILE (waited ${DECISION_LOCK_WAIT_SEC}s) — 기록하지 않았다. 다른 프로세스의 record-decision이 끝나기를 기다려 재시도하라. 멈춘 프로세스가 남긴 락이면 ${DECISION_LOCK_STALE_SEC}s 후 자동 회수된다."
   fi
 
   if [[ -n "$supersedes" ]]; then

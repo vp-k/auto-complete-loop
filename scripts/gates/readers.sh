@@ -129,19 +129,42 @@ cmd_doc_section() {
     return 0
   fi
 
-  # 2차: 제목 없음 → 본문 grep -C 폴백 (상한 적용)
-  local hits gout gcount
-  hits=$(grep -n -i -F -- "$query" "$file" 2>/dev/null || true)
-  if [[ -z "$hits" ]]; then
+  # 2차: 제목 없음 → 본문 검색 폴백 (상한 적용). 출력은 grep -n -i -F -C 와 같은 모양이다:
+  # 매치 줄 "N:", 문맥 줄 "N-", 떨어진 묶음 사이 "--". 매치 수는 상한과 무관하게 전부 센다.
+  # grep 을 쓰지 않는다 — Git for Windows 의 GNU grep 3.0 은 C/빈 로케일에서 -i 와 -F 를 함께 주면
+  # abort(134)했고, 그 크래시가 "매치 없음"으로 둔갑했다. awk 의 tolower+index 는 로케일과 무관한
+  # 고정 문자열 검색이다. 질의는 -v 가 아니라 환경변수로 넘긴다(-v 는 백슬래시를 이스케이프로 해석한다).
+  # 같은 파일을 두 번 읽는다: 1차에서 매치와 문맥 범위를 표시하고 2차에서 순서대로 출력한다.
+  local gout gstat gcount glines grc=0
+  gout=$(RD_Q="$query" awk -v maxl="$max_lines" -v ctx="$ctx" '
+      BEGIN { q = tolower(ENVIRON["RD_Q"]); hits = 0; printed = 0; last = 0 }
+      NR == FNR {
+        if (index(tolower($0), q) > 0) {
+          m[FNR] = 1; hits++
+          for (i = FNR - ctx; i <= FNR + ctx; i++) if (i >= 1) show[i] = 1
+        }
+        next
+      }
+      (FNR in show) {
+        if (printed >= maxl) next
+        if (last > 0 && FNR > last + 1) { print "--"; printed++; if (printed >= maxl) next }
+        if (FNR in m) print FNR ":" $0; else print FNR "-" $0
+        printed++; last = FNR
+      }
+      END { printf "\001%d %d\n", printed, hits }' "$file" "$file") || grc=$?
+  # 검색 자체가 실패하면 "매치 없음"으로 보고하지 않는다 — 그것이 이 폴백이 고친 결함이다.
+  gstat=$(printf '%s\n' "$gout" | tail -n 1 | tr -d '\001')
+  read -r glines gcount <<< "$gstat"
+  if [[ "$grc" -ne 0 ]] || [[ ! "$gcount" =~ ^[0-9]+$ ]] || [[ ! "$glines" =~ ^[0-9]+$ ]]; then
+    echo "[doc-section] ERROR: body search failed (awk exit $grc) for $file" >&2
+    return 2
+  fi
+  if [[ "$gcount" -eq 0 ]]; then
     echo "[doc-section] file=$file mode=none query=\"$query\" matches=0 lines=0/$total (--list 로 제목을 확인하라)"
     log_event "doc.section" "$(jq -cn --arg f "$file" --arg m "none" --arg q "$query" --argjson n "$total" '{file:$f, mode:$m, query:$q, matches:0, total:$n}' 2>/dev/null || echo '{}')" || true
     return 1
   fi
-  gcount=$(printf '%s\n' "$hits" | wc -l | tr -d ' ')
-  gout=$(grep -n -i -F -C "$ctx" -- "$query" "$file" 2>/dev/null | head -n "$max_lines" || true)
-  printf '%s\n' "$gout"
-  local glines
-  glines=$(printf '%s\n' "$gout" | wc -l | tr -d ' ')
+  printf '%s\n' "$gout" | sed '$d'
   echo "[doc-section] file=$file mode=grep query=\"$query\" matches=$gcount lines=$glines/$total (제목 매치 없음 — 본문 검색 결과, -C $ctx)"
   log_event "doc.section" "$(jq -cn --arg f "$file" --arg m "grep" --arg q "$query" --argjson k "$gcount" --argjson p "$glines" --argjson n "$total" \
     '{file:$f, mode:$m, query:$q, matches:$k, lines:$p, total:$n}' 2>/dev/null || echo '{}')" || true

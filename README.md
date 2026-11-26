@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.26.0**
+**v4.26.1**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -312,7 +312,9 @@ v4.22.0 closes the four places where this framework still failed *open*:
 - **`record-decision` lock**: the `D-NNNN` numbering spinlock waited 5s and then appended **without**
   the lock, so two concurrent recorders could mint the same id. It now fails closed — nothing is
   written, the caller is told to retry, and a lock left by a dead process is still auto-reclaimed
-  after 30s via its `owner` metadata.
+  after 30s via its `owner` metadata. Since v4.26.1 the 5s wait is measured in elapsed seconds and
+  derived from the 30s stale threshold. It used to count 50 sleep ticks, which stretched past 30s on a
+  loaded single core and let a waiter reclaim a lock that had just been taken.
 - **stop-hook without `jq`**: a missing `jq` used to `approve` the stop, i.e. complete the run with
   zero verification. It now **blocks** with install instructions when a Ralph loop is active;
   `ACL_ALLOW_NO_JQ=1` is the explicit, event-logged escape hatch. Sessions with no active loop are
@@ -400,9 +402,12 @@ filler is the model itself: reading an in-progress SPEC or a test log whole, the
   warning. Both hooks exit silently unless a Ralph-loop or progress file exists, so other projects get no
   `.claude/acl-events.jsonl`.
 - **`doc-section`**: prints only the section(s) of a Markdown document whose heading matches a query
-  (US-ID, title substring; falls back to `grep -C`), with line-number prefixes, capped at `--max-lines`;
-  `--list` prints the heading map. Default file is the SPEC. The implementation skill now uses it for
-  per-document context reload and AC mapping instead of reading SPEC whole.
+  (US-ID, title substring; falls back to a body search in `grep -C` format), with line-number prefixes,
+  capped at `--max-lines`; `--list` prints the heading map. Default file is the SPEC. The implementation
+  skill now uses it for per-document context reload and AC mapping instead of reading SPEC whole.
+  Since v4.26.1 the body search is a case-insensitive fixed-string match in awk, so it works in any
+  locale. Git for Windows' grep 3.0 aborts on `-i -F` under C or an empty locale, and the old fallback
+  reported that crash as "no match". A failed search now exits 2 with an error instead.
 - **`run-capped -- <cmd>`**: runs a command with the full output written to `.claude/acl-logs/` (self
   `.gitignore`d, retention `--keep 20`); the context receives only the exit code, failure-pattern lines and
   the last `--tail` lines. Returns the command's exit code. A single argument is run as a shell string

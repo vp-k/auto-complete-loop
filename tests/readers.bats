@@ -75,6 +75,58 @@ teardown() { teardown_temp_dir; }
   [[ "$output" == *"mode=grep"* ]]
 }
 
+# ─── v4.26.1: 본문 검색 폴백의 로케일 독립성 ───
+# Git for Windows 의 GNU grep 3.0 은 C/빈 로케일에서 -i 와 -F 를 함께 주면 abort(134)한다.
+# 폴백이 그 크래시를 삼켜 "매치 없음"으로 보고하던 결함의 회귀 테스트. 모두 LC_ALL=C 로 돌린다.
+
+@test "doc-section 폴백: C 로케일에서도 본문 검색이 동작한다" {
+  run env LC_ALL=C bash "$GATE" doc-section AC-F-001-2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"6:- AC-F-001-2 invalid"* ]]
+  [[ "$output" == *"mode=grep"* ]]
+  [[ "$output" == *"matches=1"* ]]
+}
+
+@test "doc-section 폴백: C 로케일에서 대소문자를 무시한다" {
+  run env LC_ALL=C bash "$GATE" doc-section ac-f-001-2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"6:- AC-F-001-2 invalid"* ]]
+  [[ "$output" == *"mode=grep"* ]]
+}
+
+@test "doc-section 폴백: C 로케일에서 한글 본문을 찾는다" {
+  printf '## 개요\n\n결제 실패 시 재시도한다\n' > docs/ko.md
+  run env LC_ALL=C bash "$GATE" doc-section --file docs/ko.md 재시도
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"3:결제 실패 시 재시도한다"* ]]
+  [[ "$output" == *"mode=grep"* ]]
+}
+
+@test "doc-section 폴백: 질의는 정규식이 아니라 고정 문자열이다" {
+  run env LC_ALL=C bash "$GATE" doc-section 'AC-F-001.2'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mode=none"* ]]
+}
+
+@test "doc-section 폴백: 문맥 줄은 N-, 매치 줄은 N:, 떨어진 묶음 사이는 -- 로 구분한다" {
+  printf '%s\n' 'line1' 'line2' 'line3' 'line4 Needle here' 'line5' 'line6' 'line7' 'line8' 'line9' 'line10 needle again' 'line11' > docs/body.md
+  run env LC_ALL=C bash "$GATE" doc-section --file docs/body.md --context 1 needle
+  [ "$status" -eq 0 ]
+  local expected
+  expected=$(printf '%s\n' '3-line3' '4:line4 Needle here' '5-line5' '--' '9-line9' '10:line10 needle again' '11-line11')
+  [ "$(printf '%s\n' "$output" | sed '$d')" = "$expected" ]
+  [[ "$output" == *"matches=2 lines=7/11"* ]]
+}
+
+@test "doc-section 폴백: --max-lines 는 출력만 자르고 매치 수는 전부 센다" {
+  printf '%s\n' 'line1' 'line2' 'line3' 'line4 Needle here' 'line5' 'line6' 'line7' 'line8' 'line9' 'line10 needle again' 'line11' > docs/body.md
+  run env LC_ALL=C bash "$GATE" doc-section --file docs/body.md --context 1 --max-lines 3 needle
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"5-line5"* ]]
+  [[ "$output" != *"line10"* ]]
+  [[ "$output" == *"matches=2 lines=3/11"* ]]
+}
+
 @test "doc-section: nothing matches → exit 1 with mode=none" {
   run bash "$GATE" doc-section nothing-here-at-all
   [ "$status" -eq 1 ]

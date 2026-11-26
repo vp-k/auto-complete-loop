@@ -225,6 +225,23 @@ WHY_OK="세션 스토어 없이 수평 확장해야 하고 만료 규약이 SPEC
   [ ! -f .claude/acl-decisions.jsonl ]
 }
 
+@test "record-decision: 락 대기는 경과 시간 기준이라 느린 환경에서도 방금 생긴 락을 회수하지 않는다 (v4.26.1)" {
+  # 느린 머신 재현: sleep 한 번이 1초 걸린다. 반복 횟수 기준 대기라면 대기가 스테일 기준(30초)을
+  # 넘어 방금 생긴 락을 회수하고 기록해 버린다. 경과 시간 기준이면 대기 상한에서 fail-closed로 멈춘다.
+  local real_sleep
+  real_sleep=$(command -v sleep)
+  mkdir -p slowbin
+  printf '#!/usr/bin/env bash\nexec "%s" 1\n' "$real_sleep" > slowbin/sleep
+  chmod +x slowbin/sleep
+  mkdir -p .claude/acl-decisions.jsonl.lock.d
+  run env PATH="$PWD/slowbin:$PATH" bash "$SCRIPT_DIR/shared-gate.sh" record-decision --what "JWT로 확정" --why "$WHY_OK"
+  [ "$status" -ne 0 ]
+  [[ "$output" != *"stale lock 회수"* ]]
+  [[ "$output" == *"lock busy"* ]]
+  [ -d .claude/acl-decisions.jsonl.lock.d ]
+  [ ! -f .claude/acl-decisions.jsonl ]
+}
+
 @test "record-decision --list: 기록이 없으면 안내만 하고 성공한다" {
   run run_gate record-decision --list
   [ "$status" -eq 0 ]

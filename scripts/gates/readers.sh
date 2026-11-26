@@ -10,8 +10,8 @@
 #     SPEC/설계 문서에서 필요한 섹션만 출력한다. 기본 파일은 SPEC 후보(SPEC.md/docs/SPEC.md/
 #     docs/api-spec.md/spec.md). --list 는 제목 지도(줄번호 + 제목)만 출력해 이후 Read 의
 #     offset/limit 좌표로 쓴다. <query> 는 제목 문자열(대소문자 무시)이나 ID(US-B-003, AC-F-001-2)
-#     — 제목이 맞으면 그 제목부터 같은/상위 레벨의 다음 제목 전까지, 제목이 없으면 본문 grep(-C)로
-#     폴백한다. 출력은 --max-lines(기본 200)로 상한. exit 0=매치, 1=없음, 2=파일 없음.
+#     — 제목이 맞으면 그 제목부터 같은/상위 레벨의 다음 제목 전까지, 제목이 없으면 본문 고정 문자열 검색(grep -C 모양)으로
+#     폴백한다. 출력은 --max-lines(기본 200)로 상한. exit 0=매치, 1=없음, 2=파일 없음 또는 검색 실패.
 #
 #   run-capped [--tail N] [--name <slug>] [--log-dir D] [--fail-lines N] [--keep N] -- <command...>
 #     테스트/빌드 명령을 실행해 전체 출력은 로그 파일(.claude/acl-logs/<UTC>-<slug>.log)에 남기고
@@ -39,7 +39,7 @@ RD_AWK_ISHEAD='function ishead(s,  n) { if (substr(s, 1, 1) != "#") return 0; ma
 '
 
 
-# 사용법 오류는 exit 3 — doc-section 의 결과 계약(0 매치 / 1 없음 / 2 파일 없음)과 겹치지 않게 한다
+# 사용법 오류는 exit 3 — doc-section 의 결과 계약(0 매치 / 1 없음 / 2 파일 없음 또는 검색 실패)과 겹치지 않게 한다
 _rd_usage() { echo "ERROR: $*" >&2; exit 3; }
 
 # ─── doc-section ───

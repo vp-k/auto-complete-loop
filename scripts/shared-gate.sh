@@ -278,7 +278,7 @@ main() {
       echo "                                               (case-insensitive substring, e.g. a US-ID). Falls back to grep -C when no"
       echo "                                               heading matches. Default file = SPEC (SPEC.md|docs/SPEC.md|docs/api-spec.md|spec.md)."
       echo "                                               --list prints the heading map (line: heading). Output is capped at --max-lines (200)."
-      echo "                                               Exit 0 match / 1 no match / 2 file missing. Replaces reading a long SPEC whole."
+      echo "                                               Exit 0 match / 1 no match / 2 file missing or search failed. Replaces reading a long SPEC whole."
       echo "  run-capped [--tail N] [--name <slug>] [--log-dir D] [--fail-lines N] [--keep N] -- <command...>"
       echo "                                             - Run a command with the full output written to .claude/acl-logs/<ts>-<slug>.log;"
       echo "                                               the context only receives exit code, failure-pattern lines (--fail-lines, 40)"

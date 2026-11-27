@@ -1,6 +1,6 @@
 # Auto Complete Loop
 
-**v4.26.1**
+**v4.27.2**
 
 AI coding completion framework. Built-in Ralph Loop + DoD/SPEC/TDD/Fresh Context Verification to ensure AI finishes the job — with frozen acceptance tests, fail-closed quality gates, a lesson memory loop that turns failures into next-run conditions, spec provenance contracts, an append-only decision log where every decision must carry a reason, and stuck-pattern detection (oscillation / diminishing returns).
 
@@ -416,6 +416,42 @@ filler is the model itself: reading an in-progress SPEC or a test log whole, the
 Steps 3 and 4 of the original plan (delegating bulk reads to subagents; blocking `cat` of state JSON that
 `status` already covers) are deferred until the event data from real runs shows they are needed.
 
+### Subagent Kickoff Rules + Scoped Build Ladder (v4.27.0)
+
+Subagents do not read the session's rule files, and nothing in the docs says `SessionStart` context
+reaches them. v4.26.0 relied on the orchestrator copying three kickoff rules into every prompt.
+
+- **`SubagentStart` hook** (`hooks/subagent-start.sh`): in ACL projects only (a Ralph-loop or progress
+  file exists), it injects `rules/subagent-briefing.md` as `additionalContext` — the brief is the whole bar,
+  no questions to the user, evidence is command + exit code + output, and say what could not be checked.
+  The prompt's own output format wins. It does not inject the report-writing rules, never reads stdin,
+  never blocks, and exits 0 on every path. A bats test keeps the three rule titles identical to
+  `shared-rules.md`. A canary run on Claude Code 2.1.332 confirmed that the injected text reaches the
+  subagent model (general-purpose and plugin-defined agents) and not the parent, and that nothing is
+  injected without a progress file. Orchestrators no longer copy the three rules into prompts in ACL
+  projects, but still write the done-criteria and output format. Team-mode teammates and sessions whose
+  working directory moved off the project root are untested (`TODO.md`).
+- **Review template**: when a change alters a function's arguments, return value, data fields or behavior,
+  the reviewer also opens the code that uses it and its tests, even if those files are not in the diff. From round 2 on, a caller that
+  this diff breaks counts as part of the change, not as an old defect.
+- **Performance checks**: three new questions. Do several servers or processes each keep their own copy of
+  state that should agree, such as sessions or rate-limit counters? Is one-time setup repeated on every
+  request or in every process? Can a map, queue or cache grow without a size limit? Load comes from the SPEC. When the SPEC is silent, the
+  reviewer writes down the size it assumed.
+- **`NOT_CHECKED:` line**: optional. It keeps "found nothing" apart from "could not look". With zero
+  findings the reviewer writes `NOT_CHECKED` and `FINDING_COUNT: 0`, which the teams completion gate accepts.
+- **Implementation Step 2-1.5**: before editing, write down every caller, test, test data file, config and
+  export the change touches. New code comes last. First ask whether the feature is outside the SPEC and not
+  needed now, then whether the project already has it, then the standard library or what the browser, OS
+  or database already provides, then an installed library. Code is never shortened by dropping input checks on outside values, error handling that protects
+  data, security, accessibility or anything the SPEC asks for. A bug is fixed where it starts. Moved code
+  keeps its checks.
+- **`shortcut:` comments**: code that is simple on purpose says how far it holds and when to replace it.
+  Reviewers treat it as a decision while the SPEC's load stays inside that limit.
+
+Items considered and left out, with the reason, are in
+[`docs/notes/v4.27.0.md`](docs/notes/v4.27.0.md).
+
 ### Quality Gates
 
 The 54 distinct `shared-gate.sh` subcommands (plus the `update-phase` back-compat alias and `help`) include the following user-facing gates (see "Gate Enforcement Tiers" below for what actually blocks):
@@ -491,3 +527,7 @@ No override can bypass the 훅-강제 tier.
 **IMPL Code Review**: Reviews code against SPEC.md (STUB/SCHEMA/MISSING/HARDCODE/FLOW).
 
 **DoD 기록 주체 원칙**: every DoD key is either auto-recorded by its owning gate (e.g., plan template's 5 keys ← spec-completeness/definition-conflict, `code_review_pass` ← code-review-findings, `live_testing` ← live-testing-gate) or has an explicit documented jq instruction — the model never invents `checked: true`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

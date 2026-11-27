@@ -152,6 +152,7 @@ overview.md에서 `projectScope.hasFrontend=true`인 경우에만 생성합니�
 
 UX-A11Y findings는 최소 HIGH severity.
 finding 없으면 "NO_FINDINGS".
+확인하지 못한 범위가 있으면 FINDING_COUNT 줄 바로 앞에 "NOT_CHECKED: {무엇을, 왜}" 한 줄. 이때 0건이면 "NO_FINDINGS" 대신 이 줄과 "FINDING_COUNT: 0"을 쓴다.
 마지막 줄: FINDING_COUNT: N
 
 ## 상호 도전
@@ -169,6 +170,7 @@ finding 없으면 "NO_FINDINGS".
 리드(Claude)가 3개 팀원의 결과를 종합:
 
 1. **Finding 수집**: 각 팀원의 finding 파싱
+   - `NOT_CHECKED` 줄은 finding이 아니다. `templates/review-perspectives.md` "Finding 검증" 절 첫 두 줄을 따른다. 변경 파일을 읽지 못했다는 내용이면 그 라운드는 0건 라운드로 치지 않고 같은 범위를 다시 리뷰한다
 2. **중복 제거**: 동일 파일 + 라인 범위(±5줄) + 유사 문제 유형 → 하나로 통합
    - 여러 팀원이 동일 이슈 발견 → 더 높은 severity 채택, 설명 병합
    - live-tester + static reviewer 동시 발견 → 신뢰도 높음으로 표시

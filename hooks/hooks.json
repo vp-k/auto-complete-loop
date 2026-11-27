@@ -13,6 +13,18 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd\" subagent-start.sh",
+            "timeout": 10,
+            "description": "서브에이전트 착수 규칙 주입 (ACL 활성 프로젝트만, stdin 미사용, 차단 없음)"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
